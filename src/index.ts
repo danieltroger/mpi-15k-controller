@@ -1,6 +1,6 @@
 import util from "util";
 import { exec as raw_exec } from "child_process";
-import { catchError, createRoot } from "solid-js";
+import { catchError, createEffect, createRoot } from "solid-js";
 import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 
@@ -8,16 +8,19 @@ while (true) {
   await new Promise<void>(r => {
     createRoot(dispose => {
       catchError(main, e => {
-        error("Main crashed, restarting in 5s", e);
+        error("Main crashed, restarting in 10s", e);
         dispose();
         r();
       });
     });
   });
-  await new Promise(r => setTimeout(r, 5000));
+  await new Promise(r => setTimeout(r, 10000));
 }
 
 function main() {
   const mqttValues = useMQTTValues();
-  console.log("hi");
+
+  createEffect(() => {
+    console.log("Values", JSON.parse(JSON.stringify(mqttValues)));
+  });
 }
