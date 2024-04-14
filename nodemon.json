@@ -1,0 +1,5 @@
+{
+  "execMap": {
+    "ts": "node --loader @swc-node/register/esm"
+  }
+}

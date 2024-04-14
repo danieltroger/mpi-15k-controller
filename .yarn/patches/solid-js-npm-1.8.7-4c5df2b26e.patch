@@ -1,0 +1,44 @@
+diff --git a/package.json b/package.json
+index 22934a44c47a9ef66cdb7c71e25ccf53703a954d..5f07759ca4d3217dd76829f20e92a5c87b3aa726 100644
+--- a/package.json
++++ b/package.json
+@@ -67,7 +67,7 @@
+       },
+       "node": {
+         "types": "./types/index.d.ts",
+-        "import": "./dist/server.js",
++        "import": "./dist/solid.js",
+         "require": "./dist/server.cjs"
+       },
+       "development": {
+@@ -112,7 +112,7 @@
+       },
+       "node": {
+         "types": "./store/types/index.d.ts",
+-        "import": "./store/dist/server.js",
++        "import": "./store/dist/store.js",
+         "require": "./store/dist/server.cjs"
+       },
+       "development": {
+diff --git a/store/package.json b/store/package.json
+index d2f911c77b710919ad5a28f2cdd1ba41568a5904..5ddce55ccae2b2e222c521f55db9c57b51356593 100644
+--- a/store/package.json
++++ b/store/package.json
+@@ -14,7 +14,7 @@
+     ".": {
+       "worker": {
+         "types": "./types/index.d.ts",
+-        "import": "./dist/server.js",
++        "import": "./dist/store.js",
+         "require": "./dist/server.cjs"
+       },
+       "browser": {
+@@ -34,7 +34,7 @@
+       },
+       "node": {
+         "types": "./types/index.d.ts",
+-        "import": "./dist/server.js",
++        "import": "./dist/store.js",
+         "require": "./dist/server.cjs"
+       },
+       "development": {
