@@ -3,6 +3,7 @@ import { exec as raw_exec } from "child_process";
 import { catchError, createEffect, createRoot } from "solid-js";
 import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
+import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 
 while (true) {
   await new Promise<void>(r => {
@@ -20,7 +21,5 @@ while (true) {
 function main() {
   const mqttValues = useMQTTValues();
 
-  createEffect(() => {
-    console.log("Values", JSON.parse(JSON.stringify(mqttValues)));
-  });
+  prematureFloatBugWorkaround(mqttValues);
 }
