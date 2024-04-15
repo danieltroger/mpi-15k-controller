@@ -11,7 +11,7 @@ export function useMQTTValues() {
     return c;
   });
   const [subscription] = createResource(client, client => client.subscribe("#"));
-  const [values, setValues] = createStore<Record<string, { time: number; value: string | number }>>({});
+  const [values, setValues] = createStore<Record<string, undefined | { time: number; value: string | number }>>({});
   const owner = getOwner();
 
   createEffect(() => {
