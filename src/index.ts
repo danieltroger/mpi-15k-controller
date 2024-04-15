@@ -27,11 +27,16 @@ function main() {
     const [config] = configResourceValue;
     const mqttValues = useMQTTValues();
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
+    const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
 
     createEffect(() => {
-      if (!hasCredentials) {
+      if (!hasCredentials()) {
         return error(
-          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json"
+          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
+        );
+      } else if (!hasInverterDetails()) {
+        return error(
+          "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
         );
       }
       prematureFloatBugWorkaround(mqttValues, configResourceValue);

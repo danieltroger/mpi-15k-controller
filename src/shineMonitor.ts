@@ -12,14 +12,15 @@ export const clientInfo = {
 
 export async function makeRequestWithAuth(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
-  initialRequest: Record<string, string>
+  initialRequest: Record<string, string>,
+  action = "queryDeviceCtrlValue"
 ) {
   const auth = await getValidAuth(configSignal);
   const {
     dat: { secret, token },
   } = auth;
   const now = +new Date();
-  const requestPart = { action: "ctrlDevice", source: "1", ...initialRequest };
+  const requestPart = { action, source: "1", ...initialRequest };
   const asQueryString = new URLSearchParams(requestPart) + "";
   const sign = sha1(now + secret + token + "&" + asQueryString);
   const actualParams = new URLSearchParams({

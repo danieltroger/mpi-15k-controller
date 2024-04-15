@@ -3,14 +3,16 @@ import { createEffect, createResource, createSignal, onCleanup, untrack } from "
 import { get_config_object } from "./config";
 import { error, log } from "./logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
-import { clientInfo, makeRequestWithAuth } from "./shineMonitor";
+import { makeRequestWithAuth } from "./shineMonitor";
 
 export function prematureFloatBugWorkaround(
   mqttValues: ReturnType<typeof useMQTTValues>,
   configSignal: Awaited<ReturnType<typeof get_config_object>>
 ) {
   const [config] = configSignal;
-  const [currentlySetChargeVoltage, { refetch }] = createResource(getConfiguredVoltageFromShinemonitor);
+  const [currentlySetChargeVoltage, { refetch }] = createResource(() =>
+    getConfiguredVoltageFromShinemonitor(configSignal)
+  );
   const [settableChargeVoltage, setSettableChargeVoltage] = createSignal<number | undefined>();
   const getVoltage = () => mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10;
   const getCurrent = () => mqttValues.battery_current?.value && (mqttValues.battery_current?.value as number) / 10;
@@ -55,23 +57,37 @@ export function prematureFloatBugWorkaround(
 }
 
 async function getConfiguredVoltageFromShinemonitor(configSignal: Awaited<ReturnType<typeof get_config_object>>) {
-  return 43;
+  const [config] = configSignal;
+  const result = await makeRequestWithAuth(configSignal, {
+    "sn": untrack(config).inverter_sn!,
+    "pn": untrack(config).inverter_pn!,
+    "id": "bat_charging_float_voltage",
+    "devcode": "2454",
+    "i18n": "en_US",
+    "devaddr": "1",
+    "source": "1",
+  });
+  console.log("Got voltage", result);
 }
 
 async function setConfiguredVoltageInShinemonitor(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
   voltage: number
 ) {
+  return;
   const [config] = configSignal;
-  const result = await makeRequestWithAuth(configSignal, {
-    "sn": untrack(config).inverter_sn!,
-    "id": "bat_charging_float_voltage",
-    "pn": untrack(config).inverter_pn!,
-    "devcode": "2454",
-    "val": voltage.toFixed(1),
-    "devaddr": "1",
-    ...clientInfo,
-  });
+  const result = await makeRequestWithAuth(
+    configSignal,
+    {
+      "sn": untrack(config).inverter_sn!,
+      "id": "bat_charging_float_voltage",
+      "pn": untrack(config).inverter_pn!,
+      "devcode": "2454",
+      "val": voltage.toFixed(1),
+      "devaddr": "1",
+    },
+    "ctrlDevice"
+  );
   if (result.err) {
     error("Failed to set voltage in shinemonitor", result);
   }
