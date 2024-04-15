@@ -3,7 +3,9 @@ import { createEffect, createResource, createSignal, onCleanup, untrack } from "
 import { get_config_object } from "./config";
 import { error, log } from "./logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
-import { makeRequestWithAuth } from "./shineMonitor";
+import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "./shineMonitor";
+
+let lastVoltageSet = 0;
 
 export function prematureFloatBugWorkaround(
   mqttValues: ReturnType<typeof useMQTTValues>,
@@ -17,7 +19,15 @@ export function prematureFloatBugWorkaround(
   const getVoltage = () => mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10;
   const getCurrent = () => mqttValues.battery_current?.value && (mqttValues.battery_current?.value as number) / 10;
   const deparallelizedSetChargeVoltage = deparallelize_no_drop(async targetVoltage => {
+    const now = +new Date();
+    const setMaxEvery = 60_000;
+    const setAgo = now - lastVoltageSet;
+    if (setAgo < setMaxEvery) {
+      log("Waiting with setting voltage because it was set very recently");
+      await new Promise(resolve => setTimeout(resolve, setMaxEvery - setAgo));
+    }
     await setConfiguredVoltageInShinemonitor(configSignal, targetVoltage);
+    lastVoltageSet = +new Date();
     refetch();
   });
   const refetchInterval = setInterval(refetch, 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
@@ -28,6 +38,7 @@ export function prematureFloatBugWorkaround(
     const voltage = getVoltage();
     const startChargingBelow = config().start_bulk_charge_voltage;
     if (!voltage) return;
+    // TODO: add energy based logic
     if (voltage < startChargingBelow) {
       setSettableChargeVoltage(config().full_battery_voltage);
     } else if (voltage >= config().full_battery_voltage && (getCurrent() as number) < 10) {
@@ -39,7 +50,7 @@ export function prematureFloatBugWorkaround(
 
   createEffect(() => {
     const wantsVoltage = settableChargeVoltage();
-    if (!wantsVoltage) return;
+    if (!wantsVoltage || wantsVoltage === currentlySetChargeVoltage()) return;
     log(
       "Queueing request to set charge voltage to",
       wantsVoltage,
@@ -50,15 +61,11 @@ export function prematureFloatBugWorkaround(
     );
     deparallelizedSetChargeVoltage(wantsVoltage);
   });
-
-  createEffect(() => {
-    console.log("Current", getCurrent(), "when:", mqttValues.battery_current?.time);
-  });
 }
 
 async function getConfiguredVoltageFromShinemonitor(configSignal: Awaited<ReturnType<typeof get_config_object>>) {
   const [config] = configSignal;
-  const result = await makeRequestWithAuth(configSignal, {
+  const result = await makeRequestWithAuth<GetVoltageResponse>(configSignal, {
     "sn": untrack(config).inverter_sn!,
     "pn": untrack(config).inverter_pn!,
     "id": "bat_charging_float_voltage",
@@ -67,16 +74,21 @@ async function getConfiguredVoltageFromShinemonitor(configSignal: Awaited<Return
     "devaddr": "1",
     "source": "1",
   });
-  console.log("Got voltage", result);
+  if (result.err || result.dat.id !== "bat_charging_float_voltage_read") {
+    error("Failed to get voltage from shinemonitor", result);
+    throw new Error("Failed to get voltage from shinemonitor");
+  }
+  const currentVoltage = parseFloat(result.dat.val);
+  log("Got configured voltage from shinemonitor", currentVoltage);
+  return currentVoltage;
 }
 
 async function setConfiguredVoltageInShinemonitor(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
   voltage: number
 ) {
-  return;
   const [config] = configSignal;
-  const result = await makeRequestWithAuth(
+  const result = await makeRequestWithAuth<SetVoltageResponse>(
     configSignal,
     {
       "sn": untrack(config).inverter_sn!,

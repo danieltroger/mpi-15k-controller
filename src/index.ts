@@ -1,4 +1,4 @@
-import { catchError, createEffect, createMemo, createResource, createRoot, getOwner } from "solid-js";
+import { catchError, createEffect, createMemo, createResource, createRoot, createSignal, getOwner } from "solid-js";
 import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
@@ -18,6 +18,8 @@ while (true) {
 }
 
 function main() {
+  // TODO: add ws messaging + frontend
+  // TODO: add energy integration stuff
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
@@ -28,8 +30,10 @@ function main() {
     const mqttValues = useMQTTValues();
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
+    const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
 
     createEffect(() => {
+      if (prematureWorkaroundErrored()) return;
       if (!hasCredentials()) {
         return error(
           "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
@@ -39,7 +43,14 @@ function main() {
           "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
         );
       }
-      prematureFloatBugWorkaround(mqttValues, configResourceValue);
+      catchError(
+        () => prematureFloatBugWorkaround(mqttValues, configResourceValue),
+        e => {
+          setPrematureWorkaroundErrored(true);
+          error("Premature float bug workaround errored", e, "restarting in 10s");
+          setTimeout(() => setPrematureWorkaroundErrored(false), 10_000);
+        }
+      );
     });
   });
 }
