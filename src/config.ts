@@ -9,6 +9,24 @@ export type Config = {
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
   start_bulk_charge_after_wh_discharged: number;
+  dessmonitor_password?: string;
+  dessmonitor_user?: string;
+  dessmonitor_company_key: string;
+  savedAuth_do_not_edit: {
+    createdAt: number;
+    authApiReturn: {
+      err: number;
+      desc: string;
+      dat: {
+        secret: string;
+        expire: number;
+        token: string;
+        role: number;
+        usr: string;
+        uid: number;
+      };
+    };
+  };
 };
 
 const default_config: Config = {
@@ -16,6 +34,7 @@ const default_config: Config = {
   full_battery_voltage: 58.4,
   start_bulk_charge_voltage: 48,
   start_bulk_charge_after_wh_discharged: 1000,
+  dessmonitor_company_key: "bnrl_frRFjEz8Mkn",
 };
 
 export async function get_config_object(owner: Owner) {

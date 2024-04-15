@@ -1,4 +1,4 @@
-import { catchError, createEffect, createResource, createRoot, getOwner } from "solid-js";
+import { catchError, createEffect, createMemo, createResource, createRoot, getOwner } from "solid-js";
 import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
@@ -26,7 +26,13 @@ function main() {
     if (!configResourceValue) return;
     const [config] = configResourceValue;
     const mqttValues = useMQTTValues();
+    const hasCredentials = createMemo(() => !!(config().dessmonitor_password && config().dessmonitor_user));
 
-    prematureFloatBugWorkaround(mqttValues, config);
+    createEffect(() => {
+      if (!hasCredentials) {
+        return error("No credentials configured, please set dessmonitor_password and dessmonitor_user in config.json");
+      }
+      prematureFloatBugWorkaround(mqttValues, configResourceValue);
+    });
   });
 }
