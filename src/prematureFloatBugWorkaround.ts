@@ -15,18 +15,17 @@ export function prematureFloatBugWorkaround(
   const [localStateOfConfiguredVoltage, { refetch }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal)
   );
-  const [voltageSimulation, setVoltageSimulation] = createSignal<number | undefined>();
   const [settableChargeVoltage, setSettableChargeVoltage] = createSignal<number | undefined>();
-  const getVoltage = () =>
-    voltageSimulation() || (mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10);
+  const getVoltage = () => mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10;
   const getCurrent = () => mqttValues.battery_current?.value && (mqttValues.battery_current?.value as number) / 10;
   const deparallelizedSetChargeVoltage = deparallelize_no_drop(async targetVoltage => {
     const now = +new Date();
     const setMaxEvery = 60_000;
     const setAgo = now - lastVoltageSet;
     if (setAgo < setMaxEvery) {
-      log("Waiting with setting voltage because it was set very recently");
-      await new Promise(resolve => setTimeout(resolve, setMaxEvery - setAgo));
+      const waitFor = setMaxEvery - setAgo;
+      log("Waiting with setting voltage for", waitFor, "ms, because it was set very recently");
+      await new Promise(resolve => setTimeout(resolve, waitFor));
     }
     await setConfiguredVoltageInShinemonitor(configSignal, targetVoltage);
     lastVoltageSet = +new Date();
@@ -34,24 +33,6 @@ export function prematureFloatBugWorkaround(
     setTimeout(refetch, 5000); // Inverter needs time for it to be set
   });
   const refetchInterval = setInterval(refetch, 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
-  let i = 0;
-
-  process.on("SIGUSR2", () => {
-    console.log("Received SIGUSR2 signal");
-    if (!i) {
-      setVoltageSimulation(44);
-      i = 1;
-    } else if (i === 1) {
-      setVoltageSimulation(59);
-      i = 2;
-    } else if (i === 2) {
-      setVoltageSimulation();
-      i = 0;
-    }
-    // Insert any logic you want to perform when SIGUSR2 is received
-    // For example, you might want to initiate a graceful restart
-  });
-  createEffect(() => log("Simulating voltage", voltageSimulation()));
 
   onCleanup(() => clearInterval(refetchInterval));
 
@@ -59,10 +40,8 @@ export function prematureFloatBugWorkaround(
     const voltage = getVoltage();
     const startChargingBelow = config().start_bulk_charge_voltage;
     if (!voltage) return;
-    console.log("We believe voltage is", voltage);
     // TODO: add energy based logic
     if (voltage <= startChargingBelow) {
-      console.log("Doing stuff", config().full_battery_voltage);
       setSettableChargeVoltage(config().full_battery_voltage);
     } else if (voltage >= config().full_battery_voltage && (getCurrent() as number) < 10) {
       setSettableChargeVoltage(config().float_charging_voltage);
@@ -71,11 +50,7 @@ export function prematureFloatBugWorkaround(
 
   createEffect(() => localStateOfConfiguredVoltage() && setSettableChargeVoltage(localStateOfConfiguredVoltage()!));
 
-  createEffect(() => log("Got configured voltage from shinemonitor", localStateOfConfiguredVoltage()));
-
-  createEffect(() => log("settableChargeVoltage", settableChargeVoltage()));
-
-  console.log("our pid", process.pid);
+  createEffect(() => log("Got confirmed: configured voltage from shinemonitor", localStateOfConfiguredVoltage()));
 
   createEffect(() => {
     const wantsVoltage = settableChargeVoltage();
@@ -84,7 +59,7 @@ export function prematureFloatBugWorkaround(
     log(
       "Queueing request to set charge voltage to",
       wantsVoltage,
-      "we think the inverter is configured to",
+      ". We think the inverter is configured to",
       voltageSetToRn,
       "right now.",
       "Current voltage of battery",
