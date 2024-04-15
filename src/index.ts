@@ -27,7 +27,7 @@ function main() {
     const configResourceValue = configResource();
     if (!configResourceValue) return;
     const [config] = configResourceValue;
-    const mqttValues = useMQTTValues();
+    const mqttValues = useMQTTValues(() => config().mqtt_host);
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
