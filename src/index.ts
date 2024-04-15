@@ -26,11 +26,13 @@ function main() {
     if (!configResourceValue) return;
     const [config] = configResourceValue;
     const mqttValues = useMQTTValues();
-    const hasCredentials = createMemo(() => !!(config().dessmonitor_password && config().dessmonitor_user));
+    const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
 
     createEffect(() => {
       if (!hasCredentials) {
-        return error("No credentials configured, please set dessmonitor_password and dessmonitor_user in config.json");
+        return error(
+          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json"
+        );
       }
       prematureFloatBugWorkaround(mqttValues, configResourceValue);
     });

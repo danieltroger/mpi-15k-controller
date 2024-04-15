@@ -9,10 +9,12 @@ export type Config = {
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
   start_bulk_charge_after_wh_discharged: number;
-  dessmonitor_password?: string;
-  dessmonitor_user?: string;
-  dessmonitor_company_key: string;
-  savedAuth_do_not_edit: {
+  shinemonitor_password?: string;
+  shinemonitor_user?: string;
+  shinemonitor_company_key: string;
+  inverter_sn?: string;
+  inverter_pn?: string;
+  savedAuth_do_not_edit?: {
     createdAt: number;
     authApiReturn: {
       err: number;
@@ -34,7 +36,7 @@ const default_config: Config = {
   full_battery_voltage: 58.4,
   start_bulk_charge_voltage: 48,
   start_bulk_charge_after_wh_discharged: 1000,
-  dessmonitor_company_key: "bnrl_frRFjEz8Mkn",
+  shinemonitor_company_key: "bnrl_frRFjEz8Mkn",
 };
 
 export async function get_config_object(owner: Owner) {
