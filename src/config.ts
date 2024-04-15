@@ -8,6 +8,7 @@ export type Config = {
   full_battery_voltage: number;
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
+  mqtt_host: string;
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
   shinemonitor_user?: string;
@@ -37,6 +38,7 @@ const default_config: Config = {
   start_bulk_charge_voltage: 48,
   start_bulk_charge_after_wh_discharged: 1000,
   shinemonitor_company_key: "bnrl_frRFjEz8Mkn",
+  mqtt_host: "192.168.0.3",
 };
 
 export async function get_config_object(owner: Owner) {
