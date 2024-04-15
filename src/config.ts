@@ -67,7 +67,7 @@ export async function get_config_object(owner: Owner) {
   runWithOwner(owner, () =>
     createEffect(() => {
       // We could use records and tuples here in the future
-      const new_config = JSON.stringify(get_config());
+      const new_config = JSON.stringify(get_config(), null, 2);
       if (current_config_file_value !== new_config) {
         clearTimeout(config_writing_debounce);
         setTimeout(async () => {
