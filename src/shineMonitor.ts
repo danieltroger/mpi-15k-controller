@@ -3,6 +3,25 @@ import { untrack } from "solid-js";
 import { sha1 } from "./sha1";
 import { log } from "./logging";
 
+export type GetVoltageResponse = {
+  err: number;
+  desc: string;
+  dat: {
+    id: string;
+    name: string;
+    val: string;
+  };
+};
+
+export type SetVoltageResponse = {
+  err: number;
+  desc: string;
+  dat: {
+    dat: string;
+    status: number;
+  };
+};
+
 const shineUrl = "https://ios.shinemonitor.com/public/";
 export const clientInfo = {
   "_app_id_": "wifiapp.volfw.solarpower",
@@ -10,7 +29,7 @@ export const clientInfo = {
   "_app_client_": "ios",
 } as const;
 
-export async function makeRequestWithAuth(
+export async function makeRequestWithAuth<T>(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
   initialRequest: Record<string, string>,
   action = "queryDeviceCtrlValue"
@@ -43,14 +62,7 @@ export async function makeRequestWithAuth(
   if (!response.ok) {
     throw new Error("Failed to make request to shinemonitor, non-200 response: " + response.status);
   }
-  const decoded = (await response.json()) as {
-    err: number;
-    desc: string;
-    dat: {
-      dat: string;
-      status: number;
-    };
-  };
+  const decoded = (await response.json()) as T;
 
   return decoded;
 }
