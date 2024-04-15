@@ -39,7 +39,7 @@ export function prematureFloatBugWorkaround(
     const startChargingBelow = config().start_bulk_charge_voltage;
     if (!voltage) return;
     // TODO: add energy based logic
-    if (voltage < startChargingBelow) {
+    if (voltage <= startChargingBelow) {
       setSettableChargeVoltage(config().full_battery_voltage);
     } else if (voltage >= config().full_battery_voltage && (getCurrent() as number) < 10) {
       setSettableChargeVoltage(config().float_charging_voltage);
