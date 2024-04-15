@@ -77,7 +77,7 @@ async function getValidAuth(configSignal: Awaited<ReturnType<typeof get_config_o
         dat: { expire },
       },
     } = saved;
-    if (createdAt + expire < +new Date()) {
+    if (createdAt + expire * 1000 > +new Date()) {
       return saved.authApiReturn;
     }
   }
