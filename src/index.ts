@@ -1,9 +1,8 @@
-import util from "util";
-import { exec as raw_exec } from "child_process";
-import { catchError, createEffect, createRoot } from "solid-js";
+import { catchError, createEffect, createResource, createRoot, getOwner } from "solid-js";
 import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
+import { get_config_object } from "./config";
 
 while (true) {
   await new Promise<void>(r => {
@@ -19,7 +18,15 @@ while (true) {
 }
 
 function main() {
-  const mqttValues = useMQTTValues();
+  const owner = getOwner()!;
+  const [configResource] = createResource(() => get_config_object(owner));
 
-  prematureFloatBugWorkaround(mqttValues);
+  createEffect(() => {
+    const configResourceValue = configResource();
+    if (!configResourceValue) return;
+    const [config] = configResourceValue;
+    const mqttValues = useMQTTValues();
+
+    prematureFloatBugWorkaround(mqttValues, config);
+  });
 }
