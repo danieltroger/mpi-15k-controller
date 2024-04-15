@@ -5,11 +5,14 @@ import { createStore } from "solid-js/store";
 
 export function useMQTTValues(mqttHost: Accessor<string>) {
   const [reconnectToggle, setReconnectToggle] = createSignal(1); // Needs to be truthy or createResource won't fetch
-  const [client] = createResource([mqttHost, reconnectToggle] as const, async ([host]) => {
-    const c = await MQTT.connectAsync("tcp://" + host);
-    onCleanup(() => c.end());
-    return c;
-  });
+  const [client] = createResource(
+    () => [mqttHost(), reconnectToggle()] as const,
+    async ([host]) => {
+      const c = await MQTT.connectAsync("tcp://" + host);
+      onCleanup(() => c.end());
+      return c;
+    }
+  );
   const [subscription] = createResource(client, client => client.subscribe("#"));
   const [values, setValues] = createStore<Record<string, undefined | { time: number; value: string | number }>>({});
   const owner = getOwner();
