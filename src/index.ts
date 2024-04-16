@@ -20,6 +20,7 @@ while (true) {
 function main() {
   // TODO: add ws messaging + frontend
   // TODO: add energy integration stuff
+  // TODO: consider how much sun is shining in when full current if-statement
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
