@@ -71,16 +71,16 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       if (battery_voltage == null || battery_current == null) return;
       return {
         time: Math.round(voltage.time.getNanoTime() / 1000 / 1000),
-        power: (battery_voltage / 10) * (battery_current / 10),
+        value: (battery_voltage / 10) * (battery_current / 10),
       };
     });
-    return multiplied.filter(v => v != undefined) as { time: number; power: number }[];
+    return multiplied.filter(v => v != undefined) as { time: number; value: number }[];
   });
 
   const timeInterval = setInterval(() => setCurrentTime(+new Date()), 1000);
   onCleanup(() => clearInterval(timeInterval));
 
-  return powerValues;
+  return { batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt, databasePowerValues: powerValues };
 }
 
 async function queryVoltageAndCurrentBetweenTimes(db: Influx.InfluxDB, start: number, end: number) {
