@@ -42,7 +42,7 @@ const default_config: Config = {
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
   start_bulk_charge_voltage: 46,
-  start_bulk_charge_after_wh_discharged: 1000,
+  start_bulk_charge_after_wh_discharged: 1500,
   shinemonitor_company_key: "bnrl_frRFjEz8Mkn",
   mqtt_host: "192.168.0.3",
 };
