@@ -1,8 +1,9 @@
 import { catchError, createEffect, createMemo, createResource, createRoot, createSignal, getOwner } from "solid-js";
-import { error } from "./logging";
+import { error, log } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
+import { useEnergySinceRunning } from "./useEnergySinceRunning";
 
 while (true) {
   await new Promise<void>(r => {
@@ -33,6 +34,9 @@ function main() {
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
+    const energySinceRunning = useEnergySinceRunning(mqttValues, configResourceValue);
+
+    createEffect(() => log("Energy since running returned", energySinceRunning()));
 
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;
