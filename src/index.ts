@@ -4,6 +4,7 @@ import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { useEnergySinceRunning } from "./useEnergySinceRunning";
+import { useDatabasePower } from "./useDatabasePower";
 
 while (true) {
   await new Promise<void>(r => {
@@ -35,6 +36,7 @@ function main() {
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
     const energySinceRunning = useEnergySinceRunning(mqttValues, configResourceValue);
+    const databasePower = useDatabasePower(configResourceValue);
 
     createEffect(() => log("Energy since running returned", energySinceRunning()));
 

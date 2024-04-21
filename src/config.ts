@@ -5,6 +5,12 @@ import process from "process";
 import { error, log } from "./logging";
 
 export type Config = {
+  influxdb?: {
+    host: string;
+    database: string;
+    username: string;
+    password: string;
+  };
   full_battery_voltage: number;
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
