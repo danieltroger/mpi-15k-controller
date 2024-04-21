@@ -25,6 +25,7 @@ function main() {
   // TODO: add ws messaging + frontend
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
+  // TODO: add SOC calculation
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
