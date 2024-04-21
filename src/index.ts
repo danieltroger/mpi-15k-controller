@@ -23,7 +23,6 @@ while (true) {
 
 function main() {
   // TODO: add ws messaging + frontend
-  // TODO: add energy integration stuff
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
   const owner = getOwner()!;
@@ -57,9 +56,6 @@ function main() {
       to: now,
     });
 
-    createEffect(() => log("energyDischargedSinceFull", energyDischargedSinceFull()));
-    createEffect(() => log("energyChargedSinceFull", energyChargedSinceFull()));
-
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;
       if (!hasCredentials()) {
@@ -72,7 +68,13 @@ function main() {
         );
       }
       catchError(
-        () => prematureFloatBugWorkaround(mqttValues, configResourceValue),
+        () =>
+          prematureFloatBugWorkaround({
+            mqttValues: mqttValues,
+            configSignal: configResourceValue,
+            energyDischargedSinceFull,
+            energyChargedSinceFull,
+          }),
         e => {
           setPrematureWorkaroundErrored(true);
           error("Premature float bug workaround errored", e, "restarting in 10s");
