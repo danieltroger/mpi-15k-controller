@@ -3,7 +3,7 @@ import { error, log } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
-import { useEnergySinceRunning } from "./useEnergySinceRunning";
+import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
 
 while (true) {
@@ -35,10 +35,8 @@ function main() {
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
-    const energySinceRunning = useEnergySinceRunning(mqttValues, configResourceValue);
-    const databasePower = useDatabasePower(configResourceValue);
-
-    createEffect(() => log("Energy since running returned", energySinceRunning()));
+    const currentPower = useCurrentPower(mqttValues, configResourceValue);
+    const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase } = useDatabasePower(configResourceValue);
 
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;

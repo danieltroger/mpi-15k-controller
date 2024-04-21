@@ -1,13 +1,12 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { createEffect, createMemo, getOwner, on, runWithOwner, untrack } from "solid-js";
-import { log } from "./logging";
+import { createMemo, untrack } from "solid-js";
 
-export function useEnergySinceRunning(
+export function useCurrentPower(
   mqttValues: ReturnType<typeof useMQTTValues>,
   configSignal: Awaited<ReturnType<typeof get_config_object>>
 ) {
-  const power = createMemo(() => {
+  return createMemo(() => {
     // The voltage is guaranteed by mpp-solar and the inverter to always update before the current
     // Both values update practically at the same time but don't get written to the mqttValues store in a batch
     // Due to the deterministic nature of the updates, we can rely on the voltage being from the same "update situation" as the current every time the current updates
@@ -32,6 +31,4 @@ export function useEnergySinceRunning(
     const power = voltageNow * currentNow;
     return { value: power, time: Math.min(amperageTimestamp, voltageTimestamp) };
   });
-
-  return power;
 }
