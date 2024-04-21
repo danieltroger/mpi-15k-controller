@@ -123,7 +123,7 @@ async function getConfiguredVoltageFromShinemonitor(
   });
   if (result.err || result.dat.id !== `bat_charging_${type}_voltage_read`) {
     error("Failed to get voltage from shinemonitor", result);
-    throw new Error("Failed to get voltage from shinemonitor", type);
+    throw new Error("Failed to get voltage from shinemonitor (" + type + ")");
   }
   return parseFloat(result.dat.val);
 }
