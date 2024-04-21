@@ -5,6 +5,8 @@ import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
+import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
+import { useNow } from "./useNow";
 
 while (true) {
   await new Promise<void>(r => {
@@ -35,8 +37,28 @@ function main() {
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
-    const currentPower = useCurrentPower(mqttValues, configResourceValue);
+    const { localPowerHistory, currentPower, lastBatterySeenFullSinceProgramStart } = useCurrentPower(
+      mqttValues,
+      configResourceValue
+    );
+    const now = useNow();
     const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase } = useDatabasePower(configResourceValue);
+    const { energyDischargedSinceFull, energyChargedSinceFull } = calculateBatteryEnergy({
+      localPowerHistory,
+      databasePowerValues,
+      from: createMemo(() => {
+        const lastSinceStart = lastBatterySeenFullSinceProgramStart();
+        const lastAccordingToDatabase = batteryWasLastFullAtAccordingToDatabase();
+        if (!lastSinceStart && !lastAccordingToDatabase) return;
+        if (!lastSinceStart) return lastAccordingToDatabase;
+        if (!lastAccordingToDatabase) return lastSinceStart;
+        return Math.min(lastSinceStart, lastAccordingToDatabase);
+      }),
+      to: now,
+    });
+
+    createEffect(() => log("energyDischargedSinceFull", energyDischargedSinceFull()));
+    createEffect(() => log("energyChargedSinceFull", energyChargedSinceFull()));
 
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;

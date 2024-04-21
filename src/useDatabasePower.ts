@@ -1,10 +1,11 @@
 import Influx, { IResults } from "influx";
 import { get_config_object } from "./config";
-import { createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { createMemo, createResource } from "solid-js";
 import { error, log } from "./logging";
+import { useNow } from "./useNow";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
-  const [currentTime, setCurrentTime] = createSignal(+new Date());
+  const currentTime = useNow();
   const influxClient = createMemo(() => {
     const configValue = config();
     if (!configValue.influxdb) {
@@ -76,9 +77,6 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     });
     return multiplied.filter(v => v != undefined) as { time: number; value: number }[];
   });
-
-  const timeInterval = setInterval(() => setCurrentTime(+new Date()), 1000);
-  onCleanup(() => clearInterval(timeInterval));
 
   return { batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt, databasePowerValues: powerValues };
 }
