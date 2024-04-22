@@ -87,7 +87,15 @@ export function prematureFloatBugWorkaround({
   createEffect(() => {
     const wantsVoltage = settableChargeVoltage();
     const voltageSetToRn = localStateOfConfiguredVoltageFloat();
-    if (!wantsVoltage || !voltageSetToRn || wantsVoltage === voltageSetToRn) return;
+    const bulkConfigured = localStateOfConfiguredVoltageBulk();
+    if (
+      !wantsVoltage ||
+      !voltageSetToRn ||
+      wantsVoltage === voltageSetToRn ||
+      (bulkConfigured && wantsVoltage > bulkConfigured) // Disallow setting float voltage higher than bulk voltage (inverter will reject)
+    ) {
+      return;
+    }
     log(
       "Queueing request to set float voltage to",
       wantsVoltage,
@@ -105,7 +113,14 @@ export function prematureFloatBugWorkaround({
   createEffect(() => {
     const wantsVoltage = settableChargeVoltage();
     const voltageSetToRn = localStateOfConfiguredVoltageBulk();
-    if (!wantsVoltage || !voltageSetToRn || wantsVoltage === voltageSetToRn) return;
+    const floatConfigured = localStateOfConfiguredVoltageFloat();
+    if (
+      !wantsVoltage ||
+      !voltageSetToRn ||
+      wantsVoltage === voltageSetToRn ||
+      (floatConfigured && wantsVoltage < floatConfigured) // Disallow setting bulk voltage lower than float voltage (inverter will reject)
+    )
+      return;
     log(
       "Queueing request to set bulk voltage to",
       wantsVoltage,
@@ -182,6 +197,7 @@ async function setConfiguredVoltageInShinemonitor(
   );
   if (result.err) {
     error("Failed to set voltage in shinemonitor", result, type, voltage);
+    return;
   }
   log("Successfully set voltage in shinemonitor to", voltage, type, result);
 }
