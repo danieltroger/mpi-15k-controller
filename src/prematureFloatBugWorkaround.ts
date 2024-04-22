@@ -104,8 +104,9 @@ export function prematureFloatBugWorkaround({
       "right now.",
       "Current voltage of battery",
       untrack(getVoltage),
-      "current current of battery",
-      untrack(getCurrent)
+      "V, current current of battery",
+      untrack(getCurrent),
+      "A"
     );
     deparallelizedSetChargeVoltageFloat(wantsVoltage);
   });
@@ -129,8 +130,9 @@ export function prematureFloatBugWorkaround({
       "right now.",
       "Current voltage of battery",
       untrack(getVoltage),
-      "current current of battery",
-      untrack(getCurrent)
+      "V, current current of battery",
+      untrack(getCurrent),
+      "A"
     );
     deparallelizedSetChargeVoltageBulk(wantsVoltage);
   });
