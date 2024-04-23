@@ -49,6 +49,7 @@ function main() {
       from: createMemo(() => {
         const lastSinceStart = lastBatterySeenFullSinceProgramStart();
         const lastAccordingToDatabase = batteryWasLastFullAtAccordingToDatabase();
+        log("Last full since start", lastSinceStart, "last full according to DB", lastAccordingToDatabase);
         if (!lastSinceStart && !lastAccordingToDatabase) return;
         if (!lastSinceStart) return lastAccordingToDatabase;
         if (!lastAccordingToDatabase) return lastSinceStart;
