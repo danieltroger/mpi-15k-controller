@@ -66,5 +66,7 @@ export function useCurrentPower(
     }
   });
 
+  createEffect(() => console.log("local power history", JSON.parse(JSON.stringify(localPowerHistory))));
+
   return { localPowerHistory, currentPower, lastBatterySeenFullSinceProgramStart: haveSeenBatteryFullAt };
 }
