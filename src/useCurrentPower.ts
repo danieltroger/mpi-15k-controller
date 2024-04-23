@@ -38,7 +38,10 @@ export function useCurrentPower(
     if (voltage == undefined) return;
     log("Comparing", voltage / 10, "to", config().full_battery_voltage);
     if (voltage / 10 >= config().full_battery_voltage) {
-      return mqttValues.battery_voltage?.time;
+      log("Battery reached full (seen locally) at", mqttValues.battery_voltage?.time, {
+        ...mqttValues.battery_voltage,
+      });
+      return mqttValues.battery_voltage!.time;
     }
   });
 
