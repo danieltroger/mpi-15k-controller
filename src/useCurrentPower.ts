@@ -2,6 +2,7 @@ import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
 import { createEffect, createMemo, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
+import { log } from "./logging";
 
 export function useCurrentPower(
   mqttValues: ReturnType<typeof useMQTTValues>,
@@ -35,6 +36,7 @@ export function useCurrentPower(
   const haveSeenBatteryFullAt = createMemo(() => {
     const voltage = mqttValues.battery_voltage?.value as undefined | number;
     if (voltage == undefined) return;
+    log("Comparing", voltage / 10, "to", config().full_battery_voltage);
     if (voltage / 10 >= config().full_battery_voltage) {
       return mqttValues.battery_voltage?.time;
     }
