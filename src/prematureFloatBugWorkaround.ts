@@ -77,6 +77,8 @@ export function prematureFloatBugWorkaround({
     }
   });
 
+  createEffect(() => log("We now want the voltage to be set to", settableChargeVoltage()));
+
   createEffect(() =>
     log("Got confirmed: configured float voltage from shinemonitor", localStateOfConfiguredVoltageFloat())
   );
