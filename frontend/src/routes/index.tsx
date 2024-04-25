@@ -1,5 +1,6 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { createSignal, onMount, Show } from "solid-js";
+import { A } from "@solidjs/router";
 
 export default function Home() {
   const [info] = getBackendSyncedSignal("info");
@@ -12,7 +13,9 @@ export default function Home() {
       <section>
         <h2>Links</h2>
         <ol>
-          <li>Config editor</li>
+          <li>
+            <A href="/config">Config editor</A>
+          </li>
         </ol>
       </section>
       <section>
