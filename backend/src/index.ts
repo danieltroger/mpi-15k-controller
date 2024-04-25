@@ -44,17 +44,18 @@ function main() {
     );
     const now = useNow();
     const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase } = useDatabasePower(configResourceValue);
+    const totalLastFull = createMemo(() => {
+      const lastSinceStart = lastBatterySeenFullSinceProgramStart();
+      const lastAccordingToDatabase = batteryWasLastFullAtAccordingToDatabase();
+      if (!lastSinceStart && !lastAccordingToDatabase) return;
+      if (!lastSinceStart) return lastAccordingToDatabase;
+      if (!lastAccordingToDatabase) return lastSinceStart;
+      return Math.max(lastSinceStart, lastAccordingToDatabase);
+    });
     const { energyDischargedSinceFull, energyChargedSinceFull } = calculateBatteryEnergy({
       localPowerHistory,
       databasePowerValues,
-      from: createMemo(() => {
-        const lastSinceStart = lastBatterySeenFullSinceProgramStart();
-        const lastAccordingToDatabase = batteryWasLastFullAtAccordingToDatabase();
-        if (!lastSinceStart && !lastAccordingToDatabase) return;
-        if (!lastSinceStart) return lastAccordingToDatabase;
-        if (!lastAccordingToDatabase) return lastSinceStart;
-        return Math.max(lastSinceStart, lastAccordingToDatabase);
-      }),
+      from: totalLastFull,
       to: now,
     });
 
@@ -91,6 +92,7 @@ function main() {
         info: () => ({
           energyDischargedSinceFull: energyDischargedSinceFull(),
           energyChargedSinceFull: energyChargedSinceFull(),
+          totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
         }),
         mqttValues: () => mqttValues,
       })
