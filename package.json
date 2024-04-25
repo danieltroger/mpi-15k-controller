@@ -6,7 +6,10 @@
   ],
   "packageManager": "yarn@4.1.1",
   "dependencies": {
+    "@depict-ai/plp-styling": "^4.4.20",
+    "@depict-ai/ui": "^4.8.22",
     "prettier": "^3.1.1",
+    "sass": "^1.75.0",
     "typescript": "^5.3.3",
     "vinxi": "^0.3.11",
     "vite": "^5.2.10"
