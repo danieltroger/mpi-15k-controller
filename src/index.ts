@@ -52,7 +52,7 @@ function main() {
         if (!lastSinceStart && !lastAccordingToDatabase) return;
         if (!lastSinceStart) return lastAccordingToDatabase;
         if (!lastAccordingToDatabase) return lastSinceStart;
-        return Math.min(lastSinceStart, lastAccordingToDatabase);
+        return Math.max(lastSinceStart, lastAccordingToDatabase);
       }),
       to: now,
     });
