@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer, Server } from "ws";
 import { error, log, warn } from "./logging";
 import { IncomingMessage } from "http";
-import { catchify } from "@depict-ai/utilishared";
+import { catchify } from "@depict-ai/utilishared/latest";
 
 const max_connection_age = 1000 * 60 * 60; //ms
 const ping_interval = 1000 * 5; // ms
