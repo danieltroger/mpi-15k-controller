@@ -426,6 +426,19 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@depict-ai/utilishared@npm:^2.4.7":
+  version: 2.4.7
+  resolution: "@depict-ai/utilishared@npm:2.4.7"
+  dependencies:
+    "@babel/plugin-transform-typescript": "npm:^7.22.9"
+    "@babel/runtime": "npm:latest"
+    "@babel/runtime-corejs3": "npm:latest"
+    "@sentry/browser": "npm:^7.75.1"
+    solid-js: "npm:^1.8.16"
+  checksum: 10c0/b6acce18a88c823a15ff8d200c76997d2a9d0b073c30e420c3c307c534c8c65d453aef253b9745f284caa65247d971e98a7af32b714606aec715af3abfe068f1
+  languageName: node
+  linkType: hard
+
 "@esbuild/aix-ppc64@npm:0.20.2":
   version: 0.20.2
   resolution: "@esbuild/aix-ppc64@npm:0.20.2"
@@ -3205,11 +3218,13 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "example-basic@workspace:frontend"
   dependencies:
+    "@depict-ai/utilishared": "npm:^2.4.7"
     "@solidjs/meta": "npm:^0.29.3"
     "@solidjs/router": "npm:^0.13.2"
     "@solidjs/start": "npm:^1.0.0-rc.0"
     prettier: "npm:^3.2.5"
     solid-js: "npm:^1.8.16"
+    typescript: "npm:^5.4.5"
     vinxi: "npm:^0.3.11"
     vite: "npm:^5.2.10"
   languageName: unknown
@@ -6149,7 +6164,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@npm:^5.3.3":
+"typescript@npm:^5.3.3, typescript@npm:^5.4.5":
   version: 5.4.5
   resolution: "typescript@npm:5.4.5"
   bin:
@@ -6159,7 +6174,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@patch:typescript@npm%3A^5.3.3#optional!builtin<compat/typescript>":
+"typescript@patch:typescript@npm%3A^5.3.3#optional!builtin<compat/typescript>, typescript@patch:typescript@npm%3A^5.4.5#optional!builtin<compat/typescript>":
   version: 5.4.5
   resolution: "typescript@patch:typescript@npm%3A5.4.5#optional!builtin<compat/typescript>::version=5.4.5&hash=5adc0c"
   bin:
