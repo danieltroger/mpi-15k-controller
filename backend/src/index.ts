@@ -92,6 +92,7 @@ function main() {
           energyDischargedSinceFull: energyDischargedSinceFull(),
           energyChargedSinceFull: energyChargedSinceFull(),
         }),
+        mqttValues: () => mqttValues,
       })
     );
   });

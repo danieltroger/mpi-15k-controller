@@ -1,14 +1,17 @@
 import { Accessor, createEffect, Owner, runWithOwner, Signal, untrack } from "solid-js";
 import { Config } from "./config";
 import { startWsServer } from "./startWsServer";
+import { useMQTTValues } from "./useMQTTValues";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
   info,
   owner,
+  mqttValues,
 }: {
   config_signal: Signal<Config>;
   info: Accessor<Record<string, any>>;
+  mqttValues: Accessor<ReturnType<typeof useMQTTValues>>;
   owner: Owner;
 }) {
   const exposed_signals = {
@@ -22,6 +25,7 @@ export async function wsMessaging({
       },
     },
     info: { getter: info },
+    mqttValues: { getter: mqttValues },
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
