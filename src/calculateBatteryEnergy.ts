@@ -1,5 +1,4 @@
-import { Accessor, createEffect, createMemo } from "solid-js";
-import { log } from "./logging";
+import { Accessor, createMemo } from "solid-js";
 
 export function calculateBatteryEnergy({
   from,
@@ -46,23 +45,6 @@ export function calculateBatteryEnergy({
       }
     }
     return { energyCharged, energyDischarged };
-  });
-  const shouldLog = createMemo(() => energy()?.energyCharged + energy()?.energyDischarged > 999);
-
-  createEffect(() => {
-    if (shouldLog()) {
-      log(
-        "Calculated energy for",
-        from(),
-        "to",
-        to(),
-        ": ",
-        energy()?.energyCharged,
-        "Wh charged and",
-        energy()?.energyDischarged,
-        "Wh discharged."
-      );
-    }
   });
 
   return {
