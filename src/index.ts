@@ -1,5 +1,5 @@
 import { catchError, createEffect, createMemo, createResource, createRoot, createSignal, getOwner } from "solid-js";
-import { error, log } from "./logging";
+import { error } from "./logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
@@ -7,6 +7,7 @@ import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 import { useNow } from "./useNow";
+import { wsMessaging } from "./wsMessaging";
 
 while (true) {
   await new Promise<void>(r => {
@@ -83,5 +84,15 @@ function main() {
         }
       );
     });
+    createResource(() =>
+      wsMessaging({
+        config_signal: configResourceValue,
+        owner,
+        info: () => ({
+          energyDischargedSinceFull: energyDischargedSinceFull(),
+          energyChargedSinceFull: energyChargedSinceFull(),
+        }),
+      })
+    );
   });
 }
