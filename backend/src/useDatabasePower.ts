@@ -31,9 +31,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
 
   const [batteryWasLastFullAt] = createResource(influxClient, async db => {
     log("Getting last full time from database");
-    const [response] = await db.query(
-      `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= 584 AND "battery_current" < 100`
-    );
+    const [response] = await db.query(`SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= 584`);
     console.log("full query response", response);
     let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
     if (!isNaN(timeOfLastFull)) {
