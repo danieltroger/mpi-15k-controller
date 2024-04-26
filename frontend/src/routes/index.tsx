@@ -7,13 +7,11 @@ export default function Home() {
   const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
   const [mqttValues] = getBackendSyncedSignal("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
-  const energyRemovedSinceFull = createMemo(() => {
-    const discharged = info()?.energyDischargedSinceFull; // 2000
-    const charged = info()?.energyChargedSinceFull; // 4000
-    if (charged == undefined && discharged == undefined) return 0;
-    if (charged == undefined) return discharged;
-    if (discharged == undefined) return charged;
-    return discharged + charged;
+  const assumedCapacity = 10944;
+  const soc = createMemo(() => {
+    const removedSinceFull = info()?.energyRemovedSinceFull;
+    if (removedSinceFull === undefined) return undefined;
+    return 100 - (removedSinceFull / assumedCapacity) * 100;
   });
 
   onMount(() => setHasHydrated(true));
@@ -37,9 +35,8 @@ export default function Home() {
             </Show>
           </code>
         </pre>
-        Energy removed since full: {energyRemovedSinceFull()}wh
         <br />
-        Percent SOC assuming 10 944wh capacity: {100 - Math.abs((energyRemovedSinceFull() / 10944) * 100)}%
+        Percent SOC assuming {assumedCapacity.toLocaleString()}wh capacity: {soc()}%
       </section>
       <section>
         <h2>MQTT Values</h2>
