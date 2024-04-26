@@ -66,7 +66,7 @@ function main() {
       if (charged == undefined && discharged == undefined) return 0;
       if (charged == undefined) return Math.abs(discharged!);
       if (discharged == undefined) return Math.abs(charged);
-      return discharged - charged;
+      return Math.abs(discharged) - Math.abs(charged);
     });
 
     createEffect(() => {
