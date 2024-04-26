@@ -1,0 +1,22 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a9541e0f283ee7d12a82962d76916cfd09b95d16..8da5685500ae2ed8eb2064a11761dd1f27d6454a 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -2113,7 +2113,16 @@ function _resolve(id, options = {}) {
+   return pathToFileURL(resolved);
+ }
+ function resolveSync(id, options) {
+-  return _resolve(id, options);
++  try {
++    return _resolve(id, options);
++  } catch(originalError){
++    try {
++      return import.meta.resolve(id);
++    } catch(nativeResolveError){
++      console.log("Backup resolution using native node resolution failed.", nativeResolveError);
++      throw originalError;
++    }
++  }
+ }
+ function resolve(id, options) {
+   try {
