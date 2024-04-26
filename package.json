@@ -9,6 +9,7 @@
     "@depict-ai/plp-styling": "^4.4.20",
     "@depict-ai/ui": "^4.8.22",
     "@depict-ai/utilishared": "^2.4.7",
+    "@types/node": "^20.12.7",
     "prettier": "^3.1.1",
     "sass": "^1.75.0",
     "solid-js": "^1.8.17",

@@ -58,6 +58,16 @@ function main() {
       from: totalLastFull,
       to: now,
     });
+    // 1000wh = 1000wh were discharged
+    // -100wh = 100wh were charged
+    const energyRemovedSinceFull = createMemo(() => {
+      const discharged = energyDischargedSinceFull();
+      const charged = energyChargedSinceFull();
+      if (charged == undefined && discharged == undefined) return 0;
+      if (charged == undefined) return Math.abs(discharged!);
+      if (discharged == undefined) return Math.abs(charged);
+      return discharged - charged;
+    });
 
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;
@@ -75,8 +85,7 @@ function main() {
           prematureFloatBugWorkaround({
             mqttValues: mqttValues,
             configSignal: configResourceValue,
-            energyDischargedSinceFull,
-            energyChargedSinceFull,
+            energyRemovedSinceFull,
           }),
         e => {
           setPrematureWorkaroundErrored(true);
@@ -94,6 +103,7 @@ function main() {
             energyDischargedSinceFull: energyDischargedSinceFull(),
             energyChargedSinceFull: energyChargedSinceFull(),
             totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
+            energyRemovedSinceFull: energyRemovedSinceFull(),
           };
           return broadcast;
         },

@@ -1,5 +1,5 @@
 import { useMQTTValues } from "./useMQTTValues";
-import { Accessor, createEffect, createMemo, createResource, createSignal, onCleanup, untrack } from "solid-js";
+import { Accessor, createEffect, createResource, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "./config";
 import { error, log } from "./logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
@@ -10,13 +10,11 @@ const lastVoltageSet: { float?: number; bulk?: number } = {};
 export function prematureFloatBugWorkaround({
   mqttValues,
   configSignal,
-  energyDischargedSinceFull,
-  energyChargedSinceFull,
+  energyRemovedSinceFull,
 }: {
   mqttValues: ReturnType<typeof useMQTTValues>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  energyDischargedSinceFull: Accessor<number | undefined>;
-  energyChargedSinceFull: Accessor<number | undefined>;
+  energyRemovedSinceFull: Accessor<number | undefined>;
 }) {
   const [config] = configSignal;
   const [localStateOfConfiguredVoltageFloat, { refetch: refetchFloat }] = createResource(() =>
@@ -35,14 +33,6 @@ export function prematureFloatBugWorkaround({
     setVoltageWithThrottlingAndRefetch(configSignal, "bulk", targetVoltage, refetchBulk)
   );
   const refetchInterval = setInterval(() => (refetchBulk(), refetchFloat()), 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
-  const energyRemovedSinceFull = createMemo(() => {
-    const discharged = energyDischargedSinceFull();
-    const charged = energyChargedSinceFull();
-    if (charged == undefined && discharged == undefined) return 0;
-    if (charged == undefined) return discharged;
-    if (discharged == undefined) return charged;
-    return discharged + charged;
-  });
 
   onCleanup(() => clearInterval(refetchInterval));
 
@@ -64,13 +54,12 @@ export function prematureFloatBugWorkaround({
     }
     const removedSinceFull = energyRemovedSinceFull();
     if (!removedSinceFull) return;
-    const removedAbs = Math.abs(removedSinceFull);
     const { full_battery_voltage, start_bulk_charge_after_wh_discharged } = config();
-    if (removedAbs >= start_bulk_charge_after_wh_discharged) {
+    if (removedSinceFull >= start_bulk_charge_after_wh_discharged) {
       if (untrack(settableChargeVoltage) !== full_battery_voltage) {
         log(
           "Discharged",
-          removedAbs,
+          removedSinceFull,
           "wh since full, which is more than",
           start_bulk_charge_after_wh_discharged,
           "wh starting bulk charge"

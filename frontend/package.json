@@ -15,6 +15,7 @@
     "@solidjs/meta": "^0.29.3",
     "@solidjs/router": "^0.13.2",
     "@solidjs/start": "^1.0.0-rc.0",
+    "@types/node": "^20.12.7",
     "nodemon": "^3.1.0",
     "prettier": "^3.2.5",
     "sass": "^1.75.0",

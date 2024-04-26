@@ -8,7 +8,7 @@ export function WebSocketProvider(props: { children?: JSX.Element }) {
   let socket: DepictAPIWS | undefined;
 
   if (!isServer) {
-    const u_o = new URL(location.origin);
+    const u_o = new URL(process.env.NODE_ENV === "development" ? "http://192.168.1.102" : location.origin);
     u_o.protocol = u_o.protocol === "https:" ? "wss:" : "ws:";
     u_o.port = "9321";
 
