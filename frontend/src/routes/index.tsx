@@ -8,8 +8,8 @@ export default function Home() {
   const [mqttValues] = getBackendSyncedSignal("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const energyRemovedSinceFull = createMemo(() => {
-    const discharged = info()?.energyDischargedSinceFull;
-    const charged = info()?.energyChargedSinceFull;
+    const discharged = info()?.energyDischargedSinceFull; // 2000
+    const charged = info()?.energyChargedSinceFull; // 4000
     if (charged == undefined && discharged == undefined) return 0;
     if (charged == undefined) return discharged;
     if (discharged == undefined) return charged;
