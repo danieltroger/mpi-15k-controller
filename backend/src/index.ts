@@ -8,6 +8,7 @@ import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 import { useNow } from "./useNow";
 import { wsMessaging } from "./wsMessaging";
+import { InfoBroadcast } from "./sharedTypes";
 
 while (true) {
   await new Promise<void>(r => {
@@ -88,11 +89,14 @@ function main() {
       wsMessaging({
         config_signal: configResourceValue,
         owner,
-        info: () => ({
-          energyDischargedSinceFull: energyDischargedSinceFull(),
-          energyChargedSinceFull: energyChargedSinceFull(),
-          totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
-        }),
+        info: () => {
+          const broadcast: InfoBroadcast = {
+            energyDischargedSinceFull: energyDischargedSinceFull(),
+            energyChargedSinceFull: energyChargedSinceFull(),
+            totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
+          };
+          return broadcast;
+        },
         mqttValues: () => mqttValues,
       })
     );

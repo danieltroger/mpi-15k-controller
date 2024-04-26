@@ -5,7 +5,8 @@
     "dev": "vinxi dev",
     "build": "vinxi build",
     "start": "vinxi start",
-    "version": "vinxi version"
+    "version": "vinxi version",
+    "build-and-start": "nodemon -e scss,tsx,ts -x 'yarn build && PORT=3003 yarn start' -w src/"
   },
   "dependencies": {
     "@depict-ai/plp-styling": "^4.4.20",
@@ -14,6 +15,7 @@
     "@solidjs/meta": "^0.29.3",
     "@solidjs/router": "^0.13.2",
     "@solidjs/start": "^1.0.0-rc.0",
+    "nodemon": "^3.1.0",
     "prettier": "^3.2.5",
     "sass": "^1.75.0",
     "solid-js": "^1.8.16",

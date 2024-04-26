@@ -1,11 +1,21 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { createSignal, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
+import { InfoBroadcast } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
-  const [info] = getBackendSyncedSignal("info");
+  const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
   const [mqttValues] = getBackendSyncedSignal("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
+  const energyRemovedSinceFull = createMemo(() => {
+    const discharged = info()?.energyDischargedSinceFull;
+    const charged = info()?.energyChargedSinceFull;
+    if (charged == undefined && discharged == undefined) return 0;
+    if (charged == undefined) return discharged;
+    if (discharged == undefined) return charged;
+    return discharged + charged;
+  });
+
   onMount(() => setHasHydrated(true));
 
   return (
@@ -27,6 +37,7 @@ export default function Home() {
             </Show>
           </code>
         </pre>
+        Energy removed since full: {energyRemovedSinceFull()}wh
       </section>
       <section>
         <h2>MQTT Values</h2>
