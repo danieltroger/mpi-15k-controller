@@ -104,6 +104,7 @@ function main() {
             energyChargedSinceFull: energyChargedSinceFull(),
             totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
             energyRemovedSinceFull: energyRemovedSinceFull(),
+            currentBatteryPower: currentPower(),
           };
           return broadcast;
         },
