@@ -34,6 +34,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     const [response] = await db.query(
       `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= 584 AND "battery_current" < 100`
     );
+    console.log("full query response", response);
     let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
     if (!isNaN(timeOfLastFull)) {
       const when = Math.round(timeOfLastFull / 1000 / 1000);
