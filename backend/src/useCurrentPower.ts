@@ -2,7 +2,6 @@ import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
 import { createEffect, createMemo, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
-import { log } from "./logging";
 
 export function useCurrentPower(
   mqttValues: ReturnType<typeof useMQTTValues>,
@@ -35,8 +34,9 @@ export function useCurrentPower(
   });
   const haveSeenBatteryFullAt = createMemo<number | undefined>(prev => {
     const voltage = mqttValues.battery_voltage?.value as undefined | number;
-    if (voltage == undefined) return prev;
-    if (voltage / 10 >= config().full_battery_voltage) {
+    const current = mqttValues.battery_current?.value as undefined | number;
+    if (voltage == undefined || current == undefined) return prev;
+    if (voltage / 10 >= config().full_battery_voltage && current < config().stop_charging_below_current) {
       return mqttValues.battery_voltage!.time;
     }
     return prev;

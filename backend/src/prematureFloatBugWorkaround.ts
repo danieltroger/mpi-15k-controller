@@ -54,7 +54,10 @@ export function prematureFloatBugWorkaround({
       // Emergency voltage based charging, in case something breaks with DB or something
       setSettableChargeVoltage(config().full_battery_voltage);
       return;
-    } else if (voltage >= config().full_battery_voltage && (getCurrent() as number) < 10) {
+    } else if (
+      voltage >= config().full_battery_voltage &&
+      (getCurrent() as number) < config().stop_charging_below_current
+    ) {
       // When battery full, stop charging
       setSettableChargeVoltage(config().float_charging_voltage);
       return;
