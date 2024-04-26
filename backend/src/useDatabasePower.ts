@@ -31,7 +31,9 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
 
   const [batteryWasLastFullAt] = createResource(influxClient, async db => {
     log("Getting last full time from database");
-    const [response] = await db.query(`SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= 584`);
+    const [response] = await db.query(
+      `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= 584 AND "battery_current" < 100`
+    );
     let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
     if (!isNaN(timeOfLastFull)) {
       const when = Math.round(timeOfLastFull / 1000 / 1000);
@@ -71,7 +73,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       const { battery_voltage, time } = voltage;
       if (battery_voltage == null || battery_current == null) return;
       return {
-        time: Math.round(voltage.time.getNanoTime() / 1000 / 1000),
+        time: Math.round(time.getNanoTime() / 1000 / 1000),
         value: (battery_voltage / 10) * (battery_current / 10),
       };
     });
