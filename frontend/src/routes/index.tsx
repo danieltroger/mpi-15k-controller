@@ -38,6 +38,8 @@ export default function Home() {
           </code>
         </pre>
         Energy removed since full: {energyRemovedSinceFull()}wh
+        <br />
+        Percent SOC assuming 10 944wh capacity: {100 - energyRemovedSinceFull() / 10944}wh
       </section>
       <section>
         <h2>MQTT Values</h2>
