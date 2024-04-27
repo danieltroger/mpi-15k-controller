@@ -57,6 +57,7 @@ function main() {
       databasePowerValues,
       from: totalLastFull,
       to: now,
+      config,
     });
     // 1000wh = 1000wh were discharged
     // -100wh = 100wh were charged
