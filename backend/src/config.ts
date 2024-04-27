@@ -15,6 +15,7 @@ export type Config = {
   full_battery_voltage: number;
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
+  parasitic_consumption_for_energy_calculations: number;
   mqtt_host: string;
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
@@ -47,6 +48,7 @@ const default_config: Config = {
   shinemonitor_company_key: "bnrl_frRFjEz8Mkn",
   mqtt_host: "192.168.0.3",
   stop_charging_below_current: 10,
+  parasitic_consumption_for_energy_calculations: 240,
 };
 
 export async function get_config_object(owner: Owner) {
