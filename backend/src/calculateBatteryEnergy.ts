@@ -1,10 +1,12 @@
 import { Accessor, createMemo } from "solid-js";
+import { get_config_object } from "./config";
 
 export function calculateBatteryEnergy({
   from,
   to,
   databasePowerValues,
   localPowerHistory,
+  config,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -16,6 +18,7 @@ export function calculateBatteryEnergy({
    */
   localPowerHistory: { value: number; time: number }[];
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
+  config: Awaited<ReturnType<typeof get_config_object>>[0];
 }) {
   const totalPowerHistory = createMemo(() => {
     const fromValue = from();
@@ -26,6 +29,7 @@ export function calculateBatteryEnergy({
     const filteredDatabasePower = databasePower.filter(({ time }) => time <= firstLocalPower);
     return [...filteredDatabasePower, ...localPower];
   });
+  const subtractFromPower = createMemo(() => config().parasitic_consumption_for_energy_calculations);
 
   const energy = createMemo(() => {
     const powerValues = totalPowerHistory();
@@ -36,11 +40,12 @@ export function calculateBatteryEnergy({
       const power = powerValues[i];
       const nextPower = powerValues[i + 1];
       if (!nextPower) break;
+      const correctedPowerValue = power.value - subtractFromPower();
       const timeDiff = nextPower.time - power.time;
-      const energy = (power.value * timeDiff) / 1000 / 60 / 60;
-      if (power.value > 0) {
+      const energy = (correctedPowerValue * timeDiff) / 1000 / 60 / 60;
+      if (correctedPowerValue > 0) {
         energyCharged += energy;
-      } else if (power.value < 0) {
+      } else if (correctedPowerValue < 0) {
         energyDischarged += energy;
       }
     }
