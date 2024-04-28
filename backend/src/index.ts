@@ -1,14 +1,17 @@
 import { catchError, createEffect, createMemo, createResource, createRoot, createSignal, getOwner } from "solid-js";
-import { error } from "./logging";
+import { error } from "./utilities/logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import { useNow } from "./useNow";
+import { useNow } from "./utilities/useNow";
 import { wsMessaging } from "./wsMessaging";
 import { InfoBroadcast } from "./sharedTypes";
+import { wait } from "@depict-ai/utilishared/latest";
+import { useTemperatures } from "./useTemperatures";
+import { saveTemperatures } from "./saveTemperatures";
 
 while (true) {
   await new Promise<void>(r => {
@@ -20,13 +23,14 @@ while (true) {
       });
     });
   });
-  await new Promise(r => setTimeout(r, 10000));
+  await wait(10000);
 }
 
 function main() {
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
-  // TODO: add SOC calculation
+  // TODO: improve/finish SOC calculation
+  // TODO: Alerts when battery overheats / program restarts
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
@@ -34,7 +38,7 @@ function main() {
     const configResourceValue = configResource();
     if (!configResourceValue) return;
     const [config] = configResourceValue;
-    const mqttValues = useMQTTValues(createMemo(() => config().mqtt_host));
+    const { mqttValues, mqttClient } = useMQTTValues(createMemo(() => config().mqtt_host));
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
@@ -69,6 +73,9 @@ function main() {
       if (discharged == undefined) return Math.abs(charged);
       return Math.abs(discharged) - Math.abs(charged);
     });
+    const temperatures = useTemperatures(config);
+
+    saveTemperatures({ config, mqttClient, temperatures });
 
     createEffect(() => {
       if (prematureWorkaroundErrored()) return;
@@ -84,7 +91,7 @@ function main() {
       catchError(
         () =>
           prematureFloatBugWorkaround({
-            mqttValues: mqttValues,
+            mqttValues,
             configSignal: configResourceValue,
             energyRemovedSinceFull,
           }),
@@ -110,6 +117,7 @@ function main() {
           return broadcast;
         },
         mqttValues: () => mqttValues,
+        temperatures,
       })
     );
   });

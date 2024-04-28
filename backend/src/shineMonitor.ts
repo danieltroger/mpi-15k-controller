@@ -1,7 +1,7 @@
 import { Config, get_config_object } from "./config";
 import { untrack } from "solid-js";
-import { sha1 } from "./sha1";
-import { log } from "./logging";
+import { sha1 } from "./utilities/sha1";
+import { log } from "./utilities/logging";
 
 export type GetVoltageResponse = {
   err: number;

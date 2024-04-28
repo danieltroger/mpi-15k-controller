@@ -2,17 +2,20 @@ import { Accessor, createEffect, Owner, runWithOwner, Signal, untrack } from "so
 import { Config } from "./config";
 import { startWsServer } from "./startWsServer";
 import { useMQTTValues } from "./useMQTTValues";
+import { useTemperatures } from "./useTemperatures";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
   info,
   owner,
   mqttValues,
+  temperatures,
 }: {
   config_signal: Signal<Config>;
   info: Accessor<Record<string, any>>;
-  mqttValues: Accessor<ReturnType<typeof useMQTTValues>>;
+  mqttValues: Accessor<ReturnType<typeof useMQTTValues>["mqttValues"]>;
   owner: Owner;
+  temperatures: ReturnType<typeof useTemperatures>;
 }) {
   const exposed_signals = {
     config: {
@@ -26,6 +29,9 @@ export async function wsMessaging({
     },
     info: { getter: info },
     mqttValues: { getter: mqttValues },
+    temperatures: {
+      getter: () => serializeTemperatures(temperatures),
+    },
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
@@ -74,4 +80,8 @@ export async function wsMessaging({
       createEffect(() => broadcast(JSON.stringify({ id: Math.random() + "", type: "change", key, "value": getter() })))
     );
   }
+}
+
+function serializeTemperatures(temperatures: ReturnType<typeof useTemperatures>) {
+  return Object.fromEntries(Object.entries(temperatures()).map(([device_id, value]) => [device_id, value()]));
 }

@@ -1,6 +1,6 @@
 import MQTT from "async-mqtt";
 import { Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
-import { log } from "./logging";
+import { log } from "./utilities/logging";
 import { createStore } from "solid-js/store";
 
 export function useMQTTValues(mqttHost: Accessor<string>) {
@@ -49,5 +49,5 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
   });
   createEffect(() => subscription() && log("We have MQTT subscription", subscription()));
 
-  return values;
+  return { mqttValues: values, mqttClient: client };
 }
