@@ -36,7 +36,7 @@ export function useCurrentPower(
     const voltage = mqttValues.battery_voltage?.value as undefined | number;
     const current = mqttValues.battery_current?.value as undefined | number;
     if (voltage == undefined || current == undefined) return prev;
-    if (voltage / 10 >= config().full_battery_voltage && current < config().stop_charging_below_current) {
+    if (voltage / 10 >= config().full_battery_voltage && current / 10 < config().stop_charging_below_current) {
       return mqttValues.battery_voltage!.time;
     }
     return prev;
