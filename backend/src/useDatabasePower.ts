@@ -6,20 +6,23 @@ import { useNow } from "./useNow";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const currentTime = useNow();
+  const host = createMemo(() => config()?.influxdb?.host);
+  const database = createMemo(() => config()?.influxdb?.database);
+  const username = createMemo(() => config()?.influxdb?.username);
+  const password = createMemo(() => config()?.influxdb?.password);
   const influxClient = createMemo(() => {
-    const configValue = config();
-    if (!configValue.influxdb) {
+    if (!host() || !database() || !username() || !password()) {
       error(
-        "No influxdb config found, please configure influxdb.host, influxdb.database, influxdb.username and influxdb.password in config.json"
+        "No influxdb config found (or incomplete), please configure influxdb.host, influxdb.database, influxdb.username and influxdb.password in config.json"
       );
       return;
     }
 
     return new Influx.InfluxDB({
-      "host": configValue.influxdb.host,
-      "database": configValue.influxdb.database,
-      "username": configValue.influxdb.username,
-      "password": configValue.influxdb.password,
+      "host": host(),
+      "database": database(),
+      "username": username(),
+      "password": password(),
     });
   });
   const lastTimeItWasMidnight = createMemo(() => {
