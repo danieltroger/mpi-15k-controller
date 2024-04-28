@@ -31,6 +31,7 @@ function main() {
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
   // TODO: improve/finish SOC calculation
   // TODO: Alerts when battery overheats / program restarts
+  // TODO: add typecheck CI pipeline
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
