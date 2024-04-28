@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer, Server } from "ws";
 import { error, log, warn } from "./logging";
 import { IncomingMessage } from "http";
 import { catchify } from "@depict-ai/utilishared/latest";
+import { getOwner, onCleanup, runWithOwner } from "solid-js";
 
 const max_connection_age = 1000 * 60 * 60; //ms
 const ping_interval = 1000 * 5; // ms
@@ -12,8 +13,11 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
   handle_message: (message: T) => Promise<string>
 ) {
   let wss: Server<typeof WebSocket, typeof IncomingMessage>;
+  const owner = getOwner();
   const start_server = () => {
     wss = new WebSocketServer({ port });
+    runWithOwner(owner, () => onCleanup(() => wss.close()));
+
     wss.on(
       "error",
       catchify(async (e: Error) => {
