@@ -4,7 +4,7 @@ import { createEffect, createMemo, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
 
 export function useCurrentPower(
-  mqttValues: ReturnType<typeof useMQTTValues>,
+  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
   [config]: Awaited<ReturnType<typeof get_config_object>>
 ) {
   const currentPower = createMemo(() => {

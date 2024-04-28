@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer, Server } from "ws";
-import { error, log, warn } from "./logging";
+import { error, log, warn } from "./utilities/logging";
 import { IncomingMessage } from "http";
-import { catchify } from "@depict-ai/utilishared/latest";
+import { catchify, wait } from "@depict-ai/utilishared/latest";
 import { getOwner, onCleanup, runWithOwner } from "solid-js";
 
 const max_connection_age = 1000 * 60 * 60; //ms
@@ -23,7 +23,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
       catchify(async (e: Error) => {
         error("WS server had an error", e, "restarting it in 5s");
         wss.close();
-        await new Promise(r => setTimeout(r, 5000));
+        await wait(5000);
         start_server();
       })
     );
@@ -61,7 +61,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
         );
         while (+new Date() - last_movement < max_connection_age) {
           ws.ping(Math.random() + "");
-          await new Promise(r => setTimeout(r, ping_interval));
+          await wait(ping_interval);
         }
         ws.close();
         connections.delete(ws);
