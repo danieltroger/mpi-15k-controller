@@ -7,7 +7,7 @@ export default function Home() {
   const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
   const [mqttValues] = getBackendSyncedSignal("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
-  const assumedCapacity = 10944;
+  const assumedCapacity = 19.2 * 12 * 3 * 16;
   const soc = createMemo(() => {
     const removedSinceFull = info()?.energyRemovedSinceFull;
     if (removedSinceFull === undefined) return undefined;
