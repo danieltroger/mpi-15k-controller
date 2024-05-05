@@ -11,19 +11,27 @@ import {
 import { Config } from "./config";
 import { promises as fs } from "fs";
 import { exec } from "./utilities/exec";
-import { log, warn } from "./utilities/logging";
+import { log, warn, error } from "./utilities/logging";
 import { wait } from "@depict-ai/utilishared/latest";
 
 export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
 
 export function useTemperatures(get_config: Accessor<Config>) {
-  exec("sudo dtoverlay w1-gpio gpiopin=4 pullup=0").then(({ stdout, stderr }) => {
-    if (stdout || stderr) {
-      log("Enabling thermometers returned", { stdout, stderr });
+  const [thermometersEnabled] = createResource(async () => {
+    // If already initialised, don't try again as it will throw
+    if (!(await hasSensorFolder())) {
+      const { stderr, stdout } = await exec("sudo dtoverlay w1-gpio gpiopin=4 pullup=0");
+      if (stdout || stderr) {
+        log("Enabling thermometers returned", { stdout, stderr });
+      }
     }
+    // Only start reading thermometers once we have enabled them
+    return true;
   });
   const thermometers = createMemo(() => get_config().thermometers);
-  const thermometer_ids = createMemo(() => Object.keys(thermometers()));
+  const thermometer_ids = createMemo(() =>
+    thermometersEnabled() ? (JSON.parse(JSON.stringify(Object.keys(thermometers()))) as string[]) : []
+  );
 
   const thermometer_values = mapArray(thermometer_ids, thermometer_device_id =>
     read_thermometer({
@@ -120,4 +128,19 @@ async function get_thermometer_value({
     thermometer_device_id: thermometer_device_id,
     label: untrack(label),
   } as ThermometerValue;
+}
+
+/**
+ * Asynchronously checks if there's any folder starting with `28-` in `/sys/bus/w1/devices/`.
+ * @returns {Promise<boolean>} A promise that resolves to true if such a folder exists, otherwise false.
+ */
+async function hasSensorFolder(): Promise<boolean> {
+  try {
+    const dirPath = "/sys/bus/w1/devices/";
+    const files = await fs.readdir(dirPath);
+    return files.some(file => file.startsWith("28-"));
+  } catch (error) {
+    error("Error reading directory:", error);
+    return false;
+  }
 }
