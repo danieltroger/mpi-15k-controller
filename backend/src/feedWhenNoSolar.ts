@@ -36,6 +36,7 @@ export function feedWhenNoSolar(
     useShinemonitorParameter<string>({
       parameter: "gcp_set_max_feed_in_power",
       configSignal,
+      wantedToCurrentTransformerForDiffing: wanted => parseFloat(wanted).toFixed(1),
     });
 
   const { setWantedValue: setWantedBatteryToUtilityWhenNoSolar, currentValue: currentBatteryToUtilityWhenNoSolar } =
