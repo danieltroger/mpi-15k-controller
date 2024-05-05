@@ -18,7 +18,8 @@
     "vite": "^5.2.10"
   },
   "scripts": {
-    "start": "bash -c 'cd backend && yarn start & cd frontend && yarn build-and-start & wait'"
+    "start": "bash -c 'cd backend && yarn start & cd frontend && yarn build-and-start & wait'",
+    "typecheck": "tsc -p tsconfig.typecheck.json"
   },
   "type": "module",
   "resolutions": {
