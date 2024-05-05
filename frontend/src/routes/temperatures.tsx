@@ -1,8 +1,9 @@
 import { createMemo, createSignal, For, JSX, onCleanup, untrack } from "solid-js";
-import { catchify } from "@depict-ai/utilishared";
+import { catchify } from "@depict-ai/utilishared/latest";
 import { isServer } from "solid-js/web";
 import { Title } from "@solidjs/meta";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
+import "./temperatures.scss";
 
 export default function Temperatures() {
   const [get_temperatures] = getBackendSyncedSignal<
