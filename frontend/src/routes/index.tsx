@@ -5,7 +5,7 @@ import { InfoBroadcast } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
   const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
-  const [mqttValues] = getBackendSyncedSignal("mqttValues");
+  const [mqttValues] = getBackendSyncedSignal<Record<string, { value: any; time: number }>>("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const assumedCapacity = 19.2 * 12 * 3 * 16;
   const soc = createMemo(() => {
@@ -41,6 +41,9 @@ export default function Home() {
         <br />
         Percent SOC assuming {assumedCapacity.toLocaleString()}wh capacity: {soc()}%
       </section>
+      <Show when={hasHydrated()}>
+        <NoBuyDebug mqttValues={mqttValues} />
+      </Show>
       <section>
         <h2>MQTT Values</h2>
         <pre>
@@ -52,5 +55,24 @@ export default function Home() {
         </pre>
       </section>
     </main>
+  );
+}
+
+function NoBuyDebug({ mqttValues }: { mqttValues: () => undefined | Record<string, { value: any; time: number }> }) {
+  const solarPower = () =>
+    ((mqttValues()?.["solar_input_power_1"]?.value || 0) as number) +
+    ((mqttValues()?.["solar_input_power_2"]?.value || 0) as number);
+  const acOutputPower = () =>
+    ((mqttValues()?.["ac_output_active_power_r"]?.value || 0) as number) +
+    ((mqttValues()?.["ac_output_active_power_s"]?.value || 0) as number) +
+    ((mqttValues()?.["ac_output_active_power_t"]?.value || 0) as number);
+  const availablePower = createMemo(() => solarPower() - acOutputPower());
+  return (
+    <section>
+      <h2>Debug for no power buying</h2>
+      <p>
+        {availablePower()} watts, which is made out of {solarPower()} watts minus {acOutputPower()} watts
+      </p>
+    </section>
   );
 }
