@@ -32,6 +32,7 @@ function main() {
   // TODO: improve/finish SOC calculation
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
+  // TODO: to avoid pulling inverter idle power from grid, always feed-in a little when sun is down
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
