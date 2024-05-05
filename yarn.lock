@@ -1842,7 +1842,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@swc/core@npm:^1.3.101":
+"@swc/core@npm:^1.4.17":
   version: 1.4.17
   resolution: "@swc/core@npm:1.4.17"
   dependencies:
@@ -2410,7 +2410,7 @@ __metadata:
   dependencies:
     "@depict-ai/utilishared": "npm:^2.4.4"
     "@swc-node/register": "npm:^1.6.8"
-    "@swc/core": "npm:^1.3.101"
+    "@swc/core": "npm:^1.4.17"
     "@types/node": "npm:^20.12.7"
     "@types/ws": "npm:^8.5.10"
     async-mqtt: "npm:^2.6.3"
