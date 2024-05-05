@@ -20,7 +20,7 @@ export function useShinemonitorParameter<
 }: {
   parameter: string;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  wantedToCurrentTransformerForDiffing?: (WantedValueType: string) => ReadParameterResponse;
+  wantedToCurrentTransformerForDiffing: (WantedValueType: string) => ReadParameterResponse;
 }) {
   const [wantedValue, setWantedValue] = createSignal<WantedValueType | undefined>();
   const [currentValue, { refetch }] = createResource(async () =>
