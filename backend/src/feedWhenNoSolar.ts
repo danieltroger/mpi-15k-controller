@@ -84,7 +84,14 @@ export function feedWhenNoSolar(
 
   createEffect(() => {
     const { max_feed_in_power_when_feeding_from_solar, feed_amount_watts } = config().feed_from_battery_when_no_solar;
-    const target = shouldEnableFeeding() ? feed_amount_watts : max_feed_in_power_when_feeding_from_solar;
+    const shouldFeed = shouldEnableFeeding();
+    if (!shouldFeed) {
+      // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
+      if (currentBatteryToUtilityWhenSolar() !== "Disable" && currentBatteryToUtilityWhenNoSolar() !== "Disable") {
+        return;
+      }
+    }
+    const target = shouldFeed ? feed_amount_watts : max_feed_in_power_when_feeding_from_solar;
     setWantedMaxFeedInPower(target.toFixed(0));
   });
 

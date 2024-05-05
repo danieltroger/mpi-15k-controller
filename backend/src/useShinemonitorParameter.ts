@@ -43,7 +43,7 @@ export function useShinemonitorParameter<
       return;
     }
     log(
-      "Queueing request to set ",
+      "Queueing request to set",
       parameter,
       "to",
       wanted,
@@ -76,7 +76,7 @@ async function setParameterWithThrottlingAndRefetch<T>(
   await setConfiguredValueInShinemonitor(configSignal, parameter, value);
   lastShineRequestForParameter[parameter] = +new Date();
   await refetch();
-  await wait(5000); // Inverter needs time for it to be set, so check again after 5s
+  await wait(8000); // Inverter needs time for it to be set, so check again after 8s
   await refetch();
 }
 
