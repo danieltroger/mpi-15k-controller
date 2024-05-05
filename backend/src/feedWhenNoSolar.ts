@@ -84,6 +84,17 @@ export function feedWhenNoSolar(
     setWantedMaxFeedInPower(target.toFixed(0));
   });
 
+  createEffect(() =>
+    log(
+      "We should be feeding from the battery when no solar:",
+      shouldEnableFeeding(),
+      "because we have",
+      availablePower(),
+      "available power and we should feed below",
+      feedBelow()
+    )
+  );
+
   createEffect(
     () =>
       currentShineMaxFeedInPower() &&
