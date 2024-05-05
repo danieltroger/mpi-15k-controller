@@ -139,8 +139,7 @@ async function hasSensorFolder(): Promise<boolean> {
     const dirPath = "/sys/bus/w1/devices/";
     const files = await fs.readdir(dirPath);
     return files.some(file => file.startsWith("28-"));
-  } catch (error) {
-    error("Error reading directory:", error);
+  } catch (e) {
     return false;
   }
 }
