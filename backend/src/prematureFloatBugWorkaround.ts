@@ -1,8 +1,8 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { Accessor, createEffect, createResource, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "./config";
-import { error, log } from "./logging";
-import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
+import { error, log } from "./utilities/logging";
+import { deparallelize_no_drop, wait } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "./shineMonitor";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
@@ -12,7 +12,7 @@ export function prematureFloatBugWorkaround({
   configSignal,
   energyRemovedSinceFull,
 }: {
-  mqttValues: ReturnType<typeof useMQTTValues>;
+  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   energyRemovedSinceFull: Accessor<number | undefined>;
 }) {

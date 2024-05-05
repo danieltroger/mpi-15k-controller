@@ -2,7 +2,7 @@ import { promises as fs_promises } from "fs";
 import { createSignal, Owner, untrack, Signal, createEffect, runWithOwner } from "solid-js";
 import path from "path";
 import process from "process";
-import { error, log } from "./logging";
+import { error, log } from "./utilities/logging";
 
 export type Config = {
   influxdb?: {
@@ -16,7 +16,13 @@ export type Config = {
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
   parasitic_consumption_for_energy_calculations: number;
+  temperature_report_interval: number;
+  thermometers: { [key: string]: string };
   mqtt_host: string;
+  temperature_saving: {
+    database: string;
+    table: string;
+  };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
   shinemonitor_user?: string;
@@ -49,6 +55,12 @@ const default_config: Config = {
   mqtt_host: "192.168.0.3",
   stop_charging_below_current: 10,
   parasitic_consumption_for_energy_calculations: 240,
+  thermometers: {},
+  temperature_report_interval: 3000,
+  temperature_saving: {
+    database: "mppsolar",
+    table: "battery_temperatures",
+  },
 };
 
 export async function get_config_object(owner: Owner) {

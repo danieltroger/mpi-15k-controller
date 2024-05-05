@@ -11,3 +11,5 @@
 
 config.json
 config.json.bak
+
+tsconfig.typecheck.tsbuildinfo

@@ -24,6 +24,9 @@ export default function Home() {
           <li>
             <A href="/config">Config editor</A>
           </li>
+          <li>
+            <A href="/temperatures">Temperatures</A>
+          </li>
         </ol>
       </section>
       <section>

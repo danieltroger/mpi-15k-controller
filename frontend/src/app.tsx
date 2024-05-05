@@ -1,21 +1,30 @@
 import { MetaProvider, Title } from "@solidjs/meta";
-import { Router } from "@solidjs/router";
+import { A, Router, useLocation } from "@solidjs/router";
 import { FileRoutes } from "@solidjs/start/router";
-import { Suspense } from "solid-js";
+import { Show, Suspense } from "solid-js";
 import "./app.scss";
 import { WebSocketProvider } from "~/components/WebSocketProvider";
 
 export default function App() {
   return (
     <Router
-      root={props => (
-        <MetaProvider>
-          <WebSocketProvider>
-            <Title>SolidStart - Basic</Title>
-            <Suspense>{props.children}</Suspense>
-          </WebSocketProvider>
-        </MetaProvider>
-      )}
+      root={props => {
+        const location = useLocation();
+        return (
+          <MetaProvider>
+            <WebSocketProvider>
+              <Title>SolidStart - Basic</Title>
+              <Suspense>
+                <Show when={location.pathname !== "/"}>
+                  <A href="/">Back</A>
+                  <br />
+                </Show>
+                {props.children}
+              </Suspense>
+            </WebSocketProvider>
+          </MetaProvider>
+        );
+      }}
     >
       <FileRoutes />
     </Router>
