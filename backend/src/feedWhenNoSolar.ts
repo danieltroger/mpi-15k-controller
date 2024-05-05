@@ -10,6 +10,7 @@ import { log } from "./utilities/logging";
 export function feedWhenNoSolar(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
   configSignal: Awaited<ReturnType<typeof get_config_object>>
+  //currentBatteryPower: () => { value: number; time: number } | undefined
 ) {
   const solarPower = () =>
     ((mqttValues?.["solar_input_power_1"]?.value || 0) as number) +
@@ -18,10 +19,10 @@ export function feedWhenNoSolar(
     ((mqttValues?.["ac_output_active_power_r"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_s"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_t"]?.value || 0) as number);
-  const availablePower = createMemo(() => solarPower() - acOutputPower());
+  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
-  const shouldEnableFeeding = createMemo(() => availablePower() < feedBelow());
+  const shouldEnableFeeding = createMemo(() => availablePowerThatWouldGoIntoTheGridByItself() < feedBelow());
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
     if (wanted === "48") {
       return "Disable" as const;
@@ -92,7 +93,7 @@ export function feedWhenNoSolar(
       "We should be feeding from the battery when no solar:",
       shouldEnableFeeding(),
       "because we have",
-      untrack(availablePower),
+      untrack(availablePowerThatWouldGoIntoTheGridByItself),
       "available power and we should feed below",
       untrack(feedBelow)
     )
