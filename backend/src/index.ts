@@ -12,6 +12,7 @@ import { InfoBroadcast } from "./sharedTypes";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./useTemperatures";
 import { saveTemperatures } from "./saveTemperatures";
+import { feedWhenNoSolar } from "./feedWhenNoSolar";
 
 while (true) {
   await new Promise<void>(r => {
@@ -32,7 +33,6 @@ function main() {
   // TODO: improve/finish SOC calculation
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
-  // TODO: to avoid pulling inverter idle power from grid, always feed-in a little when sun is down
   // TODO: Send SOC in mqtt
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
@@ -45,6 +45,7 @@ function main() {
     const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
+    const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
     const { localPowerHistory, currentPower, lastBatterySeenFullSinceProgramStart } = useCurrentPower(
       mqttValues,
       configResourceValue
@@ -81,29 +82,43 @@ function main() {
     saveTemperatures({ config, mqttClient, temperatures });
 
     createEffect(() => {
-      if (prematureWorkaroundErrored()) return;
       if (!hasCredentials()) {
         return error(
-          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
+          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
         );
       } else if (!hasInverterDetails()) {
         return error(
-          "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND DISABLED!"
+          "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
         );
       }
-      catchError(
-        () =>
-          prematureFloatBugWorkaround({
-            mqttValues,
-            configSignal: configResourceValue,
-            energyRemovedSinceFull,
-          }),
-        e => {
-          setPrematureWorkaroundErrored(true);
-          error("Premature float bug workaround errored", e, "restarting in 10s");
-          setTimeout(() => setPrematureWorkaroundErrored(false), 10_000);
-        }
-      );
+      createEffect(() => {
+        if (prematureWorkaroundErrored()) return;
+        catchError(
+          () =>
+            prematureFloatBugWorkaround({
+              mqttValues,
+              configSignal: configResourceValue,
+              energyRemovedSinceFull,
+            }),
+          e => {
+            setPrematureWorkaroundErrored(true);
+            error("Premature float bug workaround errored", e, "restarting in 10s");
+            setTimeout(() => setPrematureWorkaroundErrored(false), 10_000);
+          }
+        );
+      });
+
+      createEffect(() => {
+        if (feedWhenNoSolarErrored()) return;
+        catchError(
+          () => feedWhenNoSolar(mqttValues, configResourceValue),
+          e => {
+            setFeedWhenNoSolarErrored(true);
+            error("Feed when no solar errored", e, "restarting in 10s");
+            setTimeout(() => setFeedWhenNoSolarErrored(false), 10_000);
+          }
+        );
+      });
     });
     createResource(() =>
       wsMessaging({

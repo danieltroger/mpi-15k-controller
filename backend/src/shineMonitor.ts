@@ -22,6 +22,8 @@ export type SetVoltageResponse = {
   };
 };
 
+let requestBeingMade: Promise<void> | undefined;
+
 const shineUrl = "https://ios.shinemonitor.com/public/";
 export const clientInfo = {
   "_app_id_": "wifiapp.volfw.solarpower",
@@ -34,37 +36,48 @@ export async function makeRequestWithAuth<T>(
   initialRequest: Record<string, string>,
   action = "queryDeviceCtrlValue"
 ) {
-  const auth = await getValidAuth(configSignal);
-  const {
-    dat: { secret, token },
-  } = auth;
-  const now = +new Date();
-  const requestPart = { action, source: "1", ...initialRequest };
-  const asQueryString = new URLSearchParams(requestPart) + "";
-  const sign = sha1(now + secret + token + "&" + asQueryString);
-  const actualParams = new URLSearchParams({
-    sign: sign,
-    salt: now + "",
-    token: token,
-    ...requestPart,
-  });
-  const urlObject = new URL(shineUrl);
-  urlObject.search = actualParams + "";
-
-  const response = await fetch(urlObject, {
-    headers: {
-      "User-Agent": "SolarPower/1.9.1 (iPad; iOS 17.4; Scale/2.00)",
-      "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
-      "Accept": "*/*",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to make request to shinemonitor, non-200 response: " + response.status);
+  // Only allow one request to shinemonitor at once
+  while (requestBeingMade) {
+    await requestBeingMade;
   }
-  const decoded = (await response.json()) as T;
+  let resolveLock: VoidFunction;
+  requestBeingMade = new Promise(resolve => (resolveLock = resolve));
+  try {
+    const auth = await getValidAuth(configSignal);
+    const {
+      dat: { secret, token },
+    } = auth;
+    const now = +new Date();
+    const requestPart = { action, source: "1", ...initialRequest };
+    const asQueryString = new URLSearchParams(requestPart) + "";
+    const sign = sha1(now + secret + token + "&" + asQueryString);
+    const actualParams = new URLSearchParams({
+      sign: sign,
+      salt: now + "",
+      token: token,
+      ...requestPart,
+    });
+    const urlObject = new URL(shineUrl);
+    urlObject.search = actualParams + "";
 
-  return decoded;
+    const response = await fetch(urlObject, {
+      headers: {
+        "User-Agent": "SolarPower/1.9.1 (iPad; iOS 17.4; Scale/2.00)",
+        "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
+        "Accept": "*/*",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to make request to shinemonitor, non-200 response: " + response.status);
+    }
+    const decoded = (await response.json()) as T;
+
+    return decoded;
+  } finally {
+    requestBeingMade.then((requestBeingMade = undefined)); // In a .then to avoid race-condition where a new request is made before the result of resolving the promise has propagated and therefore two requests are made
+    resolveLock!();
+  }
 }
 
 async function getValidAuth(configSignal: Awaited<ReturnType<typeof get_config_object>>) {

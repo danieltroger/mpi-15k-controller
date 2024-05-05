@@ -9,7 +9,7 @@ export function WebSocketProvider(props: { children?: JSX.Element }) {
 
   if (!isServer) {
     const { origin, hostname, protocol } = location;
-    const isGöteborg = hostname.startsWith("192.168.0.");
+    const isGöteborg = hostname.startsWith("192.168.0.") || process.env.NODE_ENV === "development";
     const isÖrebro = hostname.startsWith("192.168.1.");
     const u_o = new URL(isGöteborg ? "http://192.168.0.3" : isÖrebro ? "Http://192.168.1.102" : origin);
     u_o.protocol = protocol === "https:" ? "wss:" : "ws:";
