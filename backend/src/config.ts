@@ -23,6 +23,11 @@ export type Config = {
     database: string;
     table: string;
   };
+  feed_from_battery_when_no_solar: {
+    feed_below_available_power: number;
+    feed_amount_watts: number;
+    max_feed_in_power_when_feeding_from_solar: number;
+  };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
   shinemonitor_user?: string;
@@ -60,6 +65,11 @@ const default_config: Config = {
   temperature_saving: {
     database: "mppsolar",
     table: "battery_temperatures",
+  },
+  feed_from_battery_when_no_solar: {
+    feed_amount_watts: 290,
+    feed_below_available_power: 290,
+    max_feed_in_power_when_feeding_from_solar: 15000,
   },
 };
 
