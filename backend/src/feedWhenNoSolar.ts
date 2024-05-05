@@ -1,6 +1,6 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { createEffect, createMemo } from "solid-js";
+import { createEffect, createMemo, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
 
@@ -70,8 +70,11 @@ export function feedWhenNoSolar(
         ]
       }
        */
-      setWantedBatteryToUtilityWhenNoSolar("49");
-      setWantedBatteryToUtilityWhenSolar("49");
+      if (currentShineMaxFeedInPower() === config().feed_from_battery_when_no_solar.feed_amount_watts.toFixed(1)) {
+        // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
+        setWantedBatteryToUtilityWhenNoSolar("49");
+        setWantedBatteryToUtilityWhenSolar("49");
+      }
     } else {
       setWantedBatteryToUtilityWhenNoSolar("48");
       setWantedBatteryToUtilityWhenSolar("48");
@@ -89,9 +92,9 @@ export function feedWhenNoSolar(
       "We should be feeding from the battery when no solar:",
       shouldEnableFeeding(),
       "because we have",
-      availablePower(),
+      untrack(availablePower),
       "available power and we should feed below",
-      feedBelow()
+      untrack(feedBelow)
     )
   );
 
