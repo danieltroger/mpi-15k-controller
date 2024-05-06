@@ -3,6 +3,7 @@ import { get_config_object } from "./config";
 import { createEffect, createMemo, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
+import { useNow } from "./utilities/useNow";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -12,6 +13,8 @@ export function feedWhenNoSolar(
   configSignal: Awaited<ReturnType<typeof get_config_object>>
   //currentBatteryPower: () => { value: number; time: number } | undefined
 ) {
+  let lastChange = 0;
+  const now = useNow();
   const solarPower = () =>
     ((mqttValues?.["solar_input_power_1"]?.value || 0) as number) +
     ((mqttValues?.["solar_input_power_2"]?.value || 0) as number);
@@ -22,7 +25,13 @@ export function feedWhenNoSolar(
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
-  const shouldEnableFeeding = createMemo(() => availablePowerThatWouldGoIntoTheGridByItself() < feedBelow());
+  const shouldEnableFeeding = createMemo<boolean>(prev => {
+    if (now() - lastChange < 1000 * 60 * 5 && prev) {
+      // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
+      return prev;
+    }
+    return availablePowerThatWouldGoIntoTheGridByItself() < feedBelow();
+  });
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
     if (wanted === "48") {
       return "Disable" as const;
@@ -80,6 +89,11 @@ export function feedWhenNoSolar(
       setWantedBatteryToUtilityWhenNoSolar("48");
       setWantedBatteryToUtilityWhenSolar("48");
     }
+  });
+
+  createEffect(() => {
+    shouldEnableFeeding();
+    lastChange = +new Date();
   });
 
   createEffect(() => {
