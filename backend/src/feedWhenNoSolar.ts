@@ -133,7 +133,7 @@ export function feedWhenNoSolar({
       untrack(availablePowerThatWouldGoIntoTheGridByItself),
       "available power and we should feed below",
       untrack(feedBelow),
-      `the battery is ${isCharging() ? "charging" : "discharging"} with`,
+      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} with`,
       untrack(() => currentBatteryPower()?.value),
       "watts"
     )
