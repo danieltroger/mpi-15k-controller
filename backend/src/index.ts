@@ -92,9 +92,9 @@ function main() {
           "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
         );
       }
-      createEffect(() => {
+      const isCharging = createMemo(() => {
         if (prematureWorkaroundErrored()) return;
-        catchError(
+        return catchError(
           () =>
             prematureFloatBugWorkaround({
               mqttValues,
@@ -112,7 +112,13 @@ function main() {
       createEffect(() => {
         if (feedWhenNoSolarErrored()) return;
         catchError(
-          () => feedWhenNoSolar(mqttValues, configResourceValue),
+          () =>
+            feedWhenNoSolar({
+              mqttValues: mqttValues,
+              configSignal: configResourceValue,
+              currentBatteryPower: currentPower,
+              isCharging: () => isCharging()?.(),
+            }),
           e => {
             setFeedWhenNoSolarErrored(true);
             error("Feed when no solar errored", e, "restarting in 10s");
