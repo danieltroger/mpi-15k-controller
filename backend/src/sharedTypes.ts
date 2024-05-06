@@ -4,4 +4,5 @@ export type InfoBroadcast = {
   totalLastFull: string | 0 | undefined;
   energyRemovedSinceFull: number;
   currentBatteryPower?: { time: number; value: number };
+  isCharging: boolean | undefined;
 };

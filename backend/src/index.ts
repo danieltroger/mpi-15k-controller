@@ -82,7 +82,7 @@ function main() {
 
     saveTemperatures({ config, mqttClient, temperatures });
 
-    createEffect(() => {
+    const isChargingOuterScope = createMemo(() => {
       if (!hasCredentials()) {
         return error(
           "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
@@ -126,6 +126,8 @@ function main() {
           }
         );
       });
+
+      return isCharging;
     });
     createResource(() =>
       wsMessaging({
@@ -138,6 +140,7 @@ function main() {
             totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
             energyRemovedSinceFull: energyRemovedSinceFull(),
             currentBatteryPower: currentPower(),
+            isCharging: isChargingOuterScope()?.()?.(),
           };
           return broadcast;
         },
