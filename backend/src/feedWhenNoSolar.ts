@@ -1,6 +1,6 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { createEffect, createMemo, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
@@ -8,11 +8,17 @@ import { useNow } from "./utilities/useNow";
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
  */
-export function feedWhenNoSolar(
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
-  configSignal: Awaited<ReturnType<typeof get_config_object>>
-  //currentBatteryPower: () => { value: number; time: number } | undefined
-) {
+export function feedWhenNoSolar({
+  mqttValues,
+  configSignal,
+  isCharging,
+  currentBatteryPower,
+}: {
+  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
+  configSignal: Awaited<ReturnType<typeof get_config_object>>;
+  currentBatteryPower: () => { value: number; time: number } | undefined;
+  isCharging: Accessor<boolean | undefined>;
+}) {
   let lastChange = 0;
   const now = useNow();
   const solarPower = () =>
@@ -22,7 +28,17 @@ export function feedWhenNoSolar(
     ((mqttValues?.["ac_output_active_power_r"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_s"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_t"]?.value || 0) as number);
-  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
+  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
+    let available = solarPower() - acOutputPower();
+    if (isCharging()) {
+      const batteryPower = currentBatteryPower()?.value;
+      if (batteryPower && batteryPower > 0) {
+        // If we are putting energy into the battery we also have to keep that in mind as it won't go into the grid - and we might have to "force feed" due to it
+        available -= batteryPower;
+      }
+    }
+    return available;
+  });
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const shouldEnableFeeding = createMemo<boolean>(prev => {
@@ -111,12 +127,15 @@ export function feedWhenNoSolar(
 
   createEffect(() =>
     log(
-      "We should be feeding from the battery when no solar:",
+      `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar:`,
       shouldEnableFeeding(),
       "because we have",
       untrack(availablePowerThatWouldGoIntoTheGridByItself),
       "available power and we should feed below",
-      untrack(feedBelow)
+      untrack(feedBelow),
+      `the battery is ${isCharging() ? "charging" : "discharging"} with`,
+      untrack(() => currentBatteryPower()?.value),
+      "watts"
     )
   );
 

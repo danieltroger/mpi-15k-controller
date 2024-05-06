@@ -1,8 +1,8 @@
 import { useMQTTValues } from "./useMQTTValues";
-import { Accessor, createEffect, createResource, createSignal, onCleanup, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createResource, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "./config";
 import { error, log } from "./utilities/logging";
-import { deparallelize_no_drop, wait } from "@depict-ai/utilishared/latest";
+import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "./shineMonitor";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
@@ -130,6 +130,9 @@ export function prematureFloatBugWorkaround({
     );
     deparallelizedSetChargeVoltageBulk(wantsVoltage);
   });
+
+  // Return this as "is charging" for feedWhenNoSolar, we say that we're charging if the actual float voltage equals the full battery voltage
+  return createMemo(() => localStateOfConfiguredVoltageFloat() === config().full_battery_voltage);
 }
 
 async function setVoltageWithThrottlingAndRefetch(
