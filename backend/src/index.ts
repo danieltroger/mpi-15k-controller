@@ -34,6 +34,7 @@ function main() {
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
   // TODO: Send SOC in mqtt
+  // TODO: disallow shouldEnableFeeding from changing often in short amount of time
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
