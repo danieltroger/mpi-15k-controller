@@ -34,7 +34,7 @@ function main() {
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
   // TODO: Send SOC in mqtt
-  // TODO: disallow shouldEnableFeeding from changing often in short amount of time
+  // TODO: after reaching <58.4v in feedWhenNoSolar, force not feeding until batteryIsFull has become false to not waste 0.8kw again here before the battery is completely full http://192.168.0.3:3002/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1715080680694&to=1715084147441
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
