@@ -27,6 +27,7 @@ export type Config = {
     feed_below_available_power: number;
     feed_amount_watts: number;
     max_feed_in_power_when_feeding_from_solar: number;
+    add_to_feed_below_when_currently_feeding: number;
   };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
@@ -70,6 +71,7 @@ const default_config: Config = {
     feed_amount_watts: 290,
     feed_below_available_power: 290,
     max_feed_in_power_when_feeding_from_solar: 15000,
+    add_to_feed_below_when_currently_feeding: 200,
   },
 };
 
