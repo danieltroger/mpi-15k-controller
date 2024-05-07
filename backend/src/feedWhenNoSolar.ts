@@ -46,11 +46,16 @@ export function feedWhenNoSolar({
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const shouldEnableFeeding = createMemo<boolean>(prev => {
-    if (now() - lastChange < 1000 * 60 * 5 && prev) {
+    if (now() - lastChange < 1000 * 60 * 5 && prev !== undefined) {
       // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
-    const actuallyShouldNow = availablePowerThatWouldGoIntoTheGridByItself() < feedBelow();
+    let doIfBelow = feedBelow();
+    if (prev) {
+      // When already feeding, make the threshold to stop feeding higher to avoid weird oscillations
+      doIfBelow += config().feed_from_battery_when_no_solar.add_to_feed_below_when_currently_feeding;
+    }
+    const actuallyShouldNow = availablePowerThatWouldGoIntoTheGridByItself() < doIfBelow;
     if (actuallyShouldNow !== prev) {
       // We changed
       lastChange = +new Date();
