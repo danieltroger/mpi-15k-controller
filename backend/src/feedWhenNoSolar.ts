@@ -157,20 +157,22 @@ export function feedWhenNoSolar({
     setWantedMaxFeedInPower(target.toFixed(0));
   });
 
-  createEffect(() =>
-    log(
-      `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar, because we have`,
-      untrack(availablePowerThatWouldGoIntoTheGridByItself),
-      "available power and we should feed below",
-      untrack(feedBelow),
-      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} and at`,
-      untrack(getBatteryVoltage),
-      `v. We have`,
-      untrack(solarPower),
-      "watts coming from solar, and",
-      untrack(acOutputPower),
-      `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
-    )
+  createEffect(
+    () =>
+      shouldEnableFeeding() != undefined &&
+      log(
+        `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar, because we have`,
+        untrack(availablePowerThatWouldGoIntoTheGridByItself),
+        "available power and we should feed below",
+        untrack(feedBelow),
+        `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} and at`,
+        untrack(getBatteryVoltage),
+        `v. We have`,
+        untrack(solarPower),
+        "watts coming from solar, and",
+        untrack(acOutputPower),
+        `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
+      )
   );
 
   createEffect(
