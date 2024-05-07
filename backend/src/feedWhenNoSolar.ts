@@ -29,6 +29,13 @@ export function feedWhenNoSolar({
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
+  const getBatteryVoltage = () => {
+    let voltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
+    if (voltage) {
+      voltage /= 10;
+    }
+    return voltage;
+  };
   const shouldEnableFeeding = createMemo<boolean>(prev => {
     if (now() - lastChange < 1000 * 60 * 2 && prev !== undefined) {
       // Don't change the state more often than every 2 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
@@ -36,12 +43,9 @@ export function feedWhenNoSolar({
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
     if (isCharging()) {
-      let batteryVoltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
-      if (batteryVoltage) {
-        batteryVoltage /= 10;
-        if (batteryVoltage < config().full_battery_voltage) {
-          return true;
-        }
+      const batteryVoltage = getBatteryVoltage();
+      if (batteryVoltage != undefined && batteryVoltage < config().full_battery_voltage) {
+        return true;
       }
     }
 
@@ -131,13 +135,13 @@ export function feedWhenNoSolar({
 
   createEffect(() =>
     log(
-      `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar:`,
-      shouldEnableFeeding(),
-      "because we have",
+      `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar, because we have`,
       untrack(availablePowerThatWouldGoIntoTheGridByItself),
       "available power and we should feed below",
       untrack(feedBelow),
-      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"}. We have`,
+      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} and at`,
+      untrack(getBatteryVoltage),
+      `v. We have`,
       untrack(solarPower),
       "watts are coming from solar, and",
       untrack(acOutputPower),
