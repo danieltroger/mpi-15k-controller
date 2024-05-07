@@ -37,8 +37,8 @@ export function feedWhenNoSolar({
     return voltage;
   };
   const shouldEnableFeeding = createMemo<boolean>(prev => {
-    if (now() - lastChange < 1000 * 60 * 2 && prev !== undefined) {
-      // Don't change the state more often than every 2 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
+    if (now() - lastChange < 1000 * 60 * 5 && prev !== undefined) {
+      // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
