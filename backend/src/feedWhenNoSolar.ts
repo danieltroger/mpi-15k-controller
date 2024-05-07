@@ -1,6 +1,6 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { Accessor, createEffect, createMemo, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
@@ -19,14 +19,25 @@ export function feedWhenNoSolar({
 }) {
   let lastChange = 0;
   const now = useNow();
-  const solarPower = () =>
-    ((mqttValues?.["solar_input_power_1"]?.value || 0) as number) +
-    ((mqttValues?.["solar_input_power_2"]?.value || 0) as number);
-  const acOutputPower = () =>
-    ((mqttValues?.["ac_output_active_power_r"]?.value || 0) as number) +
-    ((mqttValues?.["ac_output_active_power_s"]?.value || 0) as number) +
-    ((mqttValues?.["ac_output_active_power_t"]?.value || 0) as number);
-  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
+  const solarPower = () => {
+    const array1 = mqttValues?.["solar_input_power_1"]?.value as number | undefined;
+    const array2 = mqttValues?.["solar_input_power_2"]?.value as number | undefined;
+    if (array1 == undefined && array2 == undefined) return undefined;
+    return (array1 || 0) + (array2 || 0);
+  };
+  const acOutputPower = () => {
+    const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
+    const powerS = mqttValues?.["ac_output_active_power_s"]?.value as number | undefined;
+    const powerT = mqttValues?.["ac_output_active_power_t"]?.value as number | undefined;
+    if (powerR == undefined && powerS == undefined && powerT == undefined) return undefined;
+    return (powerR || 0) + (powerS || 0) + (powerT || 0);
+  };
+  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
+    const solar = solarPower();
+    const acOutput = acOutputPower();
+    if (solar == undefined || acOutput == undefined) return undefined;
+    return solar - acOutput;
+  });
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const getBatteryVoltage = () => {
@@ -36,10 +47,18 @@ export function feedWhenNoSolar({
     }
     return voltage;
   };
-  const shouldEnableFeeding = createMemo<boolean>(prev => {
+  // If we are between having reached nearly 58.4v the first time, and the charge process having completed due to no current flowing
+  const batteryIsNearlyFull = createMemo(prev =>
+    getBatteryVoltage()! >= config().full_battery_voltage || isCharging() === false ? false : prev
+  );
+  const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
     if (now() - lastChange < 1000 * 60 * 5 && prev !== undefined) {
       // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
+    }
+    if (batteryIsNearlyFull()) {
+      // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
+      return false;
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
     if (isCharging()) {
@@ -54,7 +73,9 @@ export function feedWhenNoSolar({
       // When already feeding, make the threshold to stop feeding higher to avoid weird oscillations
       doIfBelow += config().feed_from_battery_when_no_solar.add_to_feed_below_when_currently_feeding;
     }
-    const actuallyShouldNow = availablePowerThatWouldGoIntoTheGridByItself() < doIfBelow;
+    const available = availablePowerThatWouldGoIntoTheGridByItself();
+    if (available == undefined) return undefined;
+    const actuallyShouldNow = available < doIfBelow;
     if (actuallyShouldNow !== prev) {
       // We changed
       lastChange = +new Date();
@@ -92,7 +113,9 @@ export function feedWhenNoSolar({
     });
 
   createEffect(() => {
-    if (shouldEnableFeeding()) {
+    const shouldEnable = shouldEnableFeeding();
+    if (shouldEnable == undefined) return;
+    if (shouldEnable) {
       /* Example field description:
        {
         "id": "cts_utility_when_solar_input_loss",
@@ -123,6 +146,7 @@ export function feedWhenNoSolar({
   createEffect(() => {
     const { max_feed_in_power_when_feeding_from_solar, feed_amount_watts } = config().feed_from_battery_when_no_solar;
     const shouldFeed = shouldEnableFeeding();
+    if (shouldFeed == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
       if (currentBatteryToUtilityWhenSolar() === "Enable" && currentBatteryToUtilityWhenNoSolar() === "Enable") {
@@ -143,9 +167,9 @@ export function feedWhenNoSolar({
       untrack(getBatteryVoltage),
       `v. We have`,
       untrack(solarPower),
-      "watts are coming from solar, and",
+      "watts coming from solar, and",
       untrack(acOutputPower),
-      "is being drawn by ac output"
+      `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
     )
   );
 
