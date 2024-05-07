@@ -116,7 +116,6 @@ function main() {
             feedWhenNoSolar({
               mqttValues: mqttValues,
               configSignal: configResourceValue,
-              currentBatteryPower: currentPower,
               isCharging: () => isCharging()?.(),
             }),
           e => {

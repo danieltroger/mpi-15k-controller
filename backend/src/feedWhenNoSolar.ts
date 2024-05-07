@@ -12,11 +12,9 @@ export function feedWhenNoSolar({
   mqttValues,
   configSignal,
   isCharging,
-  currentBatteryPower,
 }: {
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  currentBatteryPower: () => { value: number; time: number } | undefined;
   isCharging: Accessor<boolean | undefined>;
 }) {
   let lastChange = 0;
@@ -28,29 +26,25 @@ export function feedWhenNoSolar({
     ((mqttValues?.["ac_output_active_power_r"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_s"]?.value || 0) as number) +
     ((mqttValues?.["ac_output_active_power_t"]?.value || 0) as number);
-  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
-    let available = solarPower() - acOutputPower();
-    if (isCharging()) {
-      let batteryPower = currentBatteryPower()?.value;
-      if (batteryPower) {
-        batteryPower += config().parasitic_consumption_for_energy_calculations; // Gotta think about the inverters' consumption
-        // We need to subtract the amount we'll be feeding from the grid to since that won't go into the battery anymore
-        batteryPower += config().feed_from_battery_when_no_solar.feed_amount_watts;
-        if (batteryPower > 0) {
-          // If we are putting energy into the battery we also have to keep that in mind as it won't go into the grid - and we might have to "force feed" due to it
-          available -= batteryPower;
-        }
-      }
-    }
-    return available;
-  });
+  const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => solarPower() - acOutputPower());
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const shouldEnableFeeding = createMemo<boolean>(prev => {
-    if (now() - lastChange < 1000 * 60 * 5 && prev !== undefined) {
-      // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
+    if (now() - lastChange < 1000 * 60 * 2 && prev !== undefined) {
+      // Don't change the state more often than every 2 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
+    // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
+    if (isCharging()) {
+      let batteryVoltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
+      if (batteryVoltage) {
+        batteryVoltage /= 10;
+        if (batteryVoltage < config().full_battery_voltage) {
+          return true;
+        }
+      }
+    }
+
     let doIfBelow = feedBelow();
     if (prev) {
       // When already feeding, make the threshold to stop feeding higher to avoid weird oscillations
@@ -143,9 +137,7 @@ export function feedWhenNoSolar({
       untrack(availablePowerThatWouldGoIntoTheGridByItself),
       "available power and we should feed below",
       untrack(feedBelow),
-      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} with`,
-      untrack(() => currentBatteryPower()?.value),
-      "watts.",
+      `. The battery is ${untrack(isCharging) ? "charging" : "discharging"}. We have`,
       untrack(solarPower),
       "watts are coming from solar, and",
       untrack(acOutputPower),
