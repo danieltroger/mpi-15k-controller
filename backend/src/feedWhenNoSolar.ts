@@ -31,10 +31,14 @@ export function feedWhenNoSolar({
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
     let available = solarPower() - acOutputPower();
     if (isCharging()) {
-      const batteryPower = currentBatteryPower()?.value;
-      if (batteryPower && batteryPower > 0) {
-        // If we are putting energy into the battery we also have to keep that in mind as it won't go into the grid - and we might have to "force feed" due to it
-        available -= batteryPower;
+      let batteryPower = currentBatteryPower()?.value;
+      if (batteryPower) {
+        // We need to subtract the amount we'll be feeding from the grid to since that won't go into the battery anymore
+        batteryPower -= config().feed_from_battery_when_no_solar.feed_amount_watts;
+        if (batteryPower > 0) {
+          // If we are putting energy into the battery we also have to keep that in mind as it won't go into the grid - and we might have to "force feed" due to it
+          available -= batteryPower;
+        }
       }
     }
     return available;
@@ -46,7 +50,12 @@ export function feedWhenNoSolar({
       // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
-    return availablePowerThatWouldGoIntoTheGridByItself() < feedBelow();
+    const actuallyShouldNow = availablePowerThatWouldGoIntoTheGridByItself() < feedBelow();
+    if (actuallyShouldNow !== prev) {
+      // We changed
+      lastChange = +new Date();
+    }
+    return actuallyShouldNow;
   });
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
     if (wanted === "48") {
@@ -105,11 +114,6 @@ export function feedWhenNoSolar({
       setWantedBatteryToUtilityWhenNoSolar("48");
       setWantedBatteryToUtilityWhenSolar("48");
     }
-  });
-
-  createEffect(() => {
-    shouldEnableFeeding();
-    lastChange = +new Date();
   });
 
   createEffect(() => {
