@@ -144,7 +144,11 @@ export function feedWhenNoSolar({
       untrack(feedBelow),
       `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} with`,
       untrack(() => currentBatteryPower()?.value),
-      "watts"
+      "watts.",
+      untrack(solarPower),
+      "watts are coming from solar, and",
+      untrack(acOutputPower),
+      "is being drawn by ac output"
     )
   );
 
