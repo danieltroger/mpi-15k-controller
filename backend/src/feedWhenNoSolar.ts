@@ -33,6 +33,7 @@ export function feedWhenNoSolar({
     if (isCharging()) {
       let batteryPower = currentBatteryPower()?.value;
       if (batteryPower) {
+        batteryPower += config().parasitic_consumption_for_energy_calculations; // Gotta think about the inverters' consumption
         // We need to subtract the amount we'll be feeding from the grid to since that won't go into the battery anymore
         batteryPower -= config().feed_from_battery_when_no_solar.feed_amount_watts;
         if (batteryPower > 0) {
