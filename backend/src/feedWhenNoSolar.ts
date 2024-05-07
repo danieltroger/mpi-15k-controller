@@ -48,7 +48,7 @@ export function feedWhenNoSolar({
     return voltage;
   };
   // If we are between having reached nearly 58.4v the first time, and the charge process having completed due to no current flowing
-  const batteryIsNearlyFull = createMemo(prev =>
+  const batteryIsNearlyFull = createMemo<boolean | undefined>(prev =>
     getBatteryVoltage()! >= config().full_battery_voltage || isCharging() === false ? false : prev
   );
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
