@@ -34,6 +34,7 @@ function main() {
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
   // TODO: Send SOC in mqtt
+  // TODO: when battery completely empty and essentially disconnected for everything except charging, don't count inverter idle consumption as coming from the battery
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
