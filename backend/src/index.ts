@@ -58,7 +58,7 @@ function main() {
     const energyRemovedSinceFull = createMemo(() => {
       const discharged = energyDischargedSinceFull();
       const charged = energyChargedSinceFull();
-      if (charged == undefined && discharged == undefined) return 0;
+      if (charged == undefined && discharged == undefined) return undefined;
       if (charged == undefined) return Math.abs(discharged!);
       if (discharged == undefined) return Math.abs(charged);
       return Math.abs(discharged) - Math.abs(charged);
