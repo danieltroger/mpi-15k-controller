@@ -1,7 +1,6 @@
 import { Accessor, createEffect, Owner, runWithOwner, Signal, untrack } from "solid-js";
 import { Config } from "./config";
 import { startWsServer } from "./startWsServer";
-import { useMQTTValues } from "./useMQTTValues";
 import { useTemperatures } from "./useTemperatures";
 
 export async function wsMessaging({
@@ -45,7 +44,7 @@ export async function wsMessaging({
       }
       const { getter } = specifier;
       if (command === "read") {
-        return JSON.stringify({ id, status: "ok", value: untrack(getter) });
+        return JSON.stringify({ id, status: "ok", value: untrack(getter as Accessor<any>) });
       } else if (command === "write") {
         if (!("setter" in specifier)) {
           return JSON.stringify({
