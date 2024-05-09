@@ -56,13 +56,14 @@ export function feedWhenNoSolar({
       // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
-    if (batteryIsNearlyFull()) {
+    const batteryVoltage = getBatteryVoltage();
+    if (batteryIsNearlyFull() || (batteryVoltage && batteryVoltage <= config().start_bulk_charge_voltage)) {
       // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
+      // Also when battery is basically completely depleted, don't attempt to feed it into the grid
       return false;
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
     if (isCharging()) {
-      const batteryVoltage = getBatteryVoltage();
       if (batteryVoltage != undefined && batteryVoltage < config().full_battery_voltage) {
         return true;
       }
