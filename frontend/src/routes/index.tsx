@@ -1,17 +1,33 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { createMemo, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { InfoBroadcast } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
   const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
+  const [energyDischargedSinceEmpty] = getBackendSyncedSignal<number>("energyDischargedSinceEmpty");
+  const [energyChargedSinceEmpty] = getBackendSyncedSignal<number>("energyChargedSinceEmpty");
+  const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
   const [mqttValues] = getBackendSyncedSignal<Record<string, { value: any; time: number }>>("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const assumedCapacity = 19.2 * 12 * 3 * 16;
-  const soc = createMemo(() => {
+  const energyAddedSinceEmpty = createMemo(() => {
+    const discharged = energyDischargedSinceEmpty();
+    const charged = energyChargedSinceEmpty();
+    if (charged == undefined && discharged == undefined) return undefined;
+    if (charged == undefined) return Math.abs(discharged!) * -1;
+    if (discharged == undefined) return Math.abs(charged);
+    return Math.abs(charged) - Math.abs(discharged);
+  });
+  const socSinceFull = createMemo(() => {
     const removedSinceFull = info()?.energyRemovedSinceFull;
     if (removedSinceFull === undefined) return undefined;
     return 100 - (removedSinceFull / assumedCapacity) * 100;
+  });
+  const socSinceEmpty = createMemo(() => {
+    const addedSinceEmpty = energyAddedSinceEmpty();
+    if (addedSinceEmpty === undefined) return undefined;
+    return (addedSinceEmpty / assumedCapacity) * 100;
   });
 
   onMount(() => setHasHydrated(true));
@@ -39,7 +55,17 @@ export default function Home() {
           </code>
         </pre>
         <br />
-        Percent SOC assuming {assumedCapacity.toLocaleString()}wh capacity: {soc()}%
+        Time last empty: {new Date(totalLastEmpty()!).toLocaleString()}
+        <br />
+        energyDischargedSinceEmpty: {energyDischargedSinceEmpty()}
+        <br />
+        energyChargedSinceEmpty: {energyChargedSinceEmpty()}
+        <br />
+        Added since empty: {energyAddedSinceEmpty()}
+        <br />
+        <h4>Percent SOC assuming {assumedCapacity.toLocaleString()}wh capacity:</h4>
+        Since full: {socSinceFull()}%<br />
+        Since empty: {socSinceEmpty()}%
       </section>
       <Show when={hasHydrated()}>
         <NoBuyDebug mqttValues={mqttValues} />
