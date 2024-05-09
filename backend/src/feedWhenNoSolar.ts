@@ -62,7 +62,7 @@ export function feedWhenNoSolar({
     if (batteryVoltage == undefined || charging == undefined) return undefined;
     if (
       batteryIsNearlyFull() ||
-      (batteryVoltage && batteryVoltage <= config().feed_from_battery_when_no_solar.disable_below_battery_voltage)
+      batteryVoltage <= config().feed_from_battery_when_no_solar.disable_below_battery_voltage
     ) {
       // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
       // Also when battery is basically completely depleted, don't attempt to feed it into the grid
