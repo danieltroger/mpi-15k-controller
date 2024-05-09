@@ -11,6 +11,9 @@ export type Config = {
     username: string;
     password: string;
   };
+  soc_calculations: {
+    battery_empty_at: number;
+  };
   stop_charging_below_current: number;
   full_battery_voltage: number;
   float_charging_voltage: number;
@@ -28,6 +31,7 @@ export type Config = {
     feed_amount_watts: number;
     max_feed_in_power_when_feeding_from_solar: number;
     add_to_feed_below_when_currently_feeding: number;
+    disable_below_battery_voltage: number;
   };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
@@ -53,6 +57,9 @@ export type Config = {
 };
 
 const default_config: Config = {
+  soc_calculations: {
+    battery_empty_at: 46,
+  },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
   start_bulk_charge_voltage: 46,
@@ -72,6 +79,7 @@ const default_config: Config = {
     feed_below_available_power: 290,
     max_feed_in_power_when_feeding_from_solar: 15000,
     add_to_feed_below_when_currently_feeding: 200,
+    disable_below_battery_voltage: 45,
   },
 };
 
