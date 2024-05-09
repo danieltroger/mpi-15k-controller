@@ -53,7 +53,7 @@ export function calculateBatteryEnergy({
   });
 
   return {
-    energyChargedSinceFull: createMemo(() => energy()?.energyCharged),
-    energyDischargedSinceFull: createMemo(() => energy()?.energyDischarged),
+    energyCharged: createMemo(() => energy()?.energyCharged),
+    energyDischarged: createMemo(() => energy()?.energyDischarged),
   };
 }

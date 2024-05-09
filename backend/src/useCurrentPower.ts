@@ -42,6 +42,15 @@ export function useCurrentPower(
     return prev;
   });
 
+  const haveSeenBatteryEmptyAt = createMemo<number | undefined>(prev => {
+    const voltage = mqttValues.battery_voltage?.value as undefined | number;
+    if (voltage == undefined) return prev;
+    if (voltage / 10 <= config().soc_calculations.battery_empty_at) {
+      return mqttValues.battery_voltage!.time;
+    }
+    return prev;
+  });
+
   const [localPowerHistory, setLocalPowerHistory] = createStore<{ value: number; time: number }[]>([]);
 
   createEffect(() => {
@@ -63,5 +72,10 @@ export function useCurrentPower(
     }
   });
 
-  return { localPowerHistory, currentPower, lastBatterySeenFullSinceProgramStart: haveSeenBatteryFullAt };
+  return {
+    localPowerHistory,
+    currentPower,
+    lastBatterySeenFullSinceProgramStart: haveSeenBatteryFullAt,
+    lastBatterySeenEmptySinceProgramStart: haveSeenBatteryEmptyAt,
+  };
 }

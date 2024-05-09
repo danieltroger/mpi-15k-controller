@@ -3,16 +3,13 @@ import { error } from "./utilities/logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
-import { useCurrentPower } from "./useCurrentPower";
-import { useDatabasePower } from "./useDatabasePower";
-import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import { useNow } from "./utilities/useNow";
 import { wsMessaging } from "./wsMessaging";
 import { InfoBroadcast } from "./sharedTypes";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./useTemperatures";
 import { saveTemperatures } from "./saveTemperatures";
 import { feedWhenNoSolar } from "./feedWhenNoSolar";
+import { useBatteryValues } from "./useBatteryValues";
 
 while (true) {
   await new Promise<void>(r => {
@@ -47,27 +44,15 @@ function main() {
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
     const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
-    const { localPowerHistory, currentPower, lastBatterySeenFullSinceProgramStart } = useCurrentPower(
-      mqttValues,
-      configResourceValue
-    );
-    const now = useNow();
-    const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase } = useDatabasePower(configResourceValue);
-    const totalLastFull = createMemo(() => {
-      const lastSinceStart = lastBatterySeenFullSinceProgramStart();
-      const lastAccordingToDatabase = batteryWasLastFullAtAccordingToDatabase();
-      if (!lastSinceStart && !lastAccordingToDatabase) return;
-      if (!lastSinceStart) return lastAccordingToDatabase;
-      if (!lastAccordingToDatabase) return lastSinceStart;
-      return Math.max(lastSinceStart, lastAccordingToDatabase);
-    });
-    const { energyDischargedSinceFull, energyChargedSinceFull } = calculateBatteryEnergy({
-      localPowerHistory,
-      databasePowerValues,
-      from: totalLastFull,
-      to: now,
-      config,
-    });
+    const {
+      energyDischargedSinceEmpty,
+      energyChargedSinceFull,
+      energyChargedSinceEmpty,
+      energyDischargedSinceFull,
+      currentPower,
+      totalLastEmpty,
+      totalLastFull,
+    } = useBatteryValues(mqttValues, configResourceValue);
     // 1000wh = 1000wh were discharged
     // -100wh = 100wh were charged
     const energyRemovedSinceFull = createMemo(() => {
@@ -132,19 +117,24 @@ function main() {
       wsMessaging({
         config_signal: configResourceValue,
         owner,
-        info: () => {
-          const broadcast: InfoBroadcast = {
-            energyDischargedSinceFull: energyDischargedSinceFull(),
-            energyChargedSinceFull: energyChargedSinceFull(),
-            totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
-            energyRemovedSinceFull: energyRemovedSinceFull(),
-            currentBatteryPower: currentPower(),
-            isCharging: isChargingOuterScope()?.()?.(),
-          };
-          return broadcast;
-        },
-        mqttValues: () => mqttValues,
         temperatures,
+        exposedAccessors: {
+          mqttValues: () => mqttValues,
+          energyDischargedSinceEmpty,
+          energyChargedSinceEmpty,
+          totalLastEmpty,
+          info: () => {
+            const broadcast: InfoBroadcast = {
+              energyDischargedSinceFull: energyDischargedSinceFull(),
+              energyChargedSinceFull: energyChargedSinceFull(),
+              totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
+              energyRemovedSinceFull: energyRemovedSinceFull(),
+              currentBatteryPower: currentPower(),
+              isCharging: isChargingOuterScope()?.()?.(),
+            };
+            return broadcast;
+          },
+        },
       })
     );
   });
