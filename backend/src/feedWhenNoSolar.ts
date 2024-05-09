@@ -57,14 +57,17 @@ export function feedWhenNoSolar({
       return prev;
     }
     const batteryVoltage = getBatteryVoltage();
+    const charging = isCharging();
+    // Wait for data to be known at program start before making a decision
+    if (batteryVoltage == undefined || charging == undefined) return undefined;
     if (batteryIsNearlyFull() || (batteryVoltage && batteryVoltage <= config().start_bulk_charge_voltage)) {
       // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
       // Also when battery is basically completely depleted, don't attempt to feed it into the grid
       return false;
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
-    if (isCharging()) {
-      if (batteryVoltage != undefined && batteryVoltage < config().full_battery_voltage) {
+    if (charging) {
+      if (batteryVoltage < config().full_battery_voltage) {
         return true;
       }
     }

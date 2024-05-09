@@ -43,8 +43,8 @@ export function useShinemonitorParameter<
       wantedForDiffing = wantedToCurrentTransformerForDiffing(wanted);
     }
     clearTimeout(syncTimeout);
-    setTimeout(() => setSyncStateToggle(prev => !prev), 30_000); // It's possible that setting the value fails (we don't throw in that case)
-    // By having this toggle as a dependency and setting a timeout, we will re-check in 30 seconds if the value was set correctly and queue another request if it wasn't
+    setTimeout(() => setSyncStateToggle(prev => !prev), 60_000); // It's possible that setting the value fails (we don't throw in that case)
+    // By having this toggle as a dependency and setting a timeout, we will re-check in a minute seconds if the value was set correctly and queue another request if it wasn't
     if (!wantedForDiffing || !wanted || !current || wantedForDiffing === current) {
       return;
     }
