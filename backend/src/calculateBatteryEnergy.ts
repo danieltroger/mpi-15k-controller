@@ -33,7 +33,7 @@ export function calculateBatteryEnergy({
 
   const energy = createMemo(() => {
     const powerValues = totalPowerHistory();
-    if (!powerValues) return;
+    if (!powerValues?.length) return;
     let energyCharged = 0;
     let energyDischarged = 0;
     for (let i = 0; i < powerValues.length; i++) {
