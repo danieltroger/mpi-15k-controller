@@ -22,7 +22,9 @@ export function useShinemonitorParameter<
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   wantedToCurrentTransformerForDiffing: (WantedValueType: string) => ReadParameterResponse;
 }) {
+  let syncTimeout: ReturnType<typeof setTimeout> | undefined;
   const [wantedValue, setWantedValue] = createSignal<WantedValueType | undefined>();
+  const [syncStateToggle, setSyncStateToggle] = createSignal(false);
   const [currentValue, { refetch }] = createResource(async () =>
     getConfiguredValueFromShinemonitor<ReadParameterResponse>(configSignal, parameter)
   );
@@ -32,13 +34,17 @@ export function useShinemonitorParameter<
     setParameterWithThrottlingAndRefetch(configSignal, parameter, value, refetch)
   );
   createEffect(() => {
+    syncStateToggle();
     const wanted = wantedValue();
+    const current = currentValue();
     let wantedForDiffing: ReadParameterResponse | WantedValueType | undefined = wanted;
     if (wanted && wantedToCurrentTransformerForDiffing) {
       // The read endpoint returns "48" for "Disable" and "49" for "Enable" for some reason, but when setting we have to pass "48" or "49"
       wantedForDiffing = wantedToCurrentTransformerForDiffing(wanted);
     }
-    const current = currentValue();
+    clearTimeout(syncTimeout);
+    setTimeout(() => setSyncStateToggle(prev => !prev), 30_000); // It's possible that setting the value fails (we don't throw in that case)
+    // By having this toggle as a dependency and setting a timeout, we will re-check in 30 seconds if the value was set correctly and queue another request if it wasn't
     if (!wantedForDiffing || !wanted || !current || wantedForDiffing === current) {
       return;
     }
