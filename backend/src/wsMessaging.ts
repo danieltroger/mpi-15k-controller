@@ -6,16 +6,14 @@ import { useTemperatures } from "./useTemperatures";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
-  info,
   owner,
-  mqttValues,
   temperatures,
+  exposedAccessors,
 }: {
   config_signal: Signal<Config>;
-  info: Accessor<Record<string, any>>;
-  mqttValues: Accessor<ReturnType<typeof useMQTTValues>["mqttValues"]>;
   owner: Owner;
   temperatures: ReturnType<typeof useTemperatures>;
+  exposedAccessors: Record<string, Accessor<any>>;
 }) {
   const exposed_signals = {
     config: {
@@ -27,11 +25,10 @@ export async function wsMessaging({
         }
       },
     },
-    info: { getter: info },
-    mqttValues: { getter: mqttValues },
     temperatures: {
       getter: () => serializeTemperatures(temperatures),
     },
+    ...Object.fromEntries(Object.entries(exposedAccessors).map(([key, accessor]) => [key, { getter: accessor }])),
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {

@@ -42,6 +42,17 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       return when;
     }
   });
+  const [batteryWasLastEmptyAt] = createResource(influxClient, async db => {
+    const [response] = await db.query(
+      `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" <= ${config().soc_calculations.battery_empty_at * 10}`
+    );
+    let timeOfLastEmpty = (response as any)?.time?.getNanoTime?.();
+    if (!isNaN(timeOfLastEmpty)) {
+      const when = Math.round(timeOfLastEmpty / 1000 / 1000);
+      log("Got from database that battery was last empty at ", new Date(when).toLocaleString());
+      return when;
+    }
+  });
 
   const requestStartingAt = createMemo(() => {
     if (batteryWasLastFullAt.loading) return; // Wait for it to load before making any decision
@@ -81,7 +92,11 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     return multiplied.filter(v => v != undefined) as { time: number; value: number }[];
   });
 
-  return { batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt, databasePowerValues: powerValues };
+  return {
+    batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt,
+    databasePowerValues: powerValues,
+    batteryWasLastEmptyAtAccordingToDatabase: batteryWasLastEmptyAt,
+  };
 }
 
 async function queryVoltageAndCurrentBetweenTimes(db: Influx.InfluxDB, start: number, end: number) {
