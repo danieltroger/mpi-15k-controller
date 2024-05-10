@@ -16,14 +16,14 @@ export function calculateBatteryEnergy({
   /**
    * Reactive store with the local power history
    */
-  localPowerHistory: { value: number; time: number }[];
+  localPowerHistory: Accessor<{ value: number; time: number }[]>;
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
   config: Awaited<ReturnType<typeof get_config_object>>[0];
 }) {
   const totalPowerHistory = createMemo(() => {
     const fromValue = from();
     if (!fromValue) return [];
-    const localPower = localPowerHistory.filter(({ time }) => time >= fromValue && time <= to());
+    const localPower = localPowerHistory().filter(({ time }) => time >= fromValue && time <= to());
     const databasePower = databasePowerValues().filter(({ time }) => time >= fromValue && time <= to());
     const firstLocalPower = localPower[0]?.time;
     const filteredDatabasePower = databasePower.filter(({ time }) => time <= firstLocalPower);
