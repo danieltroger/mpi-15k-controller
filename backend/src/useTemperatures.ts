@@ -109,6 +109,7 @@ async function get_thermometer_value({
     // example output: '84 01 55 05 7f a5 a5 66 f5 : crc=f5 YES\n84 01 55 05 7f a5 a5 66 f5 t=24250\n'
     encoding: "utf8",
   });
+  await handle.close();
   const [line1, line2] = (read_contents || "").split("\n");
   const crc_line = line1?.split("crc=");
   const wanted_part = crc_line?.[crc_line?.length - 1];
@@ -121,7 +122,6 @@ async function get_thermometer_value({
       `Temperature out of range for thermometer ${thermometer_device_id} (${untrack(label)}): ` + temperature + "°C"
     );
   }
-  await handle.close();
   return {
     value: temperature,
     time: +new Date(),
