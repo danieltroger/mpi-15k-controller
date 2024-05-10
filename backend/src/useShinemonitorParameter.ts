@@ -31,7 +31,9 @@ export function useShinemonitorParameter<
   const refetchInterval = setInterval(refetch, 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
 
   const deparallelizedSetValue = deparallelize_no_drop((value: WantedValueType) =>
-    setParameterWithThrottlingAndRefetch(configSignal, parameter, value, refetch)
+    setParameterWithThrottlingAndRefetch(configSignal, parameter, value, refetch, () =>
+      setSyncStateToggle(prev => !prev)
+    )
   );
   createEffect(() => {
     syncStateToggle();
@@ -42,9 +44,6 @@ export function useShinemonitorParameter<
       // The read endpoint returns "48" for "Disable" and "49" for "Enable" for some reason, but when setting we have to pass "48" or "49"
       wantedForDiffing = wantedToCurrentTransformerForDiffing(wanted);
     }
-    clearTimeout(syncTimeout);
-    setTimeout(() => setSyncStateToggle(prev => !prev), 120_000); // It's possible that setting the value fails (we don't throw in that case)
-    // By having this toggle as a dependency and setting a timeout, we will re-check in two minutes if the value was set correctly and queue another request if it wasn't
     if (!wantedForDiffing || !wanted || !current || wantedForDiffing === current) {
       return;
     }
@@ -69,7 +68,8 @@ async function setParameterWithThrottlingAndRefetch<T>(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
   parameter: string,
   value: string,
-  refetch: (info?: unknown) => T | Promise<T | undefined> | null | undefined
+  refetch: (info?: unknown) => T | Promise<T | undefined> | null | undefined,
+  callOnFailure: VoidFunction
 ) {
   const now = +new Date();
   const setMaxEvery = 60_000;
@@ -79,11 +79,14 @@ async function setParameterWithThrottlingAndRefetch<T>(
     log("Waiting with setting ", parameter, " for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
-  await setConfiguredValueInShinemonitor(configSignal, parameter, value);
+  const didFail = await setConfiguredValueInShinemonitor(configSignal, parameter, value);
   lastShineRequestForParameter[parameter] = +new Date();
   await refetch();
   await wait(8000); // Inverter needs time for it to be set, so check again after 8s
   await refetch();
+  if (didFail) {
+    callOnFailure();
+  }
 }
 
 async function getConfiguredValueFromShinemonitor<T>(
@@ -127,7 +130,7 @@ async function setConfiguredValueInShinemonitor(
   );
   if (result.err) {
     error("Failed to set", parameter, "to", value, "in shinemonitor", result);
-    return;
+    return true;
   }
   log("Successfully set", parameter, " in shinemonitor to", value, result);
 }
