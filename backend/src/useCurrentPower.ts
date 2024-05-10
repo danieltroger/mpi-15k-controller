@@ -1,7 +1,6 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { createEffect, createMemo, untrack } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createEffect, createMemo, createSignal, untrack } from "solid-js";
 
 export function useCurrentPower(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
@@ -51,23 +50,26 @@ export function useCurrentPower(
     return prev;
   });
 
-  const [localPowerHistory, setLocalPowerHistory] = createStore<{ value: number; time: number }[]>([]);
+  // Do not use a store since the place reading it would be depending on thousands/millions of signals which uses tons of memory and slows down the program
+  const [localPowerHistory, setLocalPowerHistory] = createSignal<{ value: number; time: number }[]>([], {
+    equals: false,
+  });
 
   createEffect(() => {
     const power = currentPower();
     if (!power) return;
-    setLocalPowerHistory(
-      untrack(() => localPowerHistory.length),
-      power
-    );
+    setLocalPowerHistory(prev => {
+      prev.push(power);
+      return prev;
+    });
   });
 
   createEffect(() => {
     const fullWhen = haveSeenBatteryFullAt();
     if (fullWhen) {
-      const oldestValue = localPowerHistory[0]?.time;
+      const oldestValue = localPowerHistory()[0]?.time;
       if (oldestValue && oldestValue < fullWhen) {
-        setLocalPowerHistory(localPowerHistory.filter(({ time }) => time >= fullWhen));
+        setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= fullWhen));
       }
     }
   });
