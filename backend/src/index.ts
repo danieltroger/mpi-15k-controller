@@ -4,12 +4,12 @@ import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { wsMessaging } from "./wsMessaging";
-import { InfoBroadcast } from "./sharedTypes";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./useTemperatures";
 import { saveTemperatures } from "./saveTemperatures";
 import { feedWhenNoSolar } from "./feedWhenNoSolar";
 import { useBatteryValues } from "./useBatteryValues";
+import { mqttValueKeys } from "./sharedTypes";
 
 while (true) {
   await new Promise<void>(r => {
@@ -119,7 +119,6 @@ function main() {
         owner,
         temperatures,
         exposedAccessors: {
-          mqttValues: () => mqttValues,
           energyDischargedSinceEmpty,
           energyChargedSinceEmpty,
           totalLastEmpty,
@@ -129,6 +128,7 @@ function main() {
           energyChargedSinceFull,
           isCharging: () => isChargingOuterScope()?.()?.(),
           totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
+          ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
         },
       })
     );
