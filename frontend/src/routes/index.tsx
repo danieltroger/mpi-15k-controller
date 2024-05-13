@@ -10,7 +10,7 @@ export default function Home() {
   const [energyDischargedSinceFull] = getBackendSyncedSignal<number>("energyDischargedSinceFull");
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
-  const [totalLastFull] = getBackendSyncedSignal<number>("totalLastFull");
+  const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [mqttValues] = getBackendSyncedSignal<Record<string, { value: any; time: number }>>("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const assumedCapacity = 19.2 * 12 * 3 * 16;
@@ -53,6 +53,17 @@ export default function Home() {
       </section>
       <section>
         <h2>Some info</h2>
+        <br />
+        energyDischargedSinceFull: {energyDischargedSinceFull()}
+        <br />
+        energyChargedSinceFull: {energyChargedSinceFull()}
+        <br />
+        energyRemovedSinceFull: {energyRemovedSinceFull()}
+        <br />
+        isCharging: {isCharging() + ""}
+        <br />
+        Time last full: {new Date(totalLastFull()!).toLocaleString()}
+        <br />
         Time last empty: {new Date(totalLastEmpty()!).toLocaleString()}
         <br />
         energyDischargedSinceEmpty: {energyDischargedSinceEmpty()}
