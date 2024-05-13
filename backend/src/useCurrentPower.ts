@@ -66,10 +66,12 @@ export function useCurrentPower(
 
   createEffect(() => {
     const fullWhen = haveSeenBatteryFullAt();
-    if (fullWhen) {
+    const emptyWhen = haveSeenBatteryEmptyAt();
+    const earliestValueWeNeedToKeep = Math.min(fullWhen || Infinity, emptyWhen || Infinity);
+    if (earliestValueWeNeedToKeep !== Infinity) {
       const oldestValue = localPowerHistory()[0]?.time;
-      if (oldestValue && oldestValue < fullWhen) {
-        setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= fullWhen));
+      if (oldestValue && oldestValue < earliestValueWeNeedToKeep) {
+        setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= earliestValueWeNeedToKeep));
       }
     }
   });
