@@ -182,6 +182,8 @@ export function feedWhenNoSolar({
       )
   );
 
+  createEffect(() => log("batteryIsNearlyFull", batteryIsNearlyFull()));
+
   createEffect(
     () =>
       currentShineMaxFeedInPower() &&
