@@ -6,6 +6,8 @@ import { createMemo } from "solid-js";
 
 export default function ParasiticPlayground() {
   const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
+  const [battery_voltage] = getBackendSyncedSignal<MqttValue>("battery_voltage");
+  const [battery_current] = getBackendSyncedSignal<MqttValue>("battery_current");
   const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
   const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
   const [ac_output_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_output_total_active_power");
@@ -49,6 +51,16 @@ export default function ParasiticPlayground() {
             <td>Current battery power</td>
             <td>{battery() + ""} w</td>
             <td>{currentBatteryPower()?.time && new Date(currentBatteryPower()!.time).toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td>Battery voltage</td>
+            <td>{(battery_voltage()?.value && (battery_voltage()?.value as number) / 10) + ""} v</td>
+            <td>{battery_voltage()?.time && new Date(battery_voltage()!.time).toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td>Battery current</td>
+            <td>{(battery_current()?.value && (battery_current()?.value as number) / 10) + ""} a</td>
+            <td>{battery_current()?.time && new Date(battery_current()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Current solar power</td>
