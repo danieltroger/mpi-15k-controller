@@ -55,13 +55,11 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
   });
 
   const requestStartingAt = createMemo(() => {
-    if (batteryWasLastFullAt.loading) return; // Wait for it to load before making any decision
+    if (batteryWasLastFullAt.loading || batteryWasLastEmptyAt.loading) return; // Wait for it to load before making any decision
     const lastFull = batteryWasLastFullAt();
+    const lastEmpty = batteryWasLastEmptyAt();
     const previousMidnight = lastTimeItWasMidnight();
-    if (lastFull) {
-      return Math.min(previousMidnight, lastFull);
-    }
-    return previousMidnight;
+    return Math.min(previousMidnight, lastFull || Infinity, lastEmpty || Infinity);
   });
 
   const [interestingDatabaseValues] = createResource(
