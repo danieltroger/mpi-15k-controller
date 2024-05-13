@@ -1,13 +1,16 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { InfoBroadcast } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
-  const [info] = getBackendSyncedSignal<InfoBroadcast>("info");
   const [energyDischargedSinceEmpty] = getBackendSyncedSignal<number>("energyDischargedSinceEmpty");
   const [energyChargedSinceEmpty] = getBackendSyncedSignal<number>("energyChargedSinceEmpty");
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
+  const [energyRemovedSinceFull] = getBackendSyncedSignal<number>("energyRemovedSinceFull");
+  const [energyDischargedSinceFull] = getBackendSyncedSignal<number>("energyDischargedSinceFull");
+  const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
+  const [isCharging] = getBackendSyncedSignal<number>("isCharging");
+  const [totalLastFull] = getBackendSyncedSignal<number>("totalLastFull");
   const [mqttValues] = getBackendSyncedSignal<Record<string, { value: any; time: number }>>("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const assumedCapacity = 19.2 * 12 * 3 * 16;
@@ -20,7 +23,7 @@ export default function Home() {
     return Math.abs(charged) - Math.abs(discharged);
   });
   const socSinceFull = createMemo(() => {
-    const removedSinceFull = info()?.energyRemovedSinceFull;
+    const removedSinceFull = energyRemovedSinceFull();
     if (removedSinceFull === undefined) return undefined;
     return 100 - (removedSinceFull / assumedCapacity) * 100;
   });
@@ -43,18 +46,13 @@ export default function Home() {
           <li>
             <A href="/temperatures">Temperatures</A>
           </li>
+          <li>
+            <A href="/parasitic-playground">Parasitic playground</A>
+          </li>
         </ol>
       </section>
       <section>
-        <h2>Info</h2>
-        <pre>
-          <code>
-            <Show when={hasHydrated() && info()} fallback={"Loading…"}>
-              {JSON.stringify(info(), null, 2)}
-            </Show>
-          </code>
-        </pre>
-        <br />
+        <h2>Some info</h2>
         Time last empty: {new Date(totalLastEmpty()!).toLocaleString()}
         <br />
         energyDischargedSinceEmpty: {energyDischargedSinceEmpty()}

@@ -123,17 +123,12 @@ function main() {
           energyDischargedSinceEmpty,
           energyChargedSinceEmpty,
           totalLastEmpty,
-          info: () => {
-            const broadcast: InfoBroadcast = {
-              energyDischargedSinceFull: energyDischargedSinceFull(),
-              energyChargedSinceFull: energyChargedSinceFull(),
-              totalLastFull: totalLastFull() && new Date(totalLastFull()!).toISOString(),
-              energyRemovedSinceFull: energyRemovedSinceFull(),
-              currentBatteryPower: currentPower(),
-              isCharging: isChargingOuterScope()?.()?.(),
-            };
-            return broadcast;
-          },
+          currentBatteryPower: currentPower,
+          energyRemovedSinceFull,
+          energyDischargedSinceFull,
+          energyChargedSinceFull,
+          isCharging: () => isChargingOuterScope()?.()?.(),
+          totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
         },
       })
     );
