@@ -1,6 +1,7 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
+import { MqttValue } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
   const [energyDischargedSinceEmpty] = getBackendSyncedSignal<number>("energyDischargedSinceEmpty");
@@ -11,7 +12,6 @@ export default function Home() {
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
-  const [mqttValues] = getBackendSyncedSignal<Record<string, { value: any; time: number }>>("mqttValues");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const assumedCapacity = 19.2 * 12 * 3 * 16;
   const energyAddedSinceEmpty = createMemo(() => {
@@ -77,30 +77,24 @@ export default function Home() {
         Since empty: {socSinceEmpty()}%
       </section>
       <Show when={hasHydrated()}>
-        <NoBuyDebug mqttValues={mqttValues} />
+        <NoBuyDebug />
       </Show>
-      <section>
-        <h2>MQTT Values</h2>
-        <pre>
-          <code>
-            <Show when={hasHydrated() && mqttValues()} fallback={"Loading…"}>
-              {JSON.stringify(mqttValues(), null, 2)}
-            </Show>
-          </code>
-        </pre>
-      </section>
     </main>
   );
 }
 
-function NoBuyDebug({ mqttValues }: { mqttValues: () => undefined | Record<string, { value: any; time: number }> }) {
+function NoBuyDebug() {
+  const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
+  const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
+  const [ac_output_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_r");
+  const [ac_output_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_s");
+  const [ac_output_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_t");
   const solarPower = () =>
-    ((mqttValues()?.["solar_input_power_1"]?.value || 0) as number) +
-    ((mqttValues()?.["solar_input_power_2"]?.value || 0) as number);
+    ((solar_input_power_1()?.value || 0) as number) + ((solar_input_power_2()?.value || 0) as number);
   const acOutputPower = () =>
-    ((mqttValues()?.["ac_output_active_power_r"]?.value || 0) as number) +
-    ((mqttValues()?.["ac_output_active_power_s"]?.value || 0) as number) +
-    ((mqttValues()?.["ac_output_active_power_t"]?.value || 0) as number);
+    ((ac_output_active_power_r()?.value || 0) as number) +
+    ((ac_output_active_power_s()?.value || 0) as number) +
+    ((ac_output_active_power_t()?.value || 0) as number);
   const availablePower = createMemo(() => solarPower() - acOutputPower());
   return (
     <section>
