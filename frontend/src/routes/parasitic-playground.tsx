@@ -15,7 +15,7 @@ export default function ParasiticPlayground() {
   const solarInput = createMemo(() => (solar_input_power_1()?.value || 0) + (solar_input_power_2()?.value || 0));
   const battery = createMemo(() => {
     const value = currentBatteryPower()?.value;
-    if (value != undefined) return value * -1;
+    if (value != undefined) return Math.round(value * -1);
   });
   const ac_output = createMemo(() => {
     const value = ac_output_total_active_power()?.value;
@@ -31,7 +31,7 @@ export default function ParasiticPlayground() {
     if (solar == undefined || batteryPower == undefined || acOutput == undefined || acInput == undefined) {
       return undefined;
     }
-    return solar + batteryPower + acOutput + acInput;
+    return Math.round(solar + batteryPower + acOutput + acInput);
   });
 
   return (
