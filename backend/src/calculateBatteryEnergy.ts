@@ -33,6 +33,7 @@ export function calculateBatteryEnergy({
 
   const energy = createMemo(() => {
     const powerValues = totalPowerHistory();
+    const toSubtract = subtractFromPower();
     if (!powerValues?.length) return;
     let energyCharged = 0;
     let energyDischarged = 0;
@@ -40,7 +41,7 @@ export function calculateBatteryEnergy({
       const power = powerValues[i];
       const nextPower = powerValues[i + 1];
       if (!nextPower) break;
-      const correctedPowerValue = power.value - subtractFromPower();
+      const correctedPowerValue = power.value - toSubtract;
       const timeDiff = nextPower.time - power.time;
       const energy = (correctedPowerValue * timeDiff) / 1000 / 60 / 60;
       if (correctedPowerValue > 0) {
