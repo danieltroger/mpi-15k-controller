@@ -1,4 +1,5 @@
 export type CurrentBatteryPowerBroadcast = { time: number; value: number };
+export type MqttValue = { time: number; value: number };
 
 export const mqttValueKeys = [
   "solar_input_power_1",
