@@ -4,6 +4,7 @@ import { Accessor, createEffect, createMemo, createSignal, untrack } from "solid
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
+import { catchify } from "@depict-ai/utilishared/latest";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -17,6 +18,7 @@ export function feedWhenNoSolar({
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
 }) {
+  let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
   const now = useNow();
   const solarPower = () => {
@@ -52,8 +54,8 @@ export function feedWhenNoSolar({
     getBatteryVoltage()! >= config().full_battery_voltage || isCharging() === false ? false : prev
   );
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
-    if (now() - lastChange < 1000 * 60 * 5 && prev !== undefined) {
-      // Don't change the state more often than every 5 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
+    if (now() - lastChange < 1000 * 60 * 4 && prev !== undefined) {
+      // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
     const batteryVoltage = getBatteryVoltage();
@@ -89,6 +91,7 @@ export function feedWhenNoSolar({
     }
     return actuallyShouldNow;
   });
+  const [debouncedShouldEnableFeeding, setDebouncedShouldEnableFeeding] = createSignal(untrack(shouldEnableFeeding));
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
     if (wanted === "48") {
       return "Disable" as const;
@@ -119,8 +122,9 @@ export function feedWhenNoSolar({
       wantedToCurrentTransformerForDiffing,
     });
 
+
   createEffect(() => {
-    const shouldEnable = shouldEnableFeeding();
+    const shouldEnable = debouncedShouldEnableFeeding();
     if (shouldEnable == undefined) return;
     if (shouldEnable) {
       /* Example field description:
@@ -150,9 +154,24 @@ export function feedWhenNoSolar({
     }
   });
 
+  // Add a debounce to every change of the value (wait for 1 minute for the value to change again before actually changing it) so that clouds coinciding with spikey power consumers don't reduce our grid feed in power unintentionally for like 10 minutes, see http://192.168.0.3:3002/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1715682530262&to=1715684400506
+  createEffect(() => {
+    const shouldEnable = shouldEnableFeeding();
+    const currentDebouncedValue = untrack(debouncedShouldEnableFeeding);
+    if (currentDebouncedValue === undefined) {
+      setDebouncedShouldEnableFeeding(shouldEnable);
+      return;
+    }
+    clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(
+      catchify(()=>setDebouncedShouldEnableFeeding(shouldEnable)),
+      config().feed_from_battery_when_no_solar.should_feed_debounce_time
+    );
+  });
+
   createEffect(() => {
     const { max_feed_in_power_when_feeding_from_solar, feed_amount_watts } = config().feed_from_battery_when_no_solar;
-    const shouldFeed = shouldEnableFeeding();
+    const shouldFeed = debouncedShouldEnableFeeding();
     if (shouldFeed == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
@@ -164,11 +183,13 @@ export function feedWhenNoSolar({
     setWantedMaxFeedInPower(target.toFixed(0));
   });
 
+  createEffect(() => log("isCharging", isCharging()));
+
   createEffect(
     () =>
-      shouldEnableFeeding() != undefined &&
+      debouncedShouldEnableFeeding() != undefined &&
       log(
-        `We now ${shouldEnableFeeding() ? `*should*` : `should *not*`} feeding from the battery when no solar, because we have`,
+        `We now ${debouncedShouldEnableFeeding() ? `*should*` : `should *not*`} feed from battery, because we have`,
         untrack(availablePowerThatWouldGoIntoTheGridByItself),
         "available power and we should feed below",
         untrack(feedBelow),
