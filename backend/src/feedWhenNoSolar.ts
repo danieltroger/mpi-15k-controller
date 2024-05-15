@@ -122,7 +122,6 @@ export function feedWhenNoSolar({
       wantedToCurrentTransformerForDiffing,
     });
 
-
   createEffect(() => {
     const shouldEnable = debouncedShouldEnableFeeding();
     if (shouldEnable == undefined) return;
@@ -164,7 +163,7 @@ export function feedWhenNoSolar({
     }
     clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(
-      catchify(()=>setDebouncedShouldEnableFeeding(shouldEnable)),
+      catchify(() => setDebouncedShouldEnableFeeding(shouldEnable)),
       config().feed_from_battery_when_no_solar.should_feed_debounce_time
     );
   });

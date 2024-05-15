@@ -31,10 +31,17 @@ export function calculateBatteryEnergy({
   });
   const subtractFromPower = createMemo(() => config().parasitic_consumption_for_energy_calculations);
 
-  const energy = createMemo(() => {
+  const energy = createMemo<{ energyCharged: number; energyDischarged: number } | undefined>(prev => {
     const powerValues = totalPowerHistory();
     const toSubtract = subtractFromPower();
-    if (!powerValues?.length) return;
+    if (!powerValues?.length) {
+      if (prev) {
+        // When the battery just became full (or empty) (we have returned something before), we won't have any power values for a short time, just return 0 (which is true) in that time
+        return { energyCharged: 0, energyDischarged: 0 };
+      }
+      // During program initialisation, before we've gotten a value from the DB, return undefined
+      return;
+    }
     let energyCharged = 0;
     let energyDischarged = 0;
     for (let i = 0; i < powerValues.length; i++) {
