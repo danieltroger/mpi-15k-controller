@@ -13,7 +13,7 @@ export default function Home() {
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [hasHydrated, setHasHydrated] = createSignal(false);
-  const assumedCapacity = 19.2 * 12 * 3 * 16;
+  const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
   const energyAddedSinceEmpty = createMemo(() => {
     const discharged = energyDischargedSinceEmpty();
     const charged = energyChargedSinceEmpty();
@@ -25,12 +25,12 @@ export default function Home() {
   const socSinceFull = createMemo(() => {
     const removedSinceFull = energyRemovedSinceFull();
     if (removedSinceFull === undefined) return undefined;
-    return 100 - (removedSinceFull / assumedCapacity) * 100;
+    return 100 - (removedSinceFull / assumedCapacity()) * 100;
   });
   const socSinceEmpty = createMemo(() => {
     const addedSinceEmpty = energyAddedSinceEmpty();
     if (addedSinceEmpty === undefined) return undefined;
-    return (addedSinceEmpty / assumedCapacity) * 100;
+    return (addedSinceEmpty / assumedCapacity()) * 100;
   });
 
   onMount(() => setHasHydrated(true));
@@ -72,7 +72,29 @@ export default function Home() {
         <br />
         Added since empty: {energyAddedSinceEmpty()}
         <br />
-        <h4>Percent SOC assuming {assumedCapacity.toLocaleString()}wh capacity:</h4>
+        <h4>
+          Percent SOC assuming{" "}
+          <span
+            onKeyDown={e => {
+              const { key, currentTarget } = e;
+              const { textContent } = currentTarget;
+              if (key !== "Enter") return;
+              e.preventDefault();
+              currentTarget.blur();
+              const parsed = parseFloat(textContent!);
+              if (parsed) {
+                setAssumedCapacity(parsed);
+              } else {
+                currentTarget.textContent = assumedCapacity() + "";
+              }
+            }}
+            onBlur={({ currentTarget }) => (currentTarget.textContent = assumedCapacity() + "")}
+            contentEditable={true}
+          >
+            {assumedCapacity()}
+          </span>
+          wh capacity:
+        </h4>
         Since full: {socSinceFull()}%<br />
         Since empty: {socSinceEmpty()}%
       </section>
