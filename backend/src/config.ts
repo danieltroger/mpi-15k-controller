@@ -16,7 +16,6 @@ export type Config = {
   };
   elpatron_switching: {
     enabled: boolean;
-    heating_pi_ip: string;
     min_solar_input: number;
   };
   stop_charging_below_current: number;
@@ -66,7 +65,6 @@ export type Config = {
 const default_config: Config = {
   elpatron_switching: {
     enabled: false,
-    heating_pi_ip: "192.168.1.100",
     min_solar_input: 6000,
   },
   soc_calculations: {
