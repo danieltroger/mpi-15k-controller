@@ -12,6 +12,7 @@ export default function Home() {
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
+  const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
   const energyAddedSinceEmpty = createMemo(() => {
@@ -53,6 +54,8 @@ export default function Home() {
       </section>
       <section>
         <h2>Some info</h2>
+        <br />
+        line_power_direction: {line_power_direction()?.value}
         <br />
         energyDischargedSinceFull: {energyDischargedSinceFull()}
         <br />
