@@ -10,6 +10,7 @@ import { saveTemperatures } from "./saveTemperatures";
 import { feedWhenNoSolar } from "./feedWhenNoSolar";
 import { useBatteryValues } from "./useBatteryValues";
 import { mqttValueKeys } from "./sharedTypes";
+import { elpatronSwitching } from "./elpatronSwitching";
 
 while (true) {
   await new Promise<void>(r => {
@@ -45,6 +46,7 @@ function main() {
     const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
     const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
+    const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
     const {
       energyDischargedSinceEmpty,
       energyChargedSinceFull,
@@ -133,5 +135,16 @@ function main() {
         },
       })
     );
+    createEffect(() => {
+      if (elpatronSwitchingErrored()) return;
+      catchError(
+        () => elpatronSwitching(config, mqttValues),
+        e => {
+          setFeedWhenNoSolarErrored(true);
+          error("Elpatron switching errored", e, "restarting in 60s");
+          setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+        }
+      );
+    });
   });
 }

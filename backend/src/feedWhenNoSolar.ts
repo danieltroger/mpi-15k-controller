@@ -5,6 +5,7 @@ import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
+import { totalSolarPower } from "./utilities/totalSolarPower";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -21,12 +22,6 @@ export function feedWhenNoSolar({
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
   const now = useNow();
-  const solarPower = () => {
-    const array1 = mqttValues?.["solar_input_power_1"]?.value as number | undefined;
-    const array2 = mqttValues?.["solar_input_power_2"]?.value as number | undefined;
-    if (array1 == undefined && array2 == undefined) return undefined;
-    return (array1 || 0) + (array2 || 0);
-  };
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
     const powerS = mqttValues?.["ac_output_active_power_s"]?.value as number | undefined;
@@ -35,7 +30,7 @@ export function feedWhenNoSolar({
     return (powerR || 0) + (powerS || 0) + (powerT || 0);
   };
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
-    const solar = solarPower();
+    const solar = totalSolarPower(mqttValues);
     const acOutput = acOutputPower();
     if (solar == undefined || acOutput == undefined) return undefined;
     return solar - acOutput;
@@ -204,7 +199,7 @@ export function feedWhenNoSolar({
         `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} and at`,
         untrack(getBatteryVoltage),
         `v. We have`,
-        untrack(solarPower),
+        untrack(() => totalSolarPower(mqttValues)),
         "watts coming from solar, and",
         untrack(acOutputPower),
         `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
