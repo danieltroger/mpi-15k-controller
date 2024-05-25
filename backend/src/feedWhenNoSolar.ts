@@ -54,10 +54,6 @@ export function feedWhenNoSolar({
     prev => getBatteryVoltage()! >= config().full_battery_voltage || (isCharging() === false ? false : prev)
   );
 
-  createEffect(() =>
-    log(`getBatteryVoltage()! >= config().full_battery_voltage`, getBatteryVoltage()! >= config().full_battery_voltage)
-  );
-  createEffect(() => log(getBatteryVoltage, getBatteryVoltage()));
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
     if (now() - lastChange < 1000 * 60 * 4 && prev !== undefined) {
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
@@ -187,8 +183,6 @@ export function feedWhenNoSolar({
     setWantedMaxFeedInPower(target.toFixed(0));
   });
 
-  createEffect(() => log("isCharging", isCharging()));
-
   createEffect(
     () =>
       debouncedShouldEnableFeeding() != undefined &&
@@ -206,8 +200,6 @@ export function feedWhenNoSolar({
         `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
       )
   );
-
-  createEffect(() => log("batteryIsNearlyFull", batteryIsNearlyFull()));
 
   createEffect(
     () =>
