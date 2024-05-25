@@ -31,6 +31,8 @@ export function elpatronSwitching(
       );
     });
 
+    createEffect(() => console.log("elpatronShouldBeEnabled", elpatronShouldBeEnabled()));
+
     createResource(elpatronShouldBeEnabled, async enable => {
       const [result] = (await socket?.ensure_sent({
         id: random_string(),
