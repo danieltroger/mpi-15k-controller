@@ -24,14 +24,17 @@ $text-color: white;
 
 body {
   font-family: Gordita, Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-  background: $bg-color;
-}
-
-a {
-  margin-right: 1rem;
-  color: white;
-  text-decoration: underline !important;
-  &:visited {
-    color: rgba(255, 255, 255, 0.9);
+  &:not(:has(.soc-playground)) {
+    background: $bg-color;
+    a {
+      color: white;
+      &:visited {
+        color: rgba(255, 255, 255, 0.9);
+      }
+    }
+  }
+  a {
+    margin-right: 1rem;
+    text-decoration: underline !important;
   }
 }
