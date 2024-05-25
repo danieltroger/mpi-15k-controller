@@ -33,6 +33,7 @@ export type Config = {
     add_to_feed_below_when_currently_feeding: number;
     disable_below_battery_voltage: number;
     should_feed_debounce_time: number;
+    allow_switching_to_solar_feeding_during_charging_x_volts_below_full: number;
   };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
@@ -81,7 +82,7 @@ const default_config: Config = {
     max_feed_in_power_when_feeding_from_solar: 15000,
     add_to_feed_below_when_currently_feeding: 200,
     disable_below_battery_voltage: 45,
-    should_feed_debounce_time: 60_000
+    should_feed_debounce_time: 60_000,
   },
 };
 

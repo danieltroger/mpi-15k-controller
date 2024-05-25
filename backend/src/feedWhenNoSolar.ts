@@ -59,13 +59,25 @@ export function feedWhenNoSolar({
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
       return prev;
     }
+    const {
+      full_battery_voltage,
+      feed_from_battery_when_no_solar: {
+        disable_below_battery_voltage,
+        allow_switching_to_solar_feeding_during_charging_x_volts_below_full,
+        add_to_feed_below_when_currently_feeding,
+      },
+    } = config();
     const batteryVoltage = getBatteryVoltage();
     const charging = isCharging();
+    const startForceFeedingFromSolarAt =
+      full_battery_voltage - allow_switching_to_solar_feeding_during_charging_x_volts_below_full;
     // Wait for data to be known at program start before making a decision
     if (batteryVoltage == undefined || charging == undefined) return undefined;
     if (
       batteryIsNearlyFull() ||
-      batteryVoltage <= config().feed_from_battery_when_no_solar.disable_below_battery_voltage
+      batteryVoltage <= disable_below_battery_voltage ||
+      // Switch back to feeding from solar already a bit before full to avoid a dip in harvested power, like here http://192.168.1.102:3000/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1716444771315&to=1716455606919
+      (charging && batteryVoltage >= startForceFeedingFromSolarAt)
     ) {
       // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
       // Also when battery is basically completely depleted, don't attempt to feed it into the grid
@@ -73,15 +85,13 @@ export function feedWhenNoSolar({
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
     if (charging) {
-      if (batteryVoltage < config().full_battery_voltage) {
-        return true;
-      }
+      return true;
     }
 
     let doIfBelow = feedBelow();
     if (prev) {
       // When already feeding, make the threshold to stop feeding higher to avoid weird oscillations
-      doIfBelow += config().feed_from_battery_when_no_solar.add_to_feed_below_when_currently_feeding;
+      doIfBelow += add_to_feed_below_when_currently_feeding;
     }
     const available = availablePowerThatWouldGoIntoTheGridByItself();
     if (available == undefined) return undefined;
