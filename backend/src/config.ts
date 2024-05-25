@@ -83,6 +83,7 @@ const default_config: Config = {
     add_to_feed_below_when_currently_feeding: 200,
     disable_below_battery_voltage: 45,
     should_feed_debounce_time: 60_000,
+    allow_switching_to_solar_feeding_during_charging_x_volts_below_full: 1.4,
   },
 };
 
