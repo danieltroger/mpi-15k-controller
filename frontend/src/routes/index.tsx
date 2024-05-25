@@ -49,6 +49,9 @@ export default function Home() {
           <li>
             <A href="/parasitic-playground">Parasitic playground</A>
           </li>
+          <li>
+            <A href="/soc-playground">SOC playground</A>
+          </li>
         </ol>
       </section>
       <section>
