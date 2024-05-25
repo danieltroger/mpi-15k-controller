@@ -21,7 +21,7 @@ export function elpatronSwitching(
 
   createEffect(() => {
     if (!functionalityEnabled()) return;
-    socket ||= new DepictAPIWS("ws://192.168.178.170:9321");
+    socket ||= new DepictAPIWS("ws://192.168.1.100:9321");
     const elpatronShouldBeEnabled = createMemo(() => {
       const solar = fromSolar();
       return (
@@ -30,8 +30,6 @@ export function elpatronSwitching(
         mqttValues.line_power_direction?.value === "Output"
       );
     });
-
-    createEffect(() => console.log("elpatronShouldBeEnabled", elpatronShouldBeEnabled()));
 
     createResource(elpatronShouldBeEnabled, async enable => {
       const [result] = (await socket?.ensure_sent({
