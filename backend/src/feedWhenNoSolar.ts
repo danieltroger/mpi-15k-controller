@@ -53,6 +53,11 @@ export function feedWhenNoSolar({
   const batteryIsNearlyFull = createMemo<boolean | undefined>(prev =>
     getBatteryVoltage()! >= config().full_battery_voltage || isCharging() === false ? false : prev
   );
+
+  createEffect(() =>
+    log(`getBatteryVoltage()! >= config().full_battery_voltage`, getBatteryVoltage()! >= config().full_battery_voltage)
+  );
+  createEffect(() => log(getBatteryVoltage, getBatteryVoltage()));
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
     if (now() - lastChange < 1000 * 60 * 4 && prev !== undefined) {
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
