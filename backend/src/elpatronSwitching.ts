@@ -65,6 +65,7 @@ export function elpatronSwitching(
           result,
           "for solar",
           fromSolar(),
+          "w, ",
           "power direction",
           getPowerDirection()
         );
