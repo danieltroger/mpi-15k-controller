@@ -1,11 +1,10 @@
-import { Config, get_config_object } from "./config";
-import { Accessor, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { Config } from "./config";
+import { Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
 import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
 import { log } from "./utilities/logging";
-import { useNow } from "./utilities/useNow";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;
