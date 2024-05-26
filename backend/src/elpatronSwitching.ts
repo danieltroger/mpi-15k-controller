@@ -20,6 +20,7 @@ export function elpatronSwitching(
   const fromSolar = createMemo(() => totalSolarPower(mqttValues));
   const [switchingBlockedUntil, setSwitchingBlockedUntil] = createSignal(0);
   const now = useNow();
+  const getPowerDirection = () => mqttValues.line_power_direction?.value;
 
   createEffect(() => {
     if (!functionalityEnabled()) return;
@@ -27,7 +28,7 @@ export function elpatronSwitching(
     const elpatronShouldBeEnabled = createMemo<boolean | undefined>(prev => {
       if (switchingBlockedUntil() > now()) return prev;
       const solar = fromSolar();
-      const powerDirection = mqttValues.line_power_direction?.value;
+      const powerDirection = getPowerDirection();
       if (solar == undefined || powerDirection == undefined) return;
       setSwitchingBlockedUntil(+new Date() + 1000 * 60 * 5); // Only allow switching every 5 minutes
       return solar > config().elpatron_switching.min_solar_input && powerDirection === "Output";
@@ -44,7 +45,14 @@ export function elpatronSwitching(
           value: { "output": "electric_heating_element", "new_state": enable ? 0 : 1 },
         })) as any;
 
-        log((enable ? "Enable" : "Disable") + " elpatron result:", result);
+        log(
+          (enable ? "Enable" : "Disable") + " elpatron result:",
+          result,
+          "for solar",
+          fromSolar(),
+          "power direction",
+          getPowerDirection()
+        );
       }
     );
   });
