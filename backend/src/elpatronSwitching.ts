@@ -48,8 +48,9 @@ export function elpatronSwitching(
         const timeSinceLastSwitch = +new Date() - lastSwitch;
         const maxSwitchEvery = 1000 * 60 * 5;
         if (timeSinceLastSwitch < maxSwitchEvery) {
-          log("Recently switched elpatron, waiting", timeSinceLastSwitch, "ms before switching again");
-          await wait(maxSwitchEvery - timeSinceLastSwitch);
+          const toWait = maxSwitchEvery - timeSinceLastSwitch;
+          log("Recently switched elpatron, waiting", toWait, "ms before switching again");
+          await wait(toWait);
         }
         const enable = elpatronShouldBeEnabled();
         if (enable == undefined) return;
