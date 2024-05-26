@@ -23,7 +23,6 @@ export function prematureFloatBugWorkaround({
   const [localStateOfConfiguredVoltageBulk, { refetch: refetchBulk }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal, "bulk")
   );
-  const [settableChargeVoltage, setSettableChargeVoltage] = createSignal<number | undefined>();
   const getVoltage = () => mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10;
   const getCurrent = () => mqttValues.battery_current?.value && (mqttValues.battery_current?.value as number) / 10;
   const deparallelizedSetChargeVoltageFloat = deparallelize_no_drop((targetVoltage: number) =>
@@ -33,30 +32,23 @@ export function prematureFloatBugWorkaround({
     setVoltageWithThrottlingAndRefetch(configSignal, "bulk", targetVoltage, refetchBulk)
   );
   const refetchInterval = setInterval(() => (refetchBulk(), refetchFloat()), 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
-
-  onCleanup(() => clearInterval(refetchInterval));
-
-  createEffect(() => {
+  const wantVoltagesToBeSetTo = createMemo<number | undefined>(prev => {
     const voltage = getVoltage();
     const startChargingBelow = config().start_bulk_charge_voltage;
-    if (!voltage) return;
+    const { full_battery_voltage, start_bulk_charge_after_wh_discharged, float_charging_voltage } = config();
+    if (!voltage) return prev;
     if (voltage <= startChargingBelow) {
       // Emergency voltage based charging, in case something breaks with DB or something
-      setSettableChargeVoltage(config().full_battery_voltage);
-      return;
-    } else if (
-      voltage >= config().full_battery_voltage &&
-      (getCurrent() as number) < config().stop_charging_below_current
-    ) {
+      return full_battery_voltage;
+    } else if (voltage >= full_battery_voltage && (getCurrent() as number) < config().stop_charging_below_current) {
       // When battery full, stop charging
-      setSettableChargeVoltage(config().float_charging_voltage);
-      return;
+      return float_charging_voltage;
     }
     const removedSinceFull = energyRemovedSinceFull();
-    if (!removedSinceFull) return;
-    const { full_battery_voltage, start_bulk_charge_after_wh_discharged } = config();
-    if (removedSinceFull >= start_bulk_charge_after_wh_discharged) {
-      if (untrack(settableChargeVoltage) !== full_battery_voltage) {
+    if (!removedSinceFull) return prev;
+    const shouldChargeDueToDischarged = removedSinceFull >= start_bulk_charge_after_wh_discharged;
+    if (shouldChargeDueToDischarged) {
+      if (untrack(wantVoltagesToBeSetTo) !== full_battery_voltage) {
         log(
           "Discharged",
           removedSinceFull,
@@ -65,11 +57,14 @@ export function prematureFloatBugWorkaround({
           "wh starting bulk charge"
         );
       }
-      setSettableChargeVoltage(full_battery_voltage);
+      return full_battery_voltage;
     }
+    return float_charging_voltage;
   });
 
-  createEffect(() => log("We now want the voltage to be set to", settableChargeVoltage()));
+  onCleanup(() => clearInterval(refetchInterval));
+
+  createEffect(() => log("We now want the voltage to be set to", wantVoltagesToBeSetTo()));
 
   createEffect(() =>
     log("Got confirmed: configured float voltage from shinemonitor", localStateOfConfiguredVoltageFloat())
@@ -79,7 +74,7 @@ export function prematureFloatBugWorkaround({
   );
 
   createEffect(() => {
-    const wantsVoltage = settableChargeVoltage();
+    const wantsVoltage = wantVoltagesToBeSetTo();
     const voltageSetToRn = localStateOfConfiguredVoltageFloat();
     const bulkConfigured = localStateOfConfiguredVoltageBulk();
     if (
@@ -106,7 +101,7 @@ export function prematureFloatBugWorkaround({
   });
 
   createEffect(() => {
-    const wantsVoltage = settableChargeVoltage();
+    const wantsVoltage = wantVoltagesToBeSetTo();
     const voltageSetToRn = localStateOfConfiguredVoltageBulk();
     const floatConfigured = localStateOfConfiguredVoltageFloat();
     if (
