@@ -20,6 +20,11 @@ export function elpatronSwitching(
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
   const fromSolar = createMemo(() => totalSolarPower(mqttValues));
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
+  const batteryVoltage = createMemo(() => {
+    const voltage = mqttValues.battery_voltage?.value as undefined | number;
+    if (voltage == undefined) return;
+    return voltage / 10;
+  });
 
   createEffect(() => {
     if (!functionalityEnabled()) return;
@@ -28,7 +33,11 @@ export function elpatronSwitching(
       const solar = fromSolar();
       const powerDirection = getPowerDirection();
       if (solar == undefined || powerDirection == undefined) return;
-      return solar > config().elpatron_switching.min_solar_input && powerDirection === "Output";
+      return (
+        solar > config().elpatron_switching.min_solar_input &&
+        // Output direction apparently flakey?
+        (powerDirection === "Output" || (batteryVoltage() as number) >= 52.8)
+      );
     });
 
     createResource(
@@ -49,6 +58,7 @@ export function elpatronSwitching(
           command: "write-gpio",
           value: { "output": "electric_heating_element", "new_state": enable ? 0 : 1 },
         })) as any;
+        lastSwitch = +new Date();
 
         log(
           (enable ? "Enable" : "Disable") + " elpatron result:",
