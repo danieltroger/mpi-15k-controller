@@ -27,9 +27,10 @@ export function elpatronSwitching(
     const elpatronShouldBeEnabled = createMemo<boolean | undefined>(prev => {
       if (switchingBlockedUntil() > now()) return prev;
       const solar = fromSolar();
-      if (solar == undefined) return;
+      const powerDirection = mqttValues.line_power_direction?.value;
+      if (solar == undefined || powerDirection == undefined) return;
       setSwitchingBlockedUntil(+new Date() + 1000 * 60 * 5); // Only allow switching every 5 minutes
-      return solar > config().elpatron_switching.min_solar_input && mqttValues.line_power_direction?.value === "Output";
+      return solar > config().elpatron_switching.min_solar_input && powerDirection === "Output";
     });
 
     createResource(
