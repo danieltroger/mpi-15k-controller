@@ -18,7 +18,7 @@ export function elpatronSwitching(
 ) {
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
   const fromSolar = createMemo(() => totalSolarPower(mqttValues));
-  const [switchingBlockedUntil, setSwitchingBlockedUntil] = createSignal(Infinity);
+  const [switchingBlockedUntil, setSwitchingBlockedUntil] = createSignal(0);
   const now = useNow();
 
   createEffect(() => {
