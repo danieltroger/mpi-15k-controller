@@ -59,6 +59,15 @@ export function prematureFloatBugWorkaround({
       }
       return full_battery_voltage;
     }
+    if (prev !== float_charging_voltage) {
+      log(
+        "Discharged",
+        removedSinceFull,
+        "wh since full, which is less than",
+        start_bulk_charge_after_wh_discharged,
+        "wh, starting to float charge"
+      );
+    }
     return float_charging_voltage;
   });
 
