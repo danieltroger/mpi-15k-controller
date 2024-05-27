@@ -43,6 +43,9 @@ export function prematureFloatBugWorkaround({
     } else if (voltage >= full_battery_voltage && (getCurrent() as number) < config().stop_charging_below_current) {
       // When battery full, stop charging
       return float_charging_voltage;
+    } else if (prev === full_battery_voltage) {
+      // If we are charging, stay charging until above condition is met. Otherwise we'd stop charging as soon as we've charged until start_bulk_charge_after_wh_discharged is still left
+      return full_battery_voltage;
     }
     const removedSinceFull = energyRemovedSinceFull();
     if (!removedSinceFull) return prev;
