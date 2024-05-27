@@ -48,7 +48,7 @@ export function prematureFloatBugWorkaround({
     if (!removedSinceFull) return prev;
     const shouldChargeDueToDischarged = removedSinceFull >= start_bulk_charge_after_wh_discharged;
     if (shouldChargeDueToDischarged) {
-      if (untrack(wantVoltagesToBeSetTo) !== full_battery_voltage) {
+      if (prev !== full_battery_voltage) {
         log(
           "Discharged",
           removedSinceFull,
