@@ -22,7 +22,6 @@ export function useShinemonitorParameter<
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   wantedToCurrentTransformerForDiffing: (WantedValueType: string) => ReadParameterResponse;
 }) {
-  let syncTimeout: ReturnType<typeof setTimeout> | undefined;
   const [wantedValue, setWantedValue] = createSignal<WantedValueType | undefined>();
   const [syncStateToggle, setSyncStateToggle] = createSignal(false);
   const [currentValue, { refetch }] = createResource(async () =>
@@ -31,8 +30,13 @@ export function useShinemonitorParameter<
   const refetchInterval = setInterval(refetch, 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
 
   const deparallelizedSetValue = deparallelize_no_drop((value: WantedValueType) =>
-    setParameterWithThrottlingAndRefetch(configSignal, parameter, value, refetch, () =>
-      setSyncStateToggle(prev => !prev)
+    setParameterWithThrottlingAndRefetch(
+      configSignal,
+      parameter,
+      // Use new value, even if there was a delay before setting (value here as fallback to satisfy typescript)
+      () => wantedValue() || value,
+      refetch,
+      () => setSyncStateToggle(prev => !prev)
     )
   );
   createEffect(() => {
@@ -67,7 +71,7 @@ export function useShinemonitorParameter<
 async function setParameterWithThrottlingAndRefetch<T>(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
   parameter: string,
-  value: string,
+  value: () => string,
   refetch: (info?: unknown) => T | Promise<T | undefined> | null | undefined,
   callOnFailure: VoidFunction
 ) {
@@ -79,7 +83,7 @@ async function setParameterWithThrottlingAndRefetch<T>(
     log("Waiting with setting ", parameter, " for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
-  const didFail = await setConfiguredValueInShinemonitor(configSignal, parameter, value);
+  const didFail = await setConfiguredValueInShinemonitor(configSignal, parameter, value());
   lastShineRequestForParameter[parameter] = +new Date();
   await refetch();
   await wait(8000); // Inverter needs time for it to be set, so check again after 8s
