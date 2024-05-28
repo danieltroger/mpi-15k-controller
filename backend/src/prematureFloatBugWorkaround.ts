@@ -48,7 +48,13 @@ export function prematureFloatBugWorkaround({
       return full_battery_voltage;
     }
     const removedSinceFull = energyRemovedSinceFull();
-    if (!removedSinceFull) return prev;
+    const configuredFloat = localStateOfConfiguredVoltageFloat();
+    const configuredBulk = localStateOfConfiguredVoltageBulk();
+    if (removedSinceFull == undefined || configuredBulk == undefined || configuredFloat == undefined) return prev;
+    if (prev === undefined && configuredBulk === configuredFloat) {
+      // Probably application/function just (re-)started after a crash, roll with whatever the inverter is currently set to to not interrupt the charging process
+      return configuredBulk;
+    }
     const shouldChargeDueToDischarged = removedSinceFull >= start_bulk_charge_after_wh_discharged;
     if (shouldChargeDueToDischarged) {
       if (prev !== full_battery_voltage) {
