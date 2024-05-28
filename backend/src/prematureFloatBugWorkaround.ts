@@ -146,7 +146,7 @@ export function prematureFloatBugWorkaround({
 
   // Return this as "is charging" for feedWhenNoSolar, we say that we're charging if the actual float voltage equals the full battery voltage
   return createMemo(() => {
-    if (energyRemovedSinceFull() == undefined) return undefined;
+    if (energyRemovedSinceFull() == undefined || wantVoltagesToBeSetTo() == undefined) return undefined;
     return localStateOfConfiguredVoltageFloat() === config().full_battery_voltage;
   });
 }
