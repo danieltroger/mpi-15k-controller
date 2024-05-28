@@ -67,12 +67,12 @@ export function useCurrentPower(
   createEffect(() => {
     const fullWhen = haveSeenBatteryFullAt();
     const emptyWhen = haveSeenBatteryEmptyAt();
-    const earliestValueWeNeedToKeep = Math.min(fullWhen || Infinity, emptyWhen || Infinity);
-    if (earliestValueWeNeedToKeep !== Infinity) {
-      const oldestValue = localPowerHistory()[0]?.time;
-      if (oldestValue && oldestValue < earliestValueWeNeedToKeep) {
-        setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= earliestValueWeNeedToKeep));
-      }
+    // If we're lacking one of the values, we can't delete the old ones, or we risk deleting too much while the battery is about the get full for exampel
+    if (fullWhen == undefined || emptyWhen == undefined) return;
+    const earliestValueWeNeedToKeep = Math.min(fullWhen, emptyWhen);
+    const oldestValue = localPowerHistory()[0]?.time;
+    if (oldestValue && oldestValue < earliestValueWeNeedToKeep) {
+      setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= earliestValueWeNeedToKeep));
     }
   });
 
