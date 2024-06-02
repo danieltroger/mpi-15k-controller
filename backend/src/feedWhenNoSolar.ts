@@ -39,7 +39,7 @@ export function feedWhenNoSolar({
     const voltage1 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
     const voltage2 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
     if (voltage1 == undefined && voltage2 == undefined) return undefined;
-    return Math.max(voltage1 || 0, voltage2 || 0);
+    return Math.max((voltage1 || 0) / 10, (voltage2 || 0) / 10);
   });
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
     const solar = totalSolarPower(mqttValues);
