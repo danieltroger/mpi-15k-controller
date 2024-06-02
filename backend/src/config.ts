@@ -13,6 +13,11 @@ export type Config = {
   };
   soc_calculations: {
     battery_empty_at: number;
+    capacity_per_cell_from_wh: number;
+    capacity_per_cell_to_wh: number;
+    parasitic_consumption_from: number;
+    parasitic_consumption_to: number;
+    number_of_cells: number;
   };
   elpatron_switching: {
     enabled: boolean;
@@ -69,6 +74,11 @@ const default_config: Config = {
   },
   soc_calculations: {
     battery_empty_at: 46,
+    capacity_per_cell_from_wh: 18,
+    capacity_per_cell_to_wh: 20,
+    parasitic_consumption_from: 200,
+    parasitic_consumption_to: 350,
+    number_of_cells: 576,
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
