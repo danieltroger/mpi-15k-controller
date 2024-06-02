@@ -108,7 +108,7 @@ function iterativelyFindSocParameters({
   setAssumedParasiticConsumption: Setter<number>;
   setAssumedCapacity: Setter<number>;
 }) {
-  const numWorkers = cpus().length - 1; // Leave a CPU for the main thread
+  const numWorkers = 2; // Hardcoded for now
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
   );
