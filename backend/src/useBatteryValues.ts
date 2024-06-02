@@ -2,14 +2,16 @@ import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "./utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import { Accessor, createMemo, createSignal } from "solid-js";
+import { Accessor, createEffect, createMemo, createRoot, createSignal, untrack } from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
 import { Config, get_config_object } from "./config";
+import { log } from "./utilities/logging";
 
 export function useBatteryValues(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
   configSignal: Awaited<ReturnType<typeof get_config_object>>
 ) {
+  const [config] = configSignal;
   const {
     localPowerHistory,
     currentPower,
@@ -55,6 +57,20 @@ export function useBatteryValues(
     assumedCapacity,
   });
 
+  iterativelyFindSocParameters({
+    config,
+    calculateSoc: ({ assumeParasiticConsumption, assumeCapacity }) =>
+      batteryCalculationsDependingOnUnknowns({
+        now,
+        localPowerHistory,
+        databasePowerValues,
+        totalLastFull,
+        totalLastEmpty,
+        subtractFromPower: () => assumeParasiticConsumption,
+        assumedCapacity: () => assumeCapacity,
+      }),
+  });
+
   return {
     energyChargedSinceFull,
     energyChargedSinceEmpty,
@@ -70,6 +86,57 @@ export function useBatteryValues(
     assumedCapacity,
     assumedParasiticConsumption,
   };
+}
+
+function iterativelyFindSocParameters({
+  config,
+  calculateSoc,
+}: {
+  calculateSoc: (params: { assumeParasiticConsumption: number; assumeCapacity: number }) => {
+    socSinceFull: Accessor<number | undefined>;
+    socSinceEmpty: Accessor<number | undefined>;
+  };
+  config: Accessor<Config>;
+}) {
+  const startCapacityWh = createMemo(
+    () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
+  );
+  const endCapacityWh = createMemo(
+    () => config().soc_calculations.capacity_per_cell_to_wh * config().soc_calculations.number_of_cells
+  );
+  const startParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_from);
+  const endParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_to);
+  createEffect(() => {
+    const startCapacity = startCapacityWh();
+    const endCapacity = endCapacityWh();
+    const startParasitic = startParasiticConsumption();
+    const endParasitic = endParasiticConsumption();
+    untrack(() => {
+      for (let capacity = startCapacity; capacity <= endCapacity; capacity += 1) {
+        for (let parasitic = startParasitic; parasitic <= endParasitic; parasitic += 1) {
+          const { socSinceFull, socSinceEmpty } = createRoot(dispose => {
+            const result = calculateSoc({
+              assumeCapacity: capacity,
+              assumeParasiticConsumption: parasitic,
+            });
+            // We don't want calculateSoc to do any reactive stuff in this case so we just give it its own root and instantly dispose it after the first run, unsure how much overhead this adds
+            dispose();
+            return result;
+          });
+          const sinceFull = socSinceFull();
+          const sinceEmpty = socSinceEmpty();
+          if (sinceEmpty == undefined || sinceFull == undefined) return;
+          if (Math.abs(sinceFull - sinceEmpty) < 0.1) {
+            log(
+              "Found parameters:",
+              { capacity, parasitic, sinceEmpty, sinceFull },
+              "where SOC is the same at full and empty"
+            );
+          }
+        }
+      }
+    });
+  });
 }
 
 function batteryCalculationsDependingOnUnknowns({
