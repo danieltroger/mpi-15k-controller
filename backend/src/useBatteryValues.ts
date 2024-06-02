@@ -118,12 +118,13 @@ function iterativelyFindSocParameters({
   const [toggle, setToggle] = createSignal(false);
   const startParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_from);
   const endParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_to);
-  const hasData = createMemo(
-    () =>
-      totalLastFull() !== undefined &&
-      totalLastEmpty() !== undefined &&
-      databasePowerValues().length &&
-      localPowerHistory().length
+  const hasData = createMemo<boolean | number | undefined>(
+    prev =>
+      prev ||
+      (totalLastFull() !== undefined &&
+        totalLastEmpty() !== undefined &&
+        databasePowerValues().length &&
+        localPowerHistory().length)
   );
   // Calculate SOC stuff once an hour
   setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
