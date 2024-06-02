@@ -2,15 +2,14 @@ import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "./utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import { createMemo } from "solid-js";
+import { Accessor, createMemo, createSignal } from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
-import { get_config_object } from "./config";
+import { Config, get_config_object } from "./config";
 
 export function useBatteryValues(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
   configSignal: Awaited<ReturnType<typeof get_config_object>>
 ) {
-  const [config] = configSignal;
   const {
     localPowerHistory,
     currentPower,
@@ -34,14 +33,69 @@ export function useBatteryValues(
       return Math.max(lastSinceStart, lastAccordingToDatabase);
     })
   );
+  const [assumedParasiticConsumption, setAssumedParasiticConsumption] = createSignal(315);
+  const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
 
+  const {
+    energyAddedSinceEmpty,
+    energyChargedSinceEmpty,
+    energyDischargedSinceEmpty,
+    energyDischargedSinceFull,
+    energyRemovedSinceFull,
+    energyChargedSinceFull,
+    socSinceFull,
+    socSinceEmpty,
+  } = batteryCalculationsDependingOnUnknowns({
+    now,
+    localPowerHistory,
+    databasePowerValues,
+    totalLastFull,
+    totalLastEmpty,
+    subtractFromPower: assumedParasiticConsumption,
+    assumedCapacity,
+  });
+
+  return {
+    energyChargedSinceFull,
+    energyChargedSinceEmpty,
+    energyDischargedSinceEmpty,
+    energyDischargedSinceFull,
+    currentPower,
+    totalLastEmpty,
+    totalLastFull,
+    energyRemovedSinceFull,
+    energyAddedSinceEmpty,
+    socSinceEmpty,
+    socSinceFull,
+    assumedCapacity,
+    assumedParasiticConsumption,
+  };
+}
+
+function batteryCalculationsDependingOnUnknowns({
+  now,
+  localPowerHistory,
+  databasePowerValues,
+  totalLastFull,
+  totalLastEmpty,
+  subtractFromPower,
+  assumedCapacity,
+}: {
+  now: Accessor<number>;
+  localPowerHistory: ReturnType<typeof useCurrentPower>["localPowerHistory"];
+  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
+  totalLastEmpty: Accessor<number | undefined>;
+  totalLastFull: Accessor<number | undefined>;
+  subtractFromPower: Accessor<number>;
+  assumedCapacity: Accessor<number>;
+}) {
   const { energyDischarged: energyDischargedSinceEmpty, energyCharged: energyChargedSinceEmpty } =
     calculateBatteryEnergy({
       localPowerHistory,
       databasePowerValues,
       from: totalLastEmpty,
       to: now,
-      config,
+      subtractFromPower,
     });
   const { energyDischarged: energyDischargedSinceFull, energyCharged: energyChargedSinceFull } = calculateBatteryEnergy(
     {
@@ -49,7 +103,7 @@ export function useBatteryValues(
       databasePowerValues,
       from: totalLastFull,
       to: now,
-      config,
+      subtractFromPower,
     }
   );
 
@@ -73,15 +127,25 @@ export function useBatteryValues(
     return Math.abs(charged) - Math.abs(discharged);
   });
 
+  const socSinceFull = createMemo(() => {
+    const removedSinceFull = energyRemovedSinceFull();
+    if (removedSinceFull === undefined) return undefined;
+    return 100 - (removedSinceFull / assumedCapacity()) * 100;
+  });
+  const socSinceEmpty = createMemo(() => {
+    const addedSinceEmpty = energyAddedSinceEmpty();
+    if (addedSinceEmpty === undefined) return undefined;
+    return (addedSinceEmpty / assumedCapacity()) * 100;
+  });
+
   return {
     energyChargedSinceFull,
     energyChargedSinceEmpty,
     energyDischargedSinceEmpty,
     energyDischargedSinceFull,
-    currentPower,
-    totalLastEmpty,
-    totalLastFull,
     energyRemovedSinceFull,
     energyAddedSinceEmpty,
+    socSinceEmpty,
+    socSinceFull,
   };
 }
