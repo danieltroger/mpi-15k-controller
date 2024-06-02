@@ -1,11 +1,12 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { Accessor, createEffect, createMemo, createSignal, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, Setter, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
-import { log } from "./utilities/logging";
+import { error, log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
+import { appendFile } from "fs/promises";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -14,14 +15,19 @@ export function feedWhenNoSolar({
   mqttValues,
   configSignal,
   isCharging,
+  setLastReason,
+  setLastChangingReason,
 }: {
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
+  setLastReason: Setter<string>;
+  setLastChangingReason: Setter<string>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
   const now = useNow();
+
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
     const powerS = mqttValues?.["ac_output_active_power_s"]?.value as number | undefined;
@@ -29,6 +35,12 @@ export function feedWhenNoSolar({
     if (powerR == undefined && powerS == undefined && powerT == undefined) return undefined;
     return (powerR || 0) + (powerS || 0) + (powerT || 0);
   };
+  const highestStringVoltage = createMemo(() => {
+    const voltage1 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
+    const voltage2 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
+    if (voltage1 == undefined && voltage2 == undefined) return undefined;
+    return Math.max(voltage1 || 0, voltage2 || 0);
+  });
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
     const solar = totalSolarPower(mqttValues);
     const acOutput = acOutputPower();
@@ -50,9 +62,20 @@ export function feedWhenNoSolar({
   );
 
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
-    if (now() - lastChange < 1000 * 60 * 4 && prev !== undefined) {
+    const doWithReason = (what: boolean | undefined, reason: string) => {
+      if (what !== prev) {
+        // We changed
+        lastChange = +new Date();
+        debugLog(`Changed to ${what} because ${reason}`);
+        setLastChangingReason(`shouldEnableFeeding is ${what} because ${reason}`);
+      }
+      setLastReason(`shouldEnableFeeding is ${what} because ${reason}`);
+      return what;
+    };
+    const timeSinceLastChange = now() - lastChange;
+    if (timeSinceLastChange < 1000 * 60 * 4 && prev !== undefined) {
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
-      return prev;
+      return doWithReason(prev, `not enough time passed since last change (${timeSinceLastChange}ms)`);
     }
     const {
       full_battery_voltage,
@@ -60,27 +83,48 @@ export function feedWhenNoSolar({
         disable_below_battery_voltage,
         allow_switching_to_solar_feeding_during_charging_x_volts_below_full,
         add_to_feed_below_when_currently_feeding,
+        force_let_through_to_grid_over_pv_voltage,
       },
     } = config();
     const batteryVoltage = getBatteryVoltage();
     const charging = isCharging();
     const startForceFeedingFromSolarAt =
       full_battery_voltage - allow_switching_to_solar_feeding_during_charging_x_volts_below_full;
+    const highestVoltage = highestStringVoltage();
     // Wait for data to be known at program start before making a decision
-    if (batteryVoltage == undefined || charging == undefined) return undefined;
+    if (batteryVoltage == undefined || charging == undefined) {
+      return doWithReason(undefined, "battery voltage or charging unknown");
+    }
+    if (batteryIsNearlyFull()) {
+      return doWithReason(false, "battery is nearly full");
+    }
+    if (batteryVoltage <= disable_below_battery_voltage) {
+      return doWithReason(
+        false,
+        `battery voltage ${batteryVoltage}v is below disable threshold ${disable_below_battery_voltage}v`
+      );
+    }
     if (
-      batteryIsNearlyFull() ||
-      batteryVoltage <= disable_below_battery_voltage ||
       // Switch back to feeding from solar already a bit before full to avoid a dip in harvested power, like here http://192.168.1.102:3000/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1716444771315&to=1716455606919
-      (charging && batteryVoltage >= startForceFeedingFromSolarAt)
+      charging &&
+      batteryVoltage >= startForceFeedingFromSolarAt
     ) {
       // When pushing in last percents, it's ok to buy like 75wh of electricity (think the math to prevent that would be complex or bouncy)
       // Also when battery is basically completely depleted, don't attempt to feed it into the grid
-      return false;
+      return doWithReason(
+        false,
+        `battery voltage ${batteryVoltage}v is above force feeding threshold ${startForceFeedingFromSolarAt}v`
+      );
+    }
+    if (highestVoltage != undefined && highestVoltage > force_let_through_to_grid_over_pv_voltage) {
+      return doWithReason(
+        false,
+        `highest voltage ${highestVoltage}v is above force let through threshold ${force_let_through_to_grid_over_pv_voltage}v`
+      );
     }
     // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
     if (charging) {
-      return true;
+      return doWithReason(true, "we are charging");
     }
 
     let doIfBelow = feedBelow();
@@ -89,13 +133,11 @@ export function feedWhenNoSolar({
       doIfBelow += add_to_feed_below_when_currently_feeding;
     }
     const available = availablePowerThatWouldGoIntoTheGridByItself();
-    if (available == undefined) return undefined;
-    const actuallyShouldNow = available < doIfBelow;
-    if (actuallyShouldNow !== prev) {
-      // We changed
-      lastChange = +new Date();
+    if (available == undefined) {
+      return doWithReason(undefined, "available power unknown");
     }
-    return actuallyShouldNow;
+    const actuallyShouldNow = available < doIfBelow;
+    return doWithReason(actuallyShouldNow, `available power ${available}w is below threshold ${doIfBelow}w`);
   });
   const [debouncedShouldEnableFeeding, setDebouncedShouldEnableFeeding] = createSignal(untrack(shouldEnableFeeding));
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
@@ -190,24 +232,6 @@ export function feedWhenNoSolar({
 
   createEffect(
     () =>
-      debouncedShouldEnableFeeding() != undefined &&
-      log(
-        `We now ${debouncedShouldEnableFeeding() ? `*should*` : `should *not*`} feed from battery, because we have`,
-        untrack(availablePowerThatWouldGoIntoTheGridByItself),
-        "available power and we should feed below",
-        untrack(feedBelow),
-        `. The battery is ${untrack(isCharging) ? "charging" : "discharging"} and at`,
-        untrack(getBatteryVoltage),
-        `v. We have`,
-        untrack(() => totalSolarPower(mqttValues)),
-        "watts coming from solar, and",
-        untrack(acOutputPower),
-        `is being drawn by ac output. The battery is ${untrack(batteryIsNearlyFull) ? "" : "not "}in the last charging phase`
-      )
-  );
-
-  createEffect(
-    () =>
       currentShineMaxFeedInPower() &&
       log("Got confirmed from shinemonitor that the current max feed in power is", currentShineMaxFeedInPower())
   );
@@ -226,5 +250,11 @@ export function feedWhenNoSolar({
         'Got confirmed from shinemonitor, "Allow battery to feed-in to the Grid when PV is available" is set to',
         currentBatteryToUtilityWhenSolar()
       )
+  );
+}
+
+function debugLog(message: string) {
+  appendFile("/tmp/feedWhenNoSolar-debug.txt", new Date().toLocaleString() + " " + message + "\n", "utf8").catch(e =>
+    error("Failed to log", message, "to feed when no solar debug", e)
   );
 }
