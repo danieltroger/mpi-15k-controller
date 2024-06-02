@@ -264,7 +264,11 @@ export function feedWhenNoSolar({
 }
 
 function debugLog(message: string) {
-  appendFile("/tmp/feedWhenNoSolar-debug.txt", new Date().toLocaleString() + " " + message + "\n", "utf8").catch(e =>
+  const date = new Date();
+  const options = { timeZone: "Europe/Stockholm" };
+  const localeString = date.toLocaleString("sv-SE", options);
+
+  appendFile("/tmp/feedWhenNoSolar-debug.txt", localeString + " " + message + "\n", "utf8").catch(e =>
     error("Failed to log", message, "to feed when no solar debug", e)
   );
 }
