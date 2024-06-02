@@ -21,8 +21,8 @@ export function feedWhenNoSolar({
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
-  setLastReason: Setter<string>;
-  setLastChangingReason: Setter<string>;
+  setLastReason: Setter<{ what: string; when: number }>;
+  setLastChangingReason: Setter<{ what: string; when: number }>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
@@ -67,9 +67,9 @@ export function feedWhenNoSolar({
         // We changed
         lastChange = +new Date();
         debugLog(`Changed to ${what} because ${reason}`);
-        setLastChangingReason(`shouldEnableFeeding is ${what} because ${reason}`);
+        setLastChangingReason({ what: `shouldEnableFeeding is ${what} because ${reason}`, when: +new Date() });
       }
-      setLastReason(`shouldEnableFeeding is ${what} because ${reason}`);
+      setLastReason({ what: `shouldEnableFeeding is ${what} because ${reason}`, when: +new Date() });
       return what;
     };
     const timeSinceLastChange = now() - lastChange;
