@@ -1,5 +1,6 @@
-import { Accessor, createSignal, getOwner, onCleanup, Signal } from "solid-js";
+import { Accessor, createEffect, createSignal, getOwner, onCleanup, Signal } from "solid-js";
 import { random_string } from "@depict-ai/utilishared/latest";
+import { useVisibilityState } from "@depict-ai/ui/latest";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { isServer } from "solid-js/web";
@@ -17,16 +18,14 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
 
   const [get_value, set_actual_signal] = signal;
   const owner = getOwner()!;
+  const pageIsVisible = useVisibilityState();
   const message_handler = ({ data }: MessageEvent) => {
     const decoded = JSON.parse(data);
     if (decoded.type === "change" && decoded.key === key) {
       set_actual_signal(decoded.value);
     }
   };
-  socket?.addEventListener("message", message_handler as any);
-  onCleanup(() => socket?.removeEventListener("message", message_handler as any));
-
-  (async () => {
+  const requestValueUpdate = async () => {
     const [response, response_json] = (await socket?.ensure_sent({
       id: random_string(),
       command: "read",
@@ -45,7 +44,13 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
       console.error(response);
       await showToastWithMessage(owner, () => `Error reading ${key}: ${response_json}`);
     }
-  })();
+  };
+  socket?.addEventListener("message", message_handler as any);
+  onCleanup(() => socket?.removeEventListener("message", message_handler as any));
+
+  // Initially, and when leaving the tab and coming back, poll for current values
+  // Otherwise when opening a tab that has been suspended for a while, we will show ancient values until a new broadcast comes in for that value
+  createEffect(() => pageIsVisible() && requestValueUpdate());
 
   return [
     get_value as default_value_was_provided extends true ? Accessor<T> : Accessor<T | undefined>,
