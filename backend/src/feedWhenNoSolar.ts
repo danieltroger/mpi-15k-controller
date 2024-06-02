@@ -232,7 +232,7 @@ export function feedWhenNoSolar({
     if (shouldFeed == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
-      if (currentBatteryToUtilityWhenSolar() !== "Disable" && currentBatteryToUtilityWhenNoSolar() !== "Disable") {
+      if (currentBatteryToUtilityWhenSolar() !== "Disable" || currentBatteryToUtilityWhenNoSolar() !== "Disable") {
         return;
       }
     }
