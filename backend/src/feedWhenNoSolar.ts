@@ -76,9 +76,13 @@ export function feedWhenNoSolar({
       return what;
     };
     const timeSinceLastChange = now() - lastChange;
-    if (timeSinceLastChange < 1000 * 60 * 4 && prev !== undefined) {
+    const minTimePassed = 1000 * 60 * 4;
+    if (timeSinceLastChange < minTimePassed && prev !== undefined) {
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
-      return doWithReason(prev, `not enough time passed since last change (${timeSinceLastChange}ms)`);
+      return doWithReason(
+        prev,
+        `not enough time passed since last change (${timeSinceLastChange}ms < ${minTimePassed}ms)`
+      );
     }
     const {
       full_battery_voltage,
