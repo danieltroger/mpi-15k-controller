@@ -9,6 +9,8 @@ export default function ParasiticPlayground() {
   const [battery_voltage] = getBackendSyncedSignal<MqttValue>("battery_voltage");
   const [battery_current] = getBackendSyncedSignal<MqttValue>("battery_current");
   const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
+  const [solar_input_voltage_1] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_1");
+  const [solar_input_voltage_2] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_2");
   const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
   const [ac_output_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_output_total_active_power");
   const [ac_input_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_input_total_active_power");
@@ -48,35 +50,45 @@ export default function ParasiticPlayground() {
         </thead>
         <tbody>
           <tr>
+            <td>Solar array 1 voltage</td>
+            <td>{(solar_input_voltage_1()?.value as number) / 10 + ""}v</td>
+            <td>{solar_input_voltage_1()?.time && new Date(solar_input_voltage_1()!.time).toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td>Solar array 2 voltage</td>
+            <td>{(solar_input_voltage_2()?.value as number) / 10 + ""}v</td>
+            <td>{solar_input_voltage_2()?.time && new Date(solar_input_voltage_2()!.time).toLocaleString()}</td>
+          </tr>
+          <tr>
             <td>Current battery power</td>
-            <td>{battery() + ""} w</td>
+            <td>{battery() + ""}w</td>
             <td>{currentBatteryPower()?.time && new Date(currentBatteryPower()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Battery voltage</td>
-            <td>{(battery_voltage()?.value && (battery_voltage()?.value as number) / 10) + ""} v</td>
+            <td>{(battery_voltage()?.value && (battery_voltage()?.value as number) / 10) + ""}v</td>
             <td>{battery_voltage()?.time && new Date(battery_voltage()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Battery current</td>
-            <td>{(battery_current()?.value && (battery_current()?.value as number) / 10) + ""} a</td>
+            <td>{(battery_current()?.value && (battery_current()?.value as number) / 10) + ""}a</td>
             <td>{battery_current()?.time && new Date(battery_current()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Current solar power</td>
-            <td>{solarInput() + ""} w</td>
+            <td>{solarInput() + ""}w</td>
             <td>{solar_input_power_1()?.time && new Date(solar_input_power_1()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>AC output power</td>
-            <td>{ac_output() + ""} w</td>
+            <td>{ac_output() + ""}w</td>
             <td>
               {ac_output_total_active_power()?.time && new Date(ac_output_total_active_power()!.time).toLocaleString()}
             </td>
           </tr>
           <tr>
             <td>AC input power</td>
-            <td>{ac_input() + ""} w</td>
+            <td>{ac_input() + ""}w</td>
             <td>
               {ac_input_total_active_power()?.time && new Date(ac_input_total_active_power()!.time).toLocaleString()}
             </td>

@@ -1,4 +1,13 @@
-import { catchError, createEffect, createMemo, createResource, createRoot, createSignal, getOwner } from "solid-js";
+import {
+  catchError,
+  createEffect,
+  createMemo,
+  createResource,
+  createRoot,
+  createSignal,
+  getOwner,
+  onCleanup,
+} from "solid-js";
 import { error } from "./utilities/logging";
 import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
@@ -47,6 +56,9 @@ function main() {
     const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
     const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
     const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
+    const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
+    const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal(feedWhenNoSolarDead);
+    const [lastChangingFeedWhenNoSolarReason, setLastChangingFeedWhenNoSolarReason] = createSignal(feedWhenNoSolarDead);
     const {
       energyDischargedSinceEmpty,
       energyChargedSinceFull,
@@ -100,12 +112,21 @@ function main() {
       createEffect(() => {
         if (feedWhenNoSolarErrored()) return;
         catchError(
-          () =>
-            feedWhenNoSolar({
+          () => {
+            setLastChangingFeedWhenNoSolarReason("Initialising");
+            setLastFeedWhenNoSolarReason("Initialising");
+            onCleanup(() => {
+              setLastChangingFeedWhenNoSolarReason(feedWhenNoSolarDead);
+              setLastFeedWhenNoSolarReason(feedWhenNoSolarDead);
+            });
+            return feedWhenNoSolar({
               mqttValues: mqttValues,
               configSignal: configResourceValue,
               isCharging: () => isCharging()?.(),
-            }),
+              setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
+              setLastReason: setLastFeedWhenNoSolarReason,
+            });
+          },
           e => {
             setFeedWhenNoSolarErrored(true);
             error("Feed when no solar errored", e, "restarting in 10s");
@@ -122,6 +143,8 @@ function main() {
         owner,
         temperatures,
         exposedAccessors: {
+          lastFeedWhenNoSolarReason,
+          lastChangingFeedWhenNoSolarReason,
           energyDischargedSinceEmpty,
           energyChargedSinceEmpty,
           totalLastEmpty,
