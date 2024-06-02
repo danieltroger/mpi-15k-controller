@@ -19,6 +19,7 @@ export type ThermometerValue = { value: number; time: number; thermometer_device
 export function useTemperatures(get_config: Accessor<Config>) {
   const [thermometersEnabled] = createResource(async () => {
     // If already initialised, don't try again as it will throw
+    return false;
     if (!(await hasSensorFolder())) {
       const { stderr, stdout } = await exec("sudo dtoverlay w1-gpio gpiopin=4 pullup=0");
       if (stdout || stderr) {
