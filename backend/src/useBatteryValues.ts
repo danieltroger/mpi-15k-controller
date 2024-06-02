@@ -53,6 +53,26 @@ export function useBatteryValues(
     }
   );
 
+  // 1000wh = 1000wh were discharged
+  // -100wh = 100wh were charged
+  const energyRemovedSinceFull = createMemo(() => {
+    const discharged = energyDischargedSinceFull();
+    const charged = energyChargedSinceFull();
+    if (charged == undefined && discharged == undefined) return undefined;
+    if (charged == undefined) return Math.abs(discharged!);
+    if (discharged == undefined) return Math.abs(charged) * -1;
+    return Math.abs(discharged) - Math.abs(charged);
+  });
+
+  const energyAddedSinceEmpty = createMemo(() => {
+    const discharged = energyDischargedSinceEmpty();
+    const charged = energyChargedSinceEmpty();
+    if (charged == undefined && discharged == undefined) return undefined;
+    if (charged == undefined) return Math.abs(discharged!) * -1;
+    if (discharged == undefined) return Math.abs(charged);
+    return Math.abs(charged) - Math.abs(discharged);
+  });
+
   return {
     energyChargedSinceFull,
     energyChargedSinceEmpty,
@@ -61,5 +81,7 @@ export function useBatteryValues(
     currentPower,
     totalLastEmpty,
     totalLastFull,
+    energyRemovedSinceFull,
+    energyAddedSinceEmpty,
   };
 }

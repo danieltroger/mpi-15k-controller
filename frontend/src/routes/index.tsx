@@ -8,6 +8,7 @@ export default function Home() {
   const [energyChargedSinceEmpty] = getBackendSyncedSignal<number>("energyChargedSinceEmpty");
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
   const [energyRemovedSinceFull] = getBackendSyncedSignal<number>("energyRemovedSinceFull");
+  const [energyAddedSinceEmpty] = getBackendSyncedSignal<number>("energyAddedSinceEmpty");
   const [energyDischargedSinceFull] = getBackendSyncedSignal<number>("energyDischargedSinceFull");
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
@@ -15,14 +16,7 @@ export default function Home() {
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
-  const energyAddedSinceEmpty = createMemo(() => {
-    const discharged = energyDischargedSinceEmpty();
-    const charged = energyChargedSinceEmpty();
-    if (charged == undefined && discharged == undefined) return undefined;
-    if (charged == undefined) return Math.abs(discharged!) * -1;
-    if (discharged == undefined) return Math.abs(charged);
-    return Math.abs(charged) - Math.abs(discharged);
-  });
+
   const socSinceFull = createMemo(() => {
     const removedSinceFull = energyRemovedSinceFull();
     if (removedSinceFull === undefined) return undefined;
