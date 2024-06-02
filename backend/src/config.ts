@@ -22,6 +22,7 @@ export type Config = {
   full_battery_voltage: number;
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
+  parasitic_consumption_for_energy_calculations: number;
   temperature_report_interval: number;
   thermometers: { [key: string]: string };
   mqtt_host: string;
@@ -77,6 +78,7 @@ const default_config: Config = {
   shinemonitor_company_key: "bnrl_frRFjEz8Mkn",
   mqtt_host: "192.168.0.3",
   stop_charging_below_current: 10,
+  parasitic_consumption_for_energy_calculations: 240,
   thermometers: {},
   temperature_report_interval: 3000,
   temperature_saving: {
