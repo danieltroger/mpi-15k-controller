@@ -59,15 +59,15 @@ export function elpatronSwitching(
         })) as any;
         lastSwitch = +new Date();
 
-        log(
-          (enable ? "Enable" : "Disable") + " elpatron result:",
-          result,
-          "for solar",
-          fromSolar(),
-          "w, ",
-          "power direction",
-          getPowerDirection()
-        );
+        // log(
+        //   (enable ? "Enable" : "Disable") + " elpatron result:",
+        //   result,
+        //   "for solar",
+        //   fromSolar(),
+        //   "w, ",
+        //   "power direction",
+        //   getPowerDirection()
+        // );
       }
     );
   });
