@@ -137,7 +137,7 @@ function iterativelyFindSocParameters({
 
     onCleanup(() => (gotCleanuped = true));
 
-    log("Spawning ", numWorkers, "workers to figure out SOC requirements");
+    log("Spawning", numWorkers, "workers to figure out SOC requirements");
 
     for (let i = 0; i < numWorkers; i++) {
       const startCapacity = totalStartCapacity + i * rangePerWorker;
