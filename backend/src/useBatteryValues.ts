@@ -2,7 +2,15 @@ import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "./utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import { Accessor, createEffect, createMemo, createRoot, createSignal, untrack } from "solid-js";
+import {
+  Accessor,
+  createEffect,
+  createMemo,
+  createMemo as solidCreateMemo,
+  createRoot,
+  createSignal,
+  untrack,
+} from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
 import { Config, get_config_object } from "./config";
 import { log } from "./utilities/logging";
@@ -68,6 +76,11 @@ export function useBatteryValues(
         totalLastEmpty,
         subtractFromPower: () => assumeParasiticConsumption,
         assumedCapacity: () => assumeCapacity,
+        createMemo: fn => {
+          // Squeeze some performance by not do owner tracking, etc
+          const val = fn();
+          return () => val;
+        },
       }),
   });
 
@@ -147,6 +160,7 @@ function batteryCalculationsDependingOnUnknowns({
   totalLastEmpty,
   subtractFromPower,
   assumedCapacity,
+  createMemo = solidCreateMemo,
 }: {
   now: Accessor<number>;
   localPowerHistory: ReturnType<typeof useCurrentPower>["localPowerHistory"];
@@ -155,6 +169,7 @@ function batteryCalculationsDependingOnUnknowns({
   totalLastFull: Accessor<number | undefined>;
   subtractFromPower: Accessor<number>;
   assumedCapacity: Accessor<number>;
+  createMemo?: <T>(fn: () => T) => Accessor<T>;
 }) {
   const { energyDischarged: energyDischargedSinceEmpty, energyCharged: energyChargedSinceEmpty } =
     calculateBatteryEnergy({
@@ -163,6 +178,7 @@ function batteryCalculationsDependingOnUnknowns({
       from: totalLastEmpty,
       to: now,
       subtractFromPower,
+      createMemo,
     });
   const { energyDischarged: energyDischargedSinceFull, energyCharged: energyChargedSinceFull } = calculateBatteryEnergy(
     {
@@ -171,6 +187,7 @@ function batteryCalculationsDependingOnUnknowns({
       from: totalLastFull,
       to: now,
       subtractFromPower,
+      createMemo,
     }
   );
 

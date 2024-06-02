@@ -7,6 +7,7 @@ export function calculateBatteryEnergy({
   databasePowerValues,
   localPowerHistory,
   subtractFromPower,
+  createMemo,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -19,6 +20,7 @@ export function calculateBatteryEnergy({
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
   subtractFromPower: Accessor<number>;
+  createMemo: <T>(fn: () => T) => Accessor<T>;
 }) {
   const totalPowerHistory = createMemo(() => {
     const fromValue = from();
