@@ -88,6 +88,8 @@ async function setParameterWithThrottlingAndRefetch<T>(
   await refetch();
   await wait(8000); // Inverter needs time for it to be set, so check again after 8s
   await refetch();
+  // Continue, because we usually have gotten the right value, but just in case we haven't, check again in 10 seconds so that we can correct ourselves and don't create weird, unexpected spikes like http://192.168.0.3:3002/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1717342001301&to=1717349472175
+  setTimeout(refetch, 10_000);
   if (didFail) {
     callOnFailure();
   }
