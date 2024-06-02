@@ -100,7 +100,7 @@ export function feedWhenNoSolar({
     const highestVoltage = highestStringVoltage();
     // Wait for data to be known at program start before making a decision
     if (batteryVoltage == undefined || charging == undefined) {
-      return doWithReason(undefined, "battery voltage or charging unknown");
+      return doWithReason(prev, "battery voltage or charging unknown");
     }
     if (batteryIsNearlyFull()) {
       return doWithReason(false, "battery is nearly full");
@@ -141,7 +141,7 @@ export function feedWhenNoSolar({
     }
     const available = availablePowerThatWouldGoIntoTheGridByItself();
     if (available == undefined) {
-      return doWithReason(undefined, "available power unknown");
+      return doWithReason(prev, "available power unknown");
     }
     const actuallyShouldNow = available < doIfBelow;
     return doWithReason(
