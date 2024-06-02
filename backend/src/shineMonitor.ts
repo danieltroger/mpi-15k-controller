@@ -36,7 +36,6 @@ export async function makeRequestWithAuth<T>(
   initialRequest: Record<string, string>,
   action = "queryDeviceCtrlValue"
 ) {
-  await new Promise(r => {});
   // Only allow one request to shinemonitor at once
   while (requestBeingMade) {
     await requestBeingMade;
