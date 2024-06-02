@@ -15,18 +15,10 @@ export default function Home() {
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
   const [hasHydrated, setHasHydrated] = createSignal(false);
-  const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
-
-  const socSinceFull = createMemo(() => {
-    const removedSinceFull = energyRemovedSinceFull();
-    if (removedSinceFull === undefined) return undefined;
-    return 100 - (removedSinceFull / assumedCapacity()) * 100;
-  });
-  const socSinceEmpty = createMemo(() => {
-    const addedSinceEmpty = energyAddedSinceEmpty();
-    if (addedSinceEmpty === undefined) return undefined;
-    return (addedSinceEmpty / assumedCapacity()) * 100;
-  });
+  const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
+  const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
+  const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
+  const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
 
   onMount(() => setHasHydrated(true));
 
@@ -67,29 +59,12 @@ export default function Home() {
         <br />
         energyChargedSinceEmpty: {energyChargedSinceEmpty()}
         <br />
+        assumedParasiticConsumption: {assumedParasiticConsumption()}
+        <br />
         Added since empty: {energyAddedSinceEmpty()}
         <br />
         <h4>
-          Percent SOC assuming{" "}
-          <span
-            onKeyDown={e => {
-              const { key, currentTarget } = e;
-              const { textContent } = currentTarget;
-              if (key !== "Enter") return;
-              e.preventDefault();
-              currentTarget.blur();
-              const parsed = parseFloat(textContent!);
-              if (parsed) {
-                setAssumedCapacity(parsed);
-              } else {
-                currentTarget.textContent = assumedCapacity() + "";
-              }
-            }}
-            onBlur={({ currentTarget }) => (currentTarget.textContent = assumedCapacity() + "")}
-            contentEditable={true}
-          >
-            {assumedCapacity()}
-          </span>
+          Percent SOC assuming {assumedCapacity()}
           wh capacity:
         </h4>
         Since full: {socSinceFull()}%<br />

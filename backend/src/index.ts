@@ -78,6 +78,10 @@ function main() {
       totalLastFull,
       energyRemovedSinceFull,
       energyAddedSinceEmpty,
+      socSinceEmpty,
+      socSinceFull,
+      assumedParasiticConsumption,
+      assumedCapacity,
     } = useBatteryValues(mqttValues, configResourceValue);
     const temperatures = useTemperatures(config);
 
@@ -156,6 +160,10 @@ function main() {
           energyRemovedSinceFull,
           energyDischargedSinceFull,
           energyChargedSinceFull,
+          socSinceEmpty,
+          socSinceFull,
+          assumedCapacity,
+          assumedParasiticConsumption,
           isCharging: () => isChargingOuterScope()?.()?.(),
           totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
           ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),

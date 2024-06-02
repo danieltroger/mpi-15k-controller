@@ -6,7 +6,7 @@ export function calculateBatteryEnergy({
   to,
   databasePowerValues,
   localPowerHistory,
-  config,
+  subtractFromPower,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -18,7 +18,7 @@ export function calculateBatteryEnergy({
    */
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
-  config: Awaited<ReturnType<typeof get_config_object>>[0];
+  subtractFromPower: Accessor<number>;
 }) {
   const totalPowerHistory = createMemo(() => {
     const fromValue = from();
@@ -29,7 +29,6 @@ export function calculateBatteryEnergy({
     const filteredDatabasePower = databasePower.filter(({ time }) => time <= firstLocalPower);
     return [...filteredDatabasePower, ...localPower];
   });
-  const subtractFromPower = createMemo(() => config().parasitic_consumption_for_energy_calculations);
 
   const energy = createMemo<{ energyCharged: number; energyDischarged: number } | undefined>(prev => {
     const powerValues = totalPowerHistory();
