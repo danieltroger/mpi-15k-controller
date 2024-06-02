@@ -67,9 +67,12 @@ export function feedWhenNoSolar({
         // We changed
         lastChange = +new Date();
         debugLog(`Changed to ${what} because ${reason}`);
-        setLastChangingReason({ what: `shouldEnableFeeding is ${what} because ${reason}`, when: +new Date() });
+        setLastChangingReason({
+          what: `shouldEnableFeeding last changed to ${what} because ${reason}`,
+          when: +new Date(),
+        });
       }
-      setLastReason({ what: `shouldEnableFeeding is ${what} because ${reason}`, when: +new Date() });
+      setLastReason({ what: `shouldEnableFeeding currently wants to be ${what} because ${reason}`, when: +new Date() });
       return what;
     };
     const timeSinceLastChange = now() - lastChange;
@@ -137,7 +140,10 @@ export function feedWhenNoSolar({
       return doWithReason(undefined, "available power unknown");
     }
     const actuallyShouldNow = available < doIfBelow;
-    return doWithReason(actuallyShouldNow, `available power ${available}w is below threshold ${doIfBelow}w`);
+    return doWithReason(
+      actuallyShouldNow,
+      `available power ${available}w is ${actuallyShouldNow ? "below" : "above"} threshold ${doIfBelow}w`
+    );
   });
   const [debouncedShouldEnableFeeding, setDebouncedShouldEnableFeeding] = createSignal(untrack(shouldEnableFeeding));
   const wantedToCurrentTransformerForDiffing = (wanted: string) => {
