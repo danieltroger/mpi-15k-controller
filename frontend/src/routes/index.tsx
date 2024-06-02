@@ -13,12 +13,6 @@ export default function Home() {
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
-  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastFeedWhenNoSolarReason"
-  );
-  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastChangingFeedWhenNoSolarReason"
-  );
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
   const energyAddedSinceEmpty = createMemo(() => {
@@ -81,12 +75,6 @@ export default function Home() {
         <br />
         Added since empty: {energyAddedSinceEmpty()}
         <br />
-        Last feed when no solar reason: {lastFeedWhenNoSolarReason()?.what}. At{" "}
-        {new Date(lastFeedWhenNoSolarReason()?.when!).toLocaleString()}
-        <br />
-        Last changing feed when no solar reason: {lastChangingFeedWhenNoSolarReason()?.what}. At{" "}
-        {new Date(lastChangingFeedWhenNoSolarReason()?.when!).toLocaleString()}
-        <br />
         <h4>
           Percent SOC assuming{" "}
           <span
@@ -132,13 +120,28 @@ function NoBuyDebug() {
     ((ac_output_active_power_r()?.value || 0) as number) +
     ((ac_output_active_power_s()?.value || 0) as number) +
     ((ac_output_active_power_t()?.value || 0) as number);
+  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
+    "lastFeedWhenNoSolarReason"
+  );
+  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
+    "lastChangingFeedWhenNoSolarReason"
+  );
   const availablePower = createMemo(() => solarPower() - acOutputPower());
+
   return (
     <section>
       <h2>Debug for no power buying</h2>
       <p>
         {availablePower()} watts, which is made out of {solarPower()} watts minus {acOutputPower()} watts
       </p>
+      <Show when={lastFeedWhenNoSolarReason()}>
+        {new Date(lastFeedWhenNoSolarReason()?.when!).toLocaleString()}: {lastFeedWhenNoSolarReason()?.what}
+        <br />
+      </Show>
+      <Show when={lastChangingFeedWhenNoSolarReason()}>
+        {new Date(lastChangingFeedWhenNoSolarReason()?.when!).toLocaleString()}:{" "}
+        {lastChangingFeedWhenNoSolarReason()?.what}
+      </Show>
     </section>
   );
 }
