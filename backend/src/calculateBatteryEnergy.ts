@@ -1,4 +1,4 @@
-import { Accessor, createMemo } from "solid-js";
+import { Accessor, createMemo as solidCreateMemo } from "solid-js";
 import { get_config_object } from "./config";
 
 export function calculateBatteryEnergy({
@@ -20,7 +20,7 @@ export function calculateBatteryEnergy({
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
   subtractFromPower: Accessor<number>;
-  createMemo: <T>(fn: () => T) => Accessor<T>;
+  createMemo: typeof solidCreateMemo;
 }) {
   const totalPowerHistory = createMemo(() => {
     const fromValue = from();

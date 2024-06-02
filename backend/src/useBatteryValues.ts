@@ -1,19 +1,15 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "./utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
-import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
-import {
-  Accessor,
-  createEffect,
-  createMemo,
-  createMemo as solidCreateMemo,
-  createRoot,
-  createSignal,
-  untrack,
-} from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
 import { Config, get_config_object } from "./config";
-import { log } from "./utilities/logging";
+import { Worker } from "worker_threads";
+import { cpus } from "os";
+import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
+import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
+import { error, log } from "./utilities/logging";
+import { appendFile } from "fs/promises";
 
 export function useBatteryValues(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
@@ -67,21 +63,13 @@ export function useBatteryValues(
 
   iterativelyFindSocParameters({
     config,
-    calculateSoc: ({ assumeParasiticConsumption, assumeCapacity }) =>
-      batteryCalculationsDependingOnUnknowns({
-        now,
-        localPowerHistory,
-        databasePowerValues,
-        totalLastFull,
-        totalLastEmpty,
-        subtractFromPower: () => assumeParasiticConsumption,
-        assumedCapacity: () => assumeCapacity,
-        createMemo: fn => {
-          // Squeeze some performance by not do owner tracking, etc
-          const val = fn();
-          return () => val;
-        },
-      }),
+    totalLastEmpty,
+    totalLastFull,
+    now,
+    localPowerHistory,
+    databasePowerValues,
+    setAssumedCapacity,
+    setAssumedParasiticConsumption,
   });
 
   return {
@@ -103,133 +91,119 @@ export function useBatteryValues(
 
 function iterativelyFindSocParameters({
   config,
-  calculateSoc,
+  totalLastEmpty,
+  totalLastFull,
+  now,
+  localPowerHistory,
+  databasePowerValues,
+  setAssumedCapacity,
+  setAssumedParasiticConsumption,
 }: {
-  calculateSoc: (params: { assumeParasiticConsumption: number; assumeCapacity: number }) => {
-    socSinceFull: Accessor<number | undefined>;
-    socSinceEmpty: Accessor<number | undefined>;
-  };
   config: Accessor<Config>;
+  now: Accessor<number>;
+  localPowerHistory: Accessor<{ value: number; time: number }[]>;
+  databasePowerValues: Accessor<{ time: number; value: number }[]>;
+  totalLastFull: Accessor<number | undefined>;
+  totalLastEmpty: Accessor<number | undefined>;
+  setAssumedParasiticConsumption: Setter<number>;
+  setAssumedCapacity: Setter<number>;
 }) {
+  const numWorkers = cpus().length - 1; // Leave a CPU for the main thread
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
   );
   const endCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_to_wh * config().soc_calculations.number_of_cells
   );
+  const [toggle, setToggle] = createSignal(false);
   const startParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_from);
   const endParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_to);
+  const hasData = createMemo(() => totalLastFull() !== undefined && totalLastEmpty() !== undefined);
+  // Calculate SOC stuff once an hour
+  setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
+
   createEffect(() => {
-    const startCapacity = startCapacityWh();
-    const endCapacity = endCapacityWh();
+    if (!hasData()) return;
+    toggle();
+    const totalStartCapacity = startCapacityWh();
+    const totalEndCapacity = endCapacityWh();
     const startParasitic = startParasiticConsumption();
     const endParasitic = endParasiticConsumption();
-    untrack(() => {
-      for (let capacity = startCapacity; capacity <= endCapacity; capacity += 1) {
-        for (let parasitic = startParasitic; parasitic <= endParasitic; parasitic += 1) {
-          const { socSinceFull, socSinceEmpty } = createRoot(dispose => {
-            const result = calculateSoc({
-              assumeCapacity: capacity,
-              assumeParasiticConsumption: parasitic,
-            });
-            // We don't want calculateSoc to do any reactive stuff in this case so we just give it its own root and instantly dispose it after the first run, unsure how much overhead this adds
-            dispose();
-            return result;
-          });
-          const sinceFull = socSinceFull();
-          const sinceEmpty = socSinceEmpty();
-          if (sinceEmpty == undefined || sinceFull == undefined) return;
-          if (Math.abs(sinceFull - sinceEmpty) < 0.1) {
-            log(
-              "Found parameters:",
-              { capacity, parasitic, sinceEmpty, sinceFull },
-              "where SOC is the same at full and empty"
-            );
-          }
+    const rangePerWorker = Math.ceil((totalEndCapacity - totalStartCapacity) / numWorkers);
+    const [workersRunning, setWorkersRunning] = createSignal(0);
+    const results: WorkerResult[] = [];
+    const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
+    let gotCleanuped = false;
+
+    onCleanup(() => (gotCleanuped = true));
+
+    log("Spawning ", numWorkers, "workers to figure out SOC requirements");
+
+    for (let i = 0; i < numWorkers; i++) {
+      const startCapacity = totalStartCapacity + i * rangePerWorker;
+      const endCapacity = Math.min(startCapacity + rangePerWorker - 1, totalEndCapacity);
+
+      const workerData: SocWorkerData = untrack(() => ({
+        now: now(),
+        totalLastEmpty: totalLastEmpty(),
+        totalLastFull: totalLastFull(),
+        endParasitic,
+        startParasitic,
+        databasePowerValues: databasePowerValues(),
+        startCapacity,
+        endCapacity,
+        localPowerHistory: localPowerHistory(),
+      }));
+
+      const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url), {
+        workerData,
+      });
+      setWorkersRunning(prev => prev + 1);
+
+      worker.on("message", (result: WorkerResult) => {
+        appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
+          error("Failed to write soc calculation log", e)
+        );
+        results.push(result);
+      });
+
+      worker.on("error", err => {
+        error(`Worker ${i} error:`, err);
+        worker.terminate();
+      });
+
+      worker.on("exit", code => {
+        setWorkersRunning(prev => prev - 1);
+        if (code !== 0) {
+          error(`Worker ${i} stopped with exit code ${code}`);
+        } else {
+          log(`Worker ${i} is done`);
         }
-      }
+      });
+
+      onCleanup(() => worker.terminate());
+    }
+
+    createEffect(() => {
+      if (workersRunning() !== 0 || !results.length || gotCleanuped) return;
+      const middleValue = getMiddleValue(results);
+      log("Settling on", middleValue, "after doing SOC calculations");
+      setAssumedCapacity(middleValue.capacity);
+      setAssumedParasiticConsumption(middleValue.parasitic);
     });
   });
 }
 
-function batteryCalculationsDependingOnUnknowns({
-  now,
-  localPowerHistory,
-  databasePowerValues,
-  totalLastFull,
-  totalLastEmpty,
-  subtractFromPower,
-  assumedCapacity,
-  createMemo = solidCreateMemo,
-}: {
-  now: Accessor<number>;
-  localPowerHistory: ReturnType<typeof useCurrentPower>["localPowerHistory"];
-  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
-  totalLastEmpty: Accessor<number | undefined>;
-  totalLastFull: Accessor<number | undefined>;
-  subtractFromPower: Accessor<number>;
-  assumedCapacity: Accessor<number>;
-  createMemo?: <T>(fn: () => T) => Accessor<T>;
-}) {
-  const { energyDischarged: energyDischargedSinceEmpty, energyCharged: energyChargedSinceEmpty } =
-    calculateBatteryEnergy({
-      localPowerHistory,
-      databasePowerValues,
-      from: totalLastEmpty,
-      to: now,
-      subtractFromPower,
-      createMemo,
-    });
-  const { energyDischarged: energyDischargedSinceFull, energyCharged: energyChargedSinceFull } = calculateBatteryEnergy(
-    {
-      localPowerHistory,
-      databasePowerValues,
-      from: totalLastFull,
-      to: now,
-      subtractFromPower,
-      createMemo,
-    }
-  );
+function getMiddleValue(data: WorkerResult[]): WorkerResult {
+  // Calculate the average of sinceEmpty and sinceFull for each data point
+  const withAverage = data.map(point => ({ ...point, average: (point.sinceEmpty + point.sinceFull) / 2 }));
 
-  // 1000wh = 1000wh were discharged
-  // -100wh = 100wh were charged
-  const energyRemovedSinceFull = createMemo(() => {
-    const discharged = energyDischargedSinceFull();
-    const charged = energyChargedSinceFull();
-    if (charged == undefined && discharged == undefined) return undefined;
-    if (charged == undefined) return Math.abs(discharged!);
-    if (discharged == undefined) return Math.abs(charged) * -1;
-    return Math.abs(discharged) - Math.abs(charged);
-  });
+  // Sort the data points by the average value
+  withAverage.sort((a, b) => a.average - b.average);
 
-  const energyAddedSinceEmpty = createMemo(() => {
-    const discharged = energyDischargedSinceEmpty();
-    const charged = energyChargedSinceEmpty();
-    if (charged == undefined && discharged == undefined) return undefined;
-    if (charged == undefined) return Math.abs(discharged!) * -1;
-    if (discharged == undefined) return Math.abs(charged);
-    return Math.abs(charged) - Math.abs(discharged);
-  });
+  // Get the middle index
+  const middleIndex = Math.floor(withAverage.length / 2);
 
-  const socSinceFull = createMemo(() => {
-    const removedSinceFull = energyRemovedSinceFull();
-    if (removedSinceFull === undefined) return undefined;
-    return 100 - (removedSinceFull / assumedCapacity()) * 100;
-  });
-  const socSinceEmpty = createMemo(() => {
-    const addedSinceEmpty = energyAddedSinceEmpty();
-    if (addedSinceEmpty === undefined) return undefined;
-    return (addedSinceEmpty / assumedCapacity()) * 100;
-  });
-
-  return {
-    energyChargedSinceFull,
-    energyChargedSinceEmpty,
-    energyDischargedSinceEmpty,
-    energyDischargedSinceFull,
-    energyRemovedSinceFull,
-    energyAddedSinceEmpty,
-    socSinceEmpty,
-    socSinceFull,
-  };
+  // Return the middle value
+  return data[middleIndex];
 }
