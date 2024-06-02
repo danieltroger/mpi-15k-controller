@@ -38,7 +38,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
     if (!isNaN(timeOfLastFull)) {
       const when = Math.round(timeOfLastFull / 1000 / 1000);
-      log("Got from database that battery was last full at ", new Date(when).toLocaleString());
+      log("Got from database that battery was last full at ", new Date(when).toISOString());
       return when;
     }
   });
@@ -49,7 +49,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     let timeOfLastEmpty = (response as any)?.time?.getNanoTime?.();
     if (!isNaN(timeOfLastEmpty)) {
       const when = Math.round(timeOfLastEmpty / 1000 / 1000);
-      log("Got from database that battery was last empty at ", new Date(when).toLocaleString());
+      log("Got from database that battery was last empty at ", new Date(when).toISOString());
       return when;
     }
   });
