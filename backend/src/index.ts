@@ -57,8 +57,17 @@ function main() {
     const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
     const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
     const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
-    const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal(feedWhenNoSolarDead);
-    const [lastChangingFeedWhenNoSolarReason, setLastChangingFeedWhenNoSolarReason] = createSignal(feedWhenNoSolarDead);
+    const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal<{ what: string; when: number }>({
+      what: feedWhenNoSolarDead,
+      when: +new Date(),
+    });
+    const [lastChangingFeedWhenNoSolarReason, setLastChangingFeedWhenNoSolarReason] = createSignal<{
+      what: string;
+      when: number;
+    }>({
+      what: feedWhenNoSolarDead,
+      when: +new Date(),
+    });
     const {
       energyDischargedSinceEmpty,
       energyChargedSinceFull,
@@ -113,11 +122,13 @@ function main() {
         if (feedWhenNoSolarErrored()) return;
         catchError(
           () => {
-            setLastChangingFeedWhenNoSolarReason("Initialising");
-            setLastFeedWhenNoSolarReason("Initialising");
+            const obj = { what: "Initialising", when: +new Date() };
+            setLastChangingFeedWhenNoSolarReason(obj);
+            setLastFeedWhenNoSolarReason(obj);
             onCleanup(() => {
-              setLastChangingFeedWhenNoSolarReason(feedWhenNoSolarDead);
-              setLastFeedWhenNoSolarReason(feedWhenNoSolarDead);
+              const obj = { what: feedWhenNoSolarDead, when: +new Date() };
+              setLastChangingFeedWhenNoSolarReason(obj);
+              setLastFeedWhenNoSolarReason(obj);
             });
             return feedWhenNoSolar({
               mqttValues: mqttValues,

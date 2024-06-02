@@ -13,6 +13,12 @@ export default function Home() {
   const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
+  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
+    "lastFeedWhenNoSolarReason"
+  );
+  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
+    "lastChangingFeedWhenNoSolarReason"
+  );
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
   const energyAddedSinceEmpty = createMemo(() => {
@@ -74,6 +80,12 @@ export default function Home() {
         energyChargedSinceEmpty: {energyChargedSinceEmpty()}
         <br />
         Added since empty: {energyAddedSinceEmpty()}
+        <br />
+        Last feed when no solar reason: {lastFeedWhenNoSolarReason()?.what}. At{" "}
+        {new Date(lastFeedWhenNoSolarReason()?.when!).toLocaleString()}
+        <br />
+        Last changing feed when no solar reason: {lastChangingFeedWhenNoSolarReason()?.what}. At{" "}
+        {new Date(lastChangingFeedWhenNoSolarReason()?.when!).toLocaleString()}
         <br />
         <h4>
           Percent SOC assuming{" "}
