@@ -108,6 +108,7 @@ function iterativelyFindSocParameters({
   setAssumedParasiticConsumption: Setter<number>;
   setAssumedCapacity: Setter<number>;
 }) {
+  let running = 0;
   const numWorkers = 1; // Hardcoded for now
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
@@ -127,7 +128,7 @@ function iterativelyFindSocParameters({
         localPowerHistory().length)
   );
   // Calculate SOC stuff once an hour
-  setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
+  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
 
   createEffect(() => {
     if (!hasData()) return;
@@ -142,7 +143,11 @@ function iterativelyFindSocParameters({
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
     let gotCleanuped = false;
 
-    onCleanup(() => (gotCleanuped = true));
+    running++;
+    onCleanup(() => {
+      gotCleanuped = true;
+      running--;
+    });
 
     log("Spawning", numWorkers, "workers to figure out SOC requirements");
 
