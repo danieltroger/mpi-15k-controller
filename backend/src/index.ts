@@ -76,17 +76,9 @@ function main() {
       currentPower,
       totalLastEmpty,
       totalLastFull,
+      energyRemovedSinceFull,
+      energyAddedSinceEmpty,
     } = useBatteryValues(mqttValues, configResourceValue);
-    // 1000wh = 1000wh were discharged
-    // -100wh = 100wh were charged
-    const energyRemovedSinceFull = createMemo(() => {
-      const discharged = energyDischargedSinceFull();
-      const charged = energyChargedSinceFull();
-      if (charged == undefined && discharged == undefined) return undefined;
-      if (charged == undefined) return Math.abs(discharged!);
-      if (discharged == undefined) return Math.abs(charged) * -1;
-      return Math.abs(discharged) - Math.abs(charged);
-    });
     const temperatures = useTemperatures(config);
 
     saveTemperatures({ config, mqttClient, temperatures });
@@ -154,6 +146,7 @@ function main() {
         owner,
         temperatures,
         exposedAccessors: {
+          energyAddedSinceEmpty,
           lastFeedWhenNoSolarReason,
           lastChangingFeedWhenNoSolarReason,
           energyDischargedSinceEmpty,
