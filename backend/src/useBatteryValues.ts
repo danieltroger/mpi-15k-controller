@@ -127,8 +127,8 @@ function iterativelyFindSocParameters({
         databasePowerValues().length &&
         localPowerHistory().length)
   );
-  // Calculate SOC stuff once an hour
-  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
+  // Calculate SOC stuff once every half hour unless a calculation is already running
+  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60 * 30);
 
   createEffect(() => {
     if (!hasData()) return;
@@ -142,11 +142,14 @@ function iterativelyFindSocParameters({
     const results: WorkerResult[] = [];
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
     let gotCleanuped = false;
+    let decrementedRunning = false;
 
     running++;
     onCleanup(() => {
       gotCleanuped = true;
-      running--;
+      if (!decrementedRunning) {
+        running--;
+      }
     });
 
     log("Spawning", numWorkers, "workers to figure out SOC requirements");
@@ -202,6 +205,9 @@ function iterativelyFindSocParameters({
       log("Settling on", middleValue, "after doing SOC calculations");
       setAssumedCapacity(middleValue.capacity);
       setAssumedParasiticConsumption(middleValue.parasitic);
+      if (!decrementedRunning) {
+        running--;
+      }
     });
   });
 }
