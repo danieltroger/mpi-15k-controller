@@ -1,7 +1,7 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "../utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
-import { createMemo, createSignal, Resource } from "solid-js";
+import { createMemo, createSignal, Resource, untrack } from "solid-js";
 import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
@@ -38,8 +38,8 @@ export function useBatteryValues(
       return Math.max(lastSinceStart, lastAccordingToDatabase);
     })
   );
-  const [assumedParasiticConsumption, setAssumedParasiticConsumption] = createSignal(315);
-  const [assumedCapacity, setAssumedCapacity] = createSignal(19.2 * 12 * 3 * 16);
+  const assumedParasiticConsumption = createMemo(() => config().soc_calculations.current_state.parasitic_consumption);
+  const assumedCapacity = createMemo(() => config().soc_calculations.current_state.capacity);
 
   const {
     energyAddedSinceEmpty,
@@ -61,14 +61,12 @@ export function useBatteryValues(
   });
 
   iterativelyFindSocParameters({
-    config,
     totalLastEmpty,
     totalLastFull,
     now,
     localPowerHistory,
     databasePowerValues,
-    setAssumedCapacity,
-    setAssumedParasiticConsumption,
+    configSignal,
   });
 
   const averageSOC = createMemo(() => {

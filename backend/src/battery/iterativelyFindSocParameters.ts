@@ -1,28 +1,24 @@
-import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { Config } from "../config";
+import { Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { get_config_object } from "../config";
 import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
 
 export function iterativelyFindSocParameters({
-  config,
   totalLastEmpty,
   totalLastFull,
   now,
   localPowerHistory,
   databasePowerValues,
-  setAssumedCapacity,
-  setAssumedParasiticConsumption,
+  configSignal: [config, setConfig],
 }: {
-  config: Accessor<Config>;
   now: Accessor<number>;
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
   databasePowerValues: Accessor<{ time: number; value: number }[]>;
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
-  setAssumedParasiticConsumption: Setter<number>;
-  setAssumedCapacity: Setter<number>;
+  configSignal: Awaited<ReturnType<typeof get_config_object>>;
 }) {
   let running = 0;
   const numWorkers = 1; // Hardcoded for now
@@ -120,8 +116,17 @@ export function iterativelyFindSocParameters({
       if (workersRunning() !== 0 || !results.length || gotCleanuped) return;
       const middleValue = getMiddleValue(results);
       log("Settling on", middleValue, "after doing SOC calculations");
-      setAssumedCapacity(middleValue.capacity);
-      setAssumedParasiticConsumption(middleValue.parasitic);
+      // Have these values in config so they persist over program restarts
+      setConfig(prev => ({
+        ...prev,
+        soc_calculations: {
+          ...prev.soc_calculations,
+          current_state: {
+            capacity: middleValue.capacity,
+            parasitic_consumption: middleValue.parasitic,
+          },
+        },
+      }));
       if (!decrementedRunning) {
         running--;
         decrementedRunning = true;
