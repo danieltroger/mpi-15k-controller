@@ -72,10 +72,10 @@ export function useBatteryValues(
   const averageSOC = createMemo(() => {
     const sinceFull = socSinceFull();
     const sinceEmpty = socSinceEmpty();
-    if (sinceFull === undefined && sinceEmpty === undefined) return;
-    if (sinceFull === undefined) return sinceEmpty;
-    if (sinceEmpty === undefined) return sinceFull;
-    return (sinceFull + sinceEmpty) / 2;
+    const fullInvalid = isNaN(sinceFull!) || Math.abs(sinceFull!) === Infinity;
+    const emptyInvalid = isNaN(sinceEmpty!) || Math.abs(sinceEmpty!) === Infinity;
+    if (fullInvalid || emptyInvalid) return;
+    return (sinceFull! + sinceEmpty!) / 2;
   });
 
   reportSOCToMqtt({
