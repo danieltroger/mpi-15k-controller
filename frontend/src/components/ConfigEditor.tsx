@@ -8,7 +8,7 @@ export function ConfigEditor() {
   let button: HTMLButtonElement;
   const [get_config, set_config] = getBackendSyncedSignal<{
     [key: string]: any;
-  }>("config");
+  }>("config", undefined, false);
   const owner = getOwner()!;
 
   return (
