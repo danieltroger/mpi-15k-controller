@@ -127,8 +127,8 @@ function iterativelyFindSocParameters({
         databasePowerValues().length &&
         localPowerHistory().length)
   );
-  // Calculate SOC stuff once every half hour unless a calculation is already running
-  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60 * 30);
+  // Calculate SOC stuff all the time, check every minute essentially if it's time to do it again
+  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60);
 
   createEffect(() => {
     if (!hasData()) return;
