@@ -20,7 +20,7 @@ export function iterativelyFindSocParameters({
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
 }) {
-  let running = 0;
+  let effectsRunning = 0;
   const numWorkers = 1; // Hardcoded for now
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
@@ -40,7 +40,7 @@ export function iterativelyFindSocParameters({
         localPowerHistory().length)
   );
   // Calculate SOC stuff all the time, check every minute essentially if it's time to do it again
-  setInterval(() => running < 1 && setToggle(prev => !prev), 1000 * 60);
+  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60);
 
   createEffect(() => {
     if (!hasData()) return;
@@ -56,11 +56,11 @@ export function iterativelyFindSocParameters({
     let gotCleanuped = false;
     let decrementedRunning = false;
 
-    running++;
+    effectsRunning++;
     onCleanup(() => {
       gotCleanuped = true;
       if (!decrementedRunning) {
-        running--;
+        effectsRunning--;
         decrementedRunning = true;
       }
     });
@@ -113,6 +113,12 @@ export function iterativelyFindSocParameters({
     }
 
     createEffect(() => {
+      if (workersRunning() === 0) {
+        if (!decrementedRunning) {
+          effectsRunning--;
+          decrementedRunning = true;
+        }
+      }
       if (workersRunning() !== 0 || !results.length || gotCleanuped) return;
       const middleValue = getMiddleValue(results);
       log("Settling on", middleValue, "after doing SOC calculations");
@@ -127,10 +133,6 @@ export function iterativelyFindSocParameters({
           },
         },
       }));
-      if (!decrementedRunning) {
-        running--;
-        decrementedRunning = true;
-      }
     });
   });
 }
