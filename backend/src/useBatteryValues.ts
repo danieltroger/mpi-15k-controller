@@ -1,19 +1,20 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "./utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
-import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, onCleanup, Resource, Setter, untrack } from "solid-js";
 import { useMQTTValues } from "./useMQTTValues";
 import { Config, get_config_object } from "./config";
 import { Worker } from "worker_threads";
-import { cpus } from "os";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
 import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "./utilities/logging";
 import { appendFile } from "fs/promises";
+import { AsyncMqttClient } from "async-mqtt";
 
 export function useBatteryValues(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
-  configSignal: Awaited<ReturnType<typeof get_config_object>>
+  configSignal: Awaited<ReturnType<typeof get_config_object>>,
+  mqttClient: Resource<AsyncMqttClient>
 ) {
   const [config] = configSignal;
   const {
@@ -72,6 +73,23 @@ export function useBatteryValues(
     setAssumedParasiticConsumption,
   });
 
+  const averageSOC = createMemo(() => {
+    const sinceFull = socSinceFull();
+    const sinceEmpty = socSinceEmpty();
+    if (sinceFull === undefined && sinceEmpty === undefined) return;
+    if (sinceFull === undefined) return sinceEmpty;
+    if (sinceEmpty === undefined) return sinceFull;
+    return (sinceFull + sinceEmpty) / 2;
+  });
+
+  reportSOCToMqtt({
+    mqttClient,
+    config,
+    averageSOC,
+    socSinceEmpty,
+    socSinceFull,
+  });
+
   return {
     energyChargedSinceFull,
     energyChargedSinceEmpty,
@@ -87,6 +105,53 @@ export function useBatteryValues(
     assumedCapacity,
     assumedParasiticConsumption,
   };
+}
+
+function reportSOCToMqtt({
+  mqttClient,
+  config,
+  averageSOC,
+  socSinceEmpty,
+  socSinceFull,
+}: {
+  mqttClient: Resource<AsyncMqttClient>;
+  config: Accessor<Config>;
+  averageSOC: Accessor<number | undefined>;
+  socSinceFull: Accessor<number | undefined>;
+  socSinceEmpty: Accessor<number | undefined>;
+}) {
+  createEffect(() => {
+    const client = mqttClient();
+    if (!client) return;
+
+    createEffect(() => {
+      const table = untrack(() => config().soc_calculations.table);
+      const average = averageSOC();
+      if (!average) return;
+      const influx_entry = `${table} average_soc=${average}`;
+      if (client.connected) {
+        client.publish(table, influx_entry).catch(() => {});
+      }
+    });
+    createEffect(() => {
+      const table = untrack(() => config().soc_calculations.table);
+      const sinceFull = socSinceFull();
+      if (!sinceFull) return;
+      const influx_entry = `${table} soc_since_full=${sinceFull}`;
+      if (client.connected) {
+        client.publish(table, influx_entry).catch(() => {});
+      }
+    });
+    createEffect(() => {
+      const table = untrack(() => config().soc_calculations.table);
+      const sinceEmpty = socSinceEmpty();
+      if (!sinceEmpty) return;
+      const influx_entry = `${table} soc_since_empty=${sinceEmpty}`;
+      if (client.connected) {
+        client.publish(table, influx_entry).catch(() => {});
+      }
+    });
+  });
 }
 
 function iterativelyFindSocParameters({

@@ -86,7 +86,7 @@ async function report_value({
   const influx_entry = `${table} ${label}=${averaged_value}`;
   if (mqtt_client?.connected) {
     try {
-      mqtt_client.publish(table, influx_entry);
+      await mqtt_client.publish(table, influx_entry);
       return;
     } catch (e) {
       // error("Couldn't publish mqtt message", e, "saving offline");

@@ -82,7 +82,7 @@ function main() {
       socSinceFull,
       assumedParasiticConsumption,
       assumedCapacity,
-    } = useBatteryValues(mqttValues, configResourceValue);
+    } = useBatteryValues(mqttValues, configResourceValue, mqttClient);
     const temperatures = useTemperatures(config);
 
     saveTemperatures({ config, mqttClient, temperatures });
