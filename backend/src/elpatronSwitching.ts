@@ -4,7 +4,6 @@ import { useMQTTValues } from "./useMQTTValues";
 import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
-import { log } from "./utilities/logging";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;

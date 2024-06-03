@@ -1,8 +1,8 @@
 import Influx, { IResults } from "influx";
-import { get_config_object } from "./config";
+import { get_config_object } from "../config";
 import { createMemo, createResource } from "solid-js";
-import { error, log } from "./utilities/logging";
-import { useNow } from "./utilities/useNow";
+import { error, log } from "../utilities/logging";
+import { useNow } from "../utilities/useNow";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const currentTime = useNow();

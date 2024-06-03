@@ -1,4 +1,4 @@
-import { WebSocket, WebSocketServer, Server } from "ws";
+import { Server, WebSocket, WebSocketServer } from "ws";
 import { error, log, warn } from "./utilities/logging";
 import { IncomingMessage } from "http";
 import { catchify, wait } from "@depict-ai/utilishared/latest";
