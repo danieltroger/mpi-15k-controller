@@ -16,52 +16,48 @@ export function saveTemperatures({
   config: Accessor<Config>;
   mqttClient: Resource<MQTT.AsyncMqttClient>;
 }) {
-  createEffect(() => {
-    const client = mqttClient();
-    if (!client) return;
-    // Write weighted average of temperatures every ~3s to a file to import into influx once MacMini is running again with Grafana and stuff
-    const local_storage_file_name = path.dirname(process.argv[1]) + "/../for_influx.txt";
-    log("Using", local_storage_file_name, "as local log for temperatures");
-    const file_handle = fs
-      .open(local_storage_file_name, "a+")
-      .catch(e => error("Couldn't open local temperature log file", e));
+  // Write weighted average of temperatures every ~3s to a file to import into influx once MacMini is running again with Grafana and stuff
+  const local_storage_file_name = path.dirname(process.argv[1]) + "/../for_influx.txt";
+  log("Using", local_storage_file_name, "as local log for temperatures");
+  const file_handle = fs
+    .open(local_storage_file_name, "a+")
+    .catch(e => error("Couldn't open local temperature log file", e));
 
-    const keys = createMemo(() => Object.keys(temperatures()));
-    For({
-      get each() {
-        return keys();
-      },
-      children: key => {
-        const value_accessor = temperatures()[key];
-        const values = new Set<ThermometerValue>();
-        let values_start = +new Date();
+  const keys = createMemo(() => Object.keys(temperatures()));
+  For({
+    get each() {
+      return keys();
+    },
+    children: key => {
+      const value_accessor = temperatures()[key];
+      const values = new Set<ThermometerValue>();
+      let values_start = +new Date();
 
-        createComputed(() => {
-          const thermometer_object = value_accessor();
-          if (!thermometer_object) return; // Unsure if this can happen but just in case
-          values.add(thermometer_object);
-          const now = +new Date();
-          if (now - values_start >= untrack(config).temperature_report_interval) {
-            const weighted_average = calculate_weighted_average({ values, now });
-            if (!isNaN(weighted_average)) {
-              // Don't report NaN averages when we got no data for a longer period
-              report_value({
-                averaged_value: weighted_average,
-                label: thermometer_object.label,
-                time: now,
-                file_handle,
-                mqtt_client: client,
-                table: untrack(config).temperature_saving.table,
-                database: untrack(config).temperature_saving.database,
-              }).catch(e => error("Couldn't write averaged temperature value to log/mqtt", e));
-            }
-            values_start = now;
+      createComputed(() => {
+        const thermometer_object = value_accessor();
+        if (!thermometer_object) return; // Unsure if this can happen but just in case
+        values.add(thermometer_object);
+        const now = +new Date();
+        if (now - values_start >= untrack(config).temperature_report_interval) {
+          const weighted_average = calculate_weighted_average({ values, now });
+          if (!isNaN(weighted_average)) {
+            // Don't report NaN averages when we got no data for a longer period
+            report_value({
+              averaged_value: weighted_average,
+              label: thermometer_object.label,
+              time: now,
+              file_handle,
+              mqttClient,
+              table: untrack(config).temperature_saving.table,
+              database: untrack(config).temperature_saving.database,
+            }).catch(e => error("Couldn't write averaged temperature value to log/mqtt", e));
           }
-        });
+          values_start = now;
+        }
+      });
 
-        return undefined;
-      },
-    });
+      return undefined;
+    },
   });
 }
 
@@ -70,7 +66,7 @@ async function report_value({
   label,
   time,
   file_handle,
-  mqtt_client,
+  mqttClient,
   database,
   table,
 }: {
@@ -78,7 +74,7 @@ async function report_value({
   label: string;
   time: number;
   file_handle: Promise<void | fs.FileHandle>;
-  mqtt_client: MQTT.AsyncMqttClient;
+  mqttClient: Resource<MQTT.AsyncMqttClient>;
   table: string;
   database: string;
 }) {
@@ -86,8 +82,9 @@ async function report_value({
 # CONTEXT-DATABASE: ${database}
 # CONTEXT-RETENTION-POLICY: autogen
 `;
+  const mqtt_client = untrack(mqttClient);
   const influx_entry = `${table} ${label}=${averaged_value}`;
-  if (mqtt_client.connected) {
+  if (mqtt_client?.connected) {
     try {
       mqtt_client.publish(table, influx_entry);
       return;
