@@ -1,5 +1,5 @@
-import { useMQTTValues } from "./useMQTTValues";
-import { get_config_object } from "./config";
+import { useMQTTValues } from "../useMQTTValues";
+import { get_config_object } from "../config";
 import { createEffect, createMemo, createSignal, untrack } from "solid-js";
 
 export function useCurrentPower(

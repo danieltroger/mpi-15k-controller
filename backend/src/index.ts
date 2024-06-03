@@ -10,14 +10,14 @@ import {
 } from "solid-js";
 import { error } from "./utilities/logging";
 import { useMQTTValues } from "./useMQTTValues";
-import { prematureFloatBugWorkaround } from "./prematureFloatBugWorkaround";
+import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { wsMessaging } from "./wsMessaging";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./useTemperatures";
 import { saveTemperatures } from "./saveTemperatures";
 import { feedWhenNoSolar } from "./feedWhenNoSolar";
-import { useBatteryValues } from "./useBatteryValues";
+import { useBatteryValues } from "./battery/useBatteryValues";
 import { mqttValueKeys } from "./sharedTypes";
 import { elpatronSwitching } from "./elpatronSwitching";
 

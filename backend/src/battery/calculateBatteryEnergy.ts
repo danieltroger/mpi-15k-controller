@@ -1,5 +1,4 @@
 import { Accessor, createMemo as solidCreateMemo } from "solid-js";
-import { get_config_object } from "./config";
 
 export function calculateBatteryEnergy({
   from,

@@ -1,4 +1,4 @@
-import { Accessor, createComputed, createEffect, createMemo, For, Resource, untrack } from "solid-js";
+import { Accessor, createComputed, createMemo, For, Resource, untrack } from "solid-js";
 import { Config } from "./config";
 import { promises as fs } from "fs";
 import path from "path";

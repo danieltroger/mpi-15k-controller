@@ -1,9 +1,9 @@
-import { useMQTTValues } from "./useMQTTValues";
-import { Accessor, createEffect, createMemo, createResource, createSignal, onCleanup, untrack } from "solid-js";
-import { get_config_object } from "./config";
-import { error, log } from "./utilities/logging";
+import { useMQTTValues } from "../useMQTTValues";
+import { Accessor, createEffect, createMemo, createResource, onCleanup, untrack } from "solid-js";
+import { get_config_object } from "../config";
+import { error, log } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
-import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "./shineMonitor";
+import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
 
