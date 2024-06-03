@@ -7,7 +7,8 @@ import { isServer } from "solid-js/web";
 
 export function getBackendSyncedSignal<T, default_value_was_provided extends boolean = false>(
   key: string,
-  default_value?: T
+  default_value?: T,
+  refetchOnVisibilityChange = true
 ) {
   const socket = useWebSocket();
   const signal = createSignal<T>(default_value!);
@@ -50,7 +51,11 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
 
   // Initially, and when leaving the tab and coming back, poll for current values
   // Otherwise when opening a tab that has been suspended for a while, we will show ancient values until a new broadcast comes in for that value
-  createEffect(() => pageIsVisible() && requestValueUpdate());
+  if (refetchOnVisibilityChange) {
+    createEffect(() => pageIsVisible() && requestValueUpdate());
+  } else {
+    requestValueUpdate();
+  }
 
   return [
     get_value as default_value_was_provided extends true ? Accessor<T> : Accessor<T | undefined>,
