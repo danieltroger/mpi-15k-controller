@@ -19,6 +19,10 @@ export type Config = {
     parasitic_consumption_to: number;
     number_of_cells: number;
     table: string;
+    current_state: {
+      parasitic_consumption: number;
+      capacity: number;
+    };
   };
   elpatron_switching: {
     enabled: boolean;
@@ -81,6 +85,10 @@ const default_config: Config = {
     parasitic_consumption_to: 350,
     number_of_cells: 576,
     table: "soc_values",
+    current_state: {
+      capacity: 19.2 * 12 * 3 * 16,
+      parasitic_consumption: 315,
+    },
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
