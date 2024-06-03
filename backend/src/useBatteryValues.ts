@@ -214,6 +214,7 @@ function iterativelyFindSocParameters({
       gotCleanuped = true;
       if (!decrementedRunning) {
         running--;
+        decrementedRunning = true;
       }
     });
 
@@ -272,6 +273,7 @@ function iterativelyFindSocParameters({
       setAssumedParasiticConsumption(middleValue.parasitic);
       if (!decrementedRunning) {
         running--;
+        decrementedRunning = true;
       }
     });
   });
