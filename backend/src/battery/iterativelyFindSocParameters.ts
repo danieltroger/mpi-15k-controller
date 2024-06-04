@@ -77,10 +77,10 @@ export function iterativelyFindSocParameters({
         totalLastFull: totalLastFull(),
         endParasitic,
         startParasitic,
-        databasePowerValues: databasePowerValues(),
+        databasePowerValues: [...databasePowerValues()],
         startCapacity,
         endCapacity,
-        localPowerHistory: localPowerHistory(),
+        localPowerHistory: [...localPowerHistory()],
       }));
 
       const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url), {
