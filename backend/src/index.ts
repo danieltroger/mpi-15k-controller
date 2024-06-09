@@ -45,41 +45,21 @@ function main() {
       what: feedWhenNoSolarDead,
       when: +new Date(),
     });
-    const {
-      energyDischargedSinceEmpty,
-      energyChargedSinceFull,
-      energyChargedSinceEmpty,
-      energyDischargedSinceFull,
-      currentPower,
-      totalLastEmpty,
-      totalLastFull,
-      energyRemovedSinceFull,
-      energyAddedSinceEmpty,
-      socSinceEmpty,
-      socSinceFull,
-      assumedParasiticConsumption,
-      assumedCapacity,
-    } = useBatteryValues(mqttValues, configResourceValue, mqttClient);
+    const { currentPower, assumedParasiticConsumption, assumedCapacity } = useBatteryValues(
+      mqttValues,
+      configResourceValue,
+      mqttClient
+    );
 
     createResource(() =>
       wsMessaging({
         config_signal: configResourceValue,
         owner,
         exposedAccessors: {
-          energyAddedSinceEmpty,
           lastChangingFeedWhenNoSolarReason,
-          energyDischargedSinceEmpty,
-          energyChargedSinceEmpty,
-          totalLastEmpty,
           currentBatteryPower: currentPower,
-          energyRemovedSinceFull,
-          energyDischargedSinceFull,
-          energyChargedSinceFull,
-          socSinceEmpty,
-          socSinceFull,
           assumedCapacity,
           assumedParasiticConsumption,
-          totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
           ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
         },
       })

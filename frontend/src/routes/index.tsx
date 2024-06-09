@@ -6,12 +6,10 @@ import { MqttValue } from "../../../backend/src/sharedTypes";
 export default function Home() {
   const [energyDischargedSinceEmpty] = getBackendSyncedSignal<number>("energyDischargedSinceEmpty");
   const [energyChargedSinceEmpty] = getBackendSyncedSignal<number>("energyChargedSinceEmpty");
-  const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
   const [energyRemovedSinceFull] = getBackendSyncedSignal<number>("energyRemovedSinceFull");
   const [energyAddedSinceEmpty] = getBackendSyncedSignal<number>("energyAddedSinceEmpty");
   const [energyDischargedSinceFull] = getBackendSyncedSignal<number>("energyDischargedSinceFull");
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
-  const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
@@ -47,10 +45,6 @@ export default function Home() {
         energyChargedSinceFull: {energyChargedSinceFull()}
         <br />
         energyRemovedSinceFull: {energyRemovedSinceFull()}
-        <br />
-        Time last full: {new Date(totalLastFull()!).toLocaleString()}
-        <br />
-        Time last empty: {new Date(totalLastEmpty()!).toLocaleString()}
         <br />
         energyDischargedSinceEmpty: {energyDischargedSinceEmpty()}
         <br />

@@ -116,10 +116,50 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     return returnArray;
   });
 
+  const whenWereWeFullCirca = createMemo(() => {
+    const values = interestingDatabaseValues();
+    if (!values) return [];
+    const voltages = values.filter(value => value.battery_voltage !== null);
+
+    const returnArray: { time: number; value: number }[] = [];
+    let fullValueToReturn: { time: number; value: number } | undefined;
+    for (let i = 0; i < voltages.length; i++) {
+      const { battery_voltage, time } = voltages[i];
+      const inVolts = battery_voltage! / 10;
+      if (inVolts < 58.4) {
+        if (fullValueToReturn) {
+          returnArray.push(fullValueToReturn);
+          fullValueToReturn = undefined;
+        }
+        continue;
+      }
+      fullValueToReturn = {
+        time: Math.round(time.getNanoTime() / 1000 / 1000),
+        value: inVolts,
+      };
+    }
+
+    if (fullValueToReturn) {
+      returnArray.push(fullValueToReturn);
+    }
+    return returnArray;
+  });
+
   createEffect(() => {
     log(
       "whenWereWeEmpty",
       whenWereWeEmpty().map(({ time, value }) => {
+        const date = new Date(time);
+        const options = { timeZone: "Europe/Stockholm" };
+        const localeString = date.toLocaleString("sv-SE", options);
+        return { time: localeString, value };
+      })
+    );
+  });
+  createEffect(() => {
+    log(
+      "whenWereWeFullCirca",
+      whenWereWeFullCirca().map(({ time, value }) => {
         const date = new Date(time);
         const options = { timeZone: "Europe/Stockholm" };
         const localeString = date.toLocaleString("sv-SE", options);
@@ -132,6 +172,8 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt,
     databasePowerValues: powerValues,
     batteryWasLastEmptyAtAccordingToDatabase: batteryWasLastEmptyAt,
+    whenWereWeEmpty,
+    whenWereWeFullCirca,
   };
 }
 
