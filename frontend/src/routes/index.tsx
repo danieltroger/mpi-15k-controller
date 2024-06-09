@@ -11,7 +11,6 @@ export default function Home() {
   const [energyAddedSinceEmpty] = getBackendSyncedSignal<number>("energyAddedSinceEmpty");
   const [energyDischargedSinceFull] = getBackendSyncedSignal<number>("energyDischargedSinceFull");
   const [energyChargedSinceFull] = getBackendSyncedSignal<number>("energyChargedSinceFull");
-  const [isCharging] = getBackendSyncedSignal<number>("isCharging");
   const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
   const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
   const [hasHydrated, setHasHydrated] = createSignal(false);
@@ -48,8 +47,6 @@ export default function Home() {
         energyChargedSinceFull: {energyChargedSinceFull()}
         <br />
         energyRemovedSinceFull: {energyRemovedSinceFull()}
-        <br />
-        isCharging: {isCharging() + ""}
         <br />
         Time last full: {new Date(totalLastFull()!).toLocaleString()}
         <br />
@@ -89,12 +86,7 @@ function NoBuyDebug() {
     ((ac_output_active_power_r()?.value || 0) as number) +
     ((ac_output_active_power_s()?.value || 0) as number) +
     ((ac_output_active_power_t()?.value || 0) as number);
-  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastFeedWhenNoSolarReason"
-  );
-  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastChangingFeedWhenNoSolarReason"
-  );
+
   const availablePower = createMemo(() => solarPower() - acOutputPower());
 
   return (
@@ -103,14 +95,6 @@ function NoBuyDebug() {
       <p>
         {availablePower()} watts, which is made out of {solarPower()} watts minus {acOutputPower()} watts
       </p>
-      <Show when={lastFeedWhenNoSolarReason()}>
-        {new Date(lastFeedWhenNoSolarReason()?.when!).toLocaleString()}: {lastFeedWhenNoSolarReason()?.what}
-        <br />
-      </Show>
-      <Show when={lastChangingFeedWhenNoSolarReason()}>
-        {new Date(lastChangingFeedWhenNoSolarReason()?.when!).toLocaleString()}:{" "}
-        {lastChangingFeedWhenNoSolarReason()?.what}
-      </Show>
     </section>
   );
 }

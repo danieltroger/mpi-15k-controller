@@ -1,6 +1,6 @@
 import Influx, { IResults } from "influx";
 import { get_config_object } from "../config";
-import { createMemo, createResource } from "solid-js";
+import { createEffect, createMemo, createResource } from "solid-js";
 import { error, log } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 
@@ -56,10 +56,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
 
   const requestStartingAt = createMemo(() => {
     if (batteryWasLastFullAt.loading || batteryWasLastEmptyAt.loading) return; // Wait for it to load before making any decision
-    const lastFull = batteryWasLastFullAt();
-    const lastEmpty = batteryWasLastEmptyAt();
-    const previousMidnight = lastTimeItWasMidnight();
-    return Math.min(previousMidnight, lastFull || Infinity, lastEmpty || Infinity);
+    return 1712515728186; // Begin of stable data collection
   });
 
   const [interestingDatabaseValues] = createResource(
@@ -88,6 +85,47 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       };
     });
     return multiplied.filter(v => v != undefined) as { time: number; value: number }[];
+  });
+
+  const whenWereWeEmpty = createMemo(() => {
+    const values = interestingDatabaseValues();
+    if (!values) return [];
+    const voltages = values.filter(value => value.battery_voltage !== null);
+
+    const returnArray: { time: number; value: number }[] = [];
+    let emptyValueToReturn: { time: number; value: number } | undefined;
+    for (let i = 0; i < voltages.length; i++) {
+      const { battery_voltage, time } = voltages[i];
+      const inVolts = battery_voltage! / 10;
+      if (inVolts > 46) {
+        if (emptyValueToReturn) {
+          returnArray.push(emptyValueToReturn);
+          emptyValueToReturn = undefined;
+        }
+        continue;
+      }
+      emptyValueToReturn = {
+        time: Math.round(time.getNanoTime() / 1000 / 1000),
+        value: inVolts,
+      };
+    }
+
+    if (emptyValueToReturn) {
+      returnArray.push(emptyValueToReturn);
+    }
+    return returnArray;
+  });
+
+  createEffect(() => {
+    log(
+      "whenWereWeEmpty",
+      whenWereWeEmpty().map(({ time, value }) => {
+        const date = new Date(time);
+        const options = { timeZone: "Europe/Stockholm" };
+        const localeString = date.toLocaleString("sv-SE", options);
+        return { time: localeString, value };
+      })
+    );
   });
 
   return {

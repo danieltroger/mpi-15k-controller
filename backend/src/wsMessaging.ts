@@ -6,12 +6,10 @@ import { useTemperatures } from "./useTemperatures";
 export async function wsMessaging({
   config_signal: [get_config, set_config],
   owner,
-  temperatures,
   exposedAccessors,
 }: {
   config_signal: Signal<Config>;
   owner: Owner;
-  temperatures: ReturnType<typeof useTemperatures>;
   exposedAccessors: Record<string, Accessor<any>>;
 }) {
   const exposed_signals = {
@@ -23,9 +21,6 @@ export async function wsMessaging({
           return "Can't write config, not an object: " + value;
         }
       },
-    },
-    temperatures: {
-      getter: () => serializeTemperatures(temperatures),
     },
     ...Object.fromEntries(Object.entries(exposedAccessors).map(([key, accessor]) => [key, { getter: accessor }])),
   } as const;

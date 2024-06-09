@@ -21,7 +21,7 @@ export function iterativelyFindSocParameters({
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
 }) {
   let effectsRunning = 0;
-  const numWorkers = 1; // Hardcoded for now
+  const numWorkers = 11; // Hardcoded for now
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
   );
