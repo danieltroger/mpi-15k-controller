@@ -76,7 +76,7 @@ async function setParameterWithThrottlingAndRefetch<T>(
   callOnFailure: VoidFunction
 ) {
   const now = +new Date();
-  const setMaxEvery = 60_000;
+  const setMaxEvery = 40_000;
   const setAgo = now - (lastShineRequestForParameter[parameter] ?? 0);
   if (setAgo < setMaxEvery) {
     const waitFor = setMaxEvery - setAgo;
