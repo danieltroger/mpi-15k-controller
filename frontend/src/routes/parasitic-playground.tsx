@@ -9,6 +9,8 @@ export default function ParasiticPlayground() {
   const [battery_voltage] = getBackendSyncedSignal<MqttValue>("battery_voltage");
   const [battery_current] = getBackendSyncedSignal<MqttValue>("battery_current");
   const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
+  const [solar_input_current_1] = getBackendSyncedSignal<MqttValue>("solar_input_current_1");
+  const [solar_input_current_2] = getBackendSyncedSignal<MqttValue>("solar_input_current_2");
   const [solar_input_voltage_1] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_1");
   const [solar_input_voltage_2] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_2");
   const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
@@ -50,14 +52,26 @@ export default function ParasiticPlayground() {
         </thead>
         <tbody>
           <tr>
-            <td>Solar array 1 voltage</td>
-            <td>{(solar_input_voltage_1()?.value as number) / 10 + ""}v</td>
-            <td>{solar_input_voltage_1()?.time && new Date(solar_input_voltage_1()!.time).toLocaleString()}</td>
+            <td>Solar array 1</td>
+            <td>
+              {(solar_input_voltage_1()?.value as number) / 100 + ""}v /{" "}
+              {(solar_input_current_1()?.value as number) / 100 + ""}a
+            </td>
+            <td>
+              {solar_input_voltage_1()?.time && new Date(solar_input_voltage_1()!.time).toLocaleString()} /{" "}
+              {solar_input_current_1()?.time && new Date(solar_input_current_1()!.time).toLocaleString()}
+            </td>
           </tr>
           <tr>
-            <td>Solar array 2 voltage</td>
-            <td>{(solar_input_voltage_2()?.value as number) / 10 + ""}v</td>
-            <td>{solar_input_voltage_2()?.time && new Date(solar_input_voltage_2()!.time).toLocaleString()}</td>
+            <td>Solar array 2</td>
+            <td>
+              {(solar_input_voltage_2()?.value as number) / 100 + ""}v /{" "}
+              {(solar_input_current_2()?.value as number) / 100 + ""}a
+            </td>
+            <td>
+              {solar_input_voltage_2()?.time && new Date(solar_input_voltage_2()!.time).toLocaleString()} /{" "}
+              {solar_input_current_2()?.time && new Date(solar_input_current_2()!.time).toLocaleString()}
+            </td>
           </tr>
           <tr>
             <td>Current battery power</td>
@@ -76,7 +90,9 @@ export default function ParasiticPlayground() {
           </tr>
           <tr>
             <td>Current solar power</td>
-            <td>{solarInput() + ""}w</td>
+            <td>
+              {solarInput() + ""}w ({solar_input_power_1()?.value}w + {solar_input_power_2()?.value}w)
+            </td>
             <td>{solar_input_power_1()?.time && new Date(solar_input_power_1()!.time).toLocaleString()}</td>
           </tr>
           <tr>
