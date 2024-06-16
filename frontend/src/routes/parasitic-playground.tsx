@@ -54,7 +54,7 @@ export default function ParasiticPlayground() {
           <tr>
             <td>Solar array 1</td>
             <td>
-              {(solar_input_voltage_1()?.value as number) / 100 + ""}v /{" "}
+              {(solar_input_voltage_1()?.value as number) / 10 + ""}v /{" "}
               {(solar_input_current_1()?.value as number) / 100 + ""}a
             </td>
             <td>
@@ -65,7 +65,7 @@ export default function ParasiticPlayground() {
           <tr>
             <td>Solar array 2</td>
             <td>
-              {(solar_input_voltage_2()?.value as number) / 100 + ""}v /{" "}
+              {(solar_input_voltage_2()?.value as number) / 10 + ""}v /{" "}
               {(solar_input_current_2()?.value as number) / 100 + ""}a
             </td>
             <td>
