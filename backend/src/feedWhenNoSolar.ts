@@ -123,15 +123,16 @@ export function feedWhenNoSolar({
         `battery voltage ${batteryVoltage}v is above force feeding threshold ${startForceFeedingFromSolarAt}v`
       );
     }
+    // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
+    if (charging) {
+      return doWithReason(true, "we are charging");
+    }
+
     if (highestVoltage != undefined && highestVoltage > force_let_through_to_grid_over_pv_voltage) {
       return doWithReason(
         false,
         `highest voltage ${highestVoltage}v is above force let through threshold ${force_let_through_to_grid_over_pv_voltage}v`
       );
-    }
-    // When charging, the battery will be able to take most of the energy until it's full, so we want to force-feed for the whole duration (tried power based but the calculations didn't work out)
-    if (charging) {
-      return doWithReason(true, "we are charging");
     }
 
     let doIfBelow = feedBelow();
