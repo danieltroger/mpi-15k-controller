@@ -35,11 +35,15 @@ export function feedWhenNoSolar({
     if (powerR == undefined && powerS == undefined && powerT == undefined) return undefined;
     return (powerR || 0) + (powerS || 0) + (powerT || 0);
   };
-  const highestStringVoltage = createMemo(() => {
+  const string1Voltage = createMemo(() => {
     const voltage1 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
-    const voltage2 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
-    if (voltage1 == undefined && voltage2 == undefined) return undefined;
-    return Math.max((voltage1 || 0) / 10, (voltage2 || 0) / 10);
+    if (voltage1 == undefined) return undefined;
+    return voltage1 / 10;
+  });
+  const string2Voltage = createMemo(() => {
+    const voltage2 = mqttValues["solar_input_voltage_2"]?.value as number | undefined;
+    if (voltage2 == undefined) return undefined;
+    return voltage2 / 10;
   });
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
     const solar = totalSolarPower(mqttValues);
@@ -90,14 +94,14 @@ export function feedWhenNoSolar({
         disable_below_battery_voltage,
         allow_switching_to_solar_feeding_during_charging_x_volts_below_full,
         add_to_feed_below_when_currently_feeding,
-        force_let_through_to_grid_over_pv_voltage,
+        force_let_through_to_grid_over_pv_voltage1,
+        force_let_through_to_grid_over_pv_voltage2,
       },
     } = config();
     const batteryVoltage = getBatteryVoltage();
     const charging = isCharging();
     const startForceFeedingFromSolarAt =
       full_battery_voltage - allow_switching_to_solar_feeding_during_charging_x_volts_below_full;
-    const highestVoltage = highestStringVoltage();
     // Wait for data to be known at program start before making a decision
     if (batteryVoltage == undefined || charging == undefined) {
       return doWithReason(prev, "battery voltage or charging unknown");
@@ -128,11 +132,23 @@ export function feedWhenNoSolar({
       return doWithReason(true, "we are charging");
     }
 
-    if (highestVoltage != undefined && highestVoltage > force_let_through_to_grid_over_pv_voltage) {
-      return doWithReason(
-        false,
-        `highest voltage ${highestVoltage}v is above force let through threshold ${force_let_through_to_grid_over_pv_voltage}v`
-      );
+    const solarVoltage1 = string1Voltage();
+    const solarVoltage2 = string2Voltage();
+    const over1 = solarVoltage1 != undefined && solarVoltage1 > force_let_through_to_grid_over_pv_voltage1;
+    const over2 = solarVoltage2 != undefined && solarVoltage2 > force_let_through_to_grid_over_pv_voltage2;
+    if (over1 || over2) {
+      const reasons: string[] = [];
+      if (over1) {
+        reasons.push(
+          `PV string 1 (${solarVoltage1}) is over force let through to grid voltage1 ${force_let_through_to_grid_over_pv_voltage1}v`
+        );
+      }
+      if (over2) {
+        reasons.push(
+          `PV string 2 (${solarVoltage2}) is over force let through to grid voltage2 ${force_let_through_to_grid_over_pv_voltage2}v`
+        );
+      }
+      return doWithReason(false, reasons.join(", "));
     }
 
     let doIfBelow = feedBelow();
