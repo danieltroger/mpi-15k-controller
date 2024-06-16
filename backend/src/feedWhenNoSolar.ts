@@ -1,6 +1,6 @@
 import { useMQTTValues } from "./useMQTTValues";
 import { get_config_object } from "./config";
-import { Accessor, createEffect, createMemo, createSignal, Setter, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { useShinemonitorParameter } from "./useShinemonitorParameter";
 import { error, log } from "./utilities/logging";
 import { useNow } from "./utilities/useNow";
@@ -179,6 +179,9 @@ export function feedWhenNoSolar({
       configSignal,
       wantedToCurrentTransformerForDiffing,
     });
+
+  debugLog(`feedWhenNoSolar started`);
+  onCleanup(() => debugLog(`feedWhenNoSolar terminated (cleaned up)`));
 
   createEffect(() => {
     const shouldEnable = debouncedShouldEnableFeeding();
