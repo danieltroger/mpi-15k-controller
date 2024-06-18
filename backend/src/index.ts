@@ -108,8 +108,8 @@ function main() {
             }),
           e => {
             setPrematureWorkaroundErrored(true);
-            error("Premature float bug workaround errored", e, "restarting in 10s");
-            setTimeout(() => setPrematureWorkaroundErrored(false), 10_000);
+            error("Premature float bug workaround errored", e, "restarting in 60s");
+            setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
           }
         );
       });
@@ -136,8 +136,8 @@ function main() {
           },
           e => {
             setFeedWhenNoSolarErrored(true);
-            error("Feed when no solar errored", e, "restarting in 10s");
-            setTimeout(() => setFeedWhenNoSolarErrored(false), 10_000);
+            error("Feed when no solar errored", e, "restarting in 60s");
+            setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
           }
         );
       });
