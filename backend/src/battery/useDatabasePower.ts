@@ -39,7 +39,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       if (!db) return;
       log("Getting last full time from database");
       const [response] = await db.query(
-        `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= fullWhen`
+        `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= ${fullWhen}`
       );
       let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
       if (!isNaN(timeOfLastFull)) {
