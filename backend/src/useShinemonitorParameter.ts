@@ -120,18 +120,24 @@ async function setConfiguredValueInShinemonitor(
   value: string
 ) {
   const [config] = configSignal;
-  const result = await makeRequestWithAuth<SetVoltageResponse>(
-    configSignal,
-    {
-      "sn": untrack(config).inverter_sn!,
-      "id": parameter,
-      "pn": untrack(config).inverter_pn!,
-      "devcode": "2454",
-      "val": value,
-      "devaddr": "1",
-    },
-    "ctrlDevice"
-  );
+  let result: SetVoltageResponse;
+  try {
+    result = await makeRequestWithAuth<SetVoltageResponse>(
+      configSignal,
+      {
+        "sn": untrack(config).inverter_sn!,
+        "id": parameter,
+        "pn": untrack(config).inverter_pn!,
+        "devcode": "2454",
+        "val": value,
+        "devaddr": "1",
+      },
+      "ctrlDevice"
+    );
+  } catch (e) {
+    error("Failed to set", parameter, "to", value, "in shinemonitor", e);
+    return true;
+  }
   if (result.err) {
     error("Failed to set", parameter, "to", value, "in shinemonitor", result);
     return true;
