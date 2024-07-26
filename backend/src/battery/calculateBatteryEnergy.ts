@@ -1,4 +1,5 @@
 import { Accessor, createMemo as solidCreateMemo } from "solid-js";
+import { useDatabasePower } from "./useDatabasePower";
 
 export function calculateBatteryEnergy({
   from,
@@ -17,7 +18,7 @@ export function calculateBatteryEnergy({
    * Reactive store with the local power history
    */
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
-  databasePowerValues: Accessor<{ time: number; value: number }[]>;
+  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
   createMemo: typeof solidCreateMemo;
 }) {
@@ -25,10 +26,15 @@ export function calculateBatteryEnergy({
     const fromValue = from();
     const filteredLocalPower: { time: number; value: number }[] = [];
     const filteredDatabasePower: { time: number; value: number }[] = [];
-
-    if (!fromValue) return { filteredLocalPower, filteredDatabasePower };
-
     const totalLocalHistory = localPowerHistory();
+    const allDatabaseValues = databasePowerValues();
+
+    if (!fromValue || !totalLocalHistory.length || allDatabaseValues == undefined) {
+      // Don't return anything until we both have one local value and the database returns a value
+      // This is so we don't make wrong assumptions while data is loading
+      return { filteredLocalPower, filteredDatabasePower };
+    }
+
     for (let i = 0; i < totalLocalHistory.length; i++) {
       const power = totalLocalHistory[i];
       const { time } = power;
@@ -42,7 +48,6 @@ export function calculateBatteryEnergy({
       }
     }
     const firstLocalPower = filteredLocalPower[0]?.time as number | undefined;
-    const allDatabaseValues = databasePowerValues();
     for (let i = 0; i < allDatabaseValues.length; i++) {
       const power = allDatabaseValues[i];
       const { time } = power;

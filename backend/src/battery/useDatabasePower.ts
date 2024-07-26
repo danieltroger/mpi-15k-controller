@@ -87,7 +87,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
 
   const powerValues = createMemo(() => {
     const values = interestingDatabaseValues();
-    if (!values) return [];
+    if (!values) return;
     const voltages = values.filter(value => value.battery_voltage !== null);
     const currents = values.filter(value => value.battery_current !== null);
     const multiplied = voltages.map((voltage, index) => {

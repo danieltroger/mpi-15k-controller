@@ -4,6 +4,7 @@ import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
+import { useDatabasePower } from "./useDatabasePower";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,
@@ -15,7 +16,7 @@ export function iterativelyFindSocParameters({
 }: {
   now: Accessor<number>;
   localPowerHistory: Accessor<{ value: number; time: number }[]>;
-  databasePowerValues: Accessor<{ time: number; value: number }[]>;
+  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
@@ -36,7 +37,7 @@ export function iterativelyFindSocParameters({
       prev ||
       (totalLastFull() !== undefined &&
         totalLastEmpty() !== undefined &&
-        databasePowerValues().length &&
+        databasePowerValues() !== undefined &&
         localPowerHistory().length)
   );
   // Calculate SOC stuff all the time, check every minute essentially if it's time to do it again
@@ -77,7 +78,7 @@ export function iterativelyFindSocParameters({
         totalLastFull: totalLastFull(),
         endParasitic,
         startParasitic,
-        databasePowerValues: [...databasePowerValues()],
+        databasePowerValues: [...databasePowerValues()!],
         startCapacity,
         endCapacity,
         localPowerHistory: [...localPowerHistory()],
