@@ -9,6 +9,7 @@ function optimizeCalculation(data: SocWorkerData) {
   let stepCapacity = Math.max(1, Math.floor((data.endCapacity - data.startCapacity) / 10));
   let stepParasitic = Math.max(1, Math.floor((data.endParasitic - data.startParasitic) / 10));
   let bestResult: WorkerResult | null = null;
+  const results: WorkerResult[] = [];
 
   while (stepCapacity >= 1 && stepParasitic >= 1) {
     for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += stepCapacity) {
@@ -40,8 +41,7 @@ function optimizeCalculation(data: SocWorkerData) {
         const diff = Math.abs(sinceFull - sinceEmpty);
         if (diff < 0.01) {
           const result: WorkerResult = { capacity, parasitic, sinceEmpty, sinceFull };
-          parentPort!.postMessage(result);
-          return; // We found a good enough result, exit early
+          results.push(result);
         }
 
         if (!bestResult || diff < Math.abs(bestResult.sinceFull - bestResult.sinceEmpty)) {
@@ -62,8 +62,13 @@ function optimizeCalculation(data: SocWorkerData) {
     stepParasitic = Math.floor(stepParasitic / 2);
   }
 
-  // If no result is close enough, send the best found
-  if (bestResult) {
+  // Send all results that matched the criteria
+  if (results.length > 0) {
+    for (const result of results) {
+      parentPort!.postMessage(result);
+    }
+  } else if (bestResult) {
+    // If no result is close enough, send the best found
     parentPort!.postMessage(bestResult);
   }
 }
