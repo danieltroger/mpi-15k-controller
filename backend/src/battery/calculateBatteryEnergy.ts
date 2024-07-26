@@ -21,32 +21,68 @@ export function calculateBatteryEnergy({
   subtractFromPower: Accessor<number>;
   createMemo: typeof solidCreateMemo;
 }) {
-  const totalPowerHistory = createMemo(() => {
+  const totalPowerHistory = () => {
     const fromValue = from();
-    if (!fromValue) return [];
-    const localPower = localPowerHistory().filter(({ time }) => time >= fromValue && time <= to());
-    const databasePower = databasePowerValues().filter(({ time }) => time >= fromValue && time <= to());
-    const firstLocalPower = localPower[0]?.time;
-    const filteredDatabasePower = databasePower.filter(({ time }) => time <= firstLocalPower);
-    return [...filteredDatabasePower, ...localPower];
-  });
+    const filteredLocalPower: { time: number; value: number }[] = [];
+    const filteredDatabasePower: { time: number; value: number }[] = [];
+
+    if (!fromValue) return { filteredLocalPower, filteredDatabasePower };
+
+    const totalLocalHistory = localPowerHistory();
+    for (let i = 0; i < totalLocalHistory.length; i++) {
+      const power = totalLocalHistory[i];
+      const { time } = power;
+      if (time >= fromValue) {
+        if (time <= to()) {
+          filteredLocalPower.push(power);
+        } else {
+          // Since we assume that the array is sorted by time, we can break here to make this calculation faster
+          break;
+        }
+      }
+    }
+    const firstLocalPower = filteredLocalPower[0]?.time as number | undefined;
+    const allDatabaseValues = databasePowerValues();
+    for (let i = 0; i < allDatabaseValues.length; i++) {
+      const power = allDatabaseValues[i];
+      const { time } = power;
+      if (time >= fromValue) {
+        // If we don't have local power yet, use only database power
+        if (time <= to() && (firstLocalPower == undefined || time <= firstLocalPower)) {
+          filteredDatabasePower.push(power);
+        } else {
+          break;
+        }
+      }
+    }
+
+    return { filteredLocalPower, filteredDatabasePower };
+  };
 
   const energy = createMemo<{ energyCharged: number; energyDischarged: number } | undefined>(prev => {
-    const powerValues = totalPowerHistory();
+    // Calculate "totalPowerHistory", but without merging the two parts, since then we have to create multiple arrays and GC:ing those takes time
+    const { filteredDatabasePower, filteredLocalPower } = totalPowerHistory();
     const toSubtract = subtractFromPower();
-    if (!powerValues?.length) {
+    const totalLength = filteredDatabasePower.length + filteredLocalPower.length;
+    const firstLength = filteredDatabasePower.length;
+    if (!totalLength) {
       if (prev) {
         // When the battery just became full (or empty) (we have returned something before), we won't have any power values for a short time, just return 0 (which is true) in that time
         return { energyCharged: 0, energyDischarged: 0 };
       }
-      // During program initialisation, before we've gotten a value from the DB, return undefined
+      // During program initialization, before we've gotten a value from the DB, return undefined
       return;
     }
     let energyCharged = 0;
     let energyDischarged = 0;
-    for (let i = 0; i < powerValues.length; i++) {
-      const power = powerValues[i];
-      const nextPower = powerValues[i + 1];
+    for (let i = 0; i < totalLength; i++) {
+      const isInFirstArray = i < firstLength;
+      const power = isInFirstArray ? filteredDatabasePower[i] : filteredLocalPower[i - firstLength];
+      const indexOfNextPower = i + 1;
+      const nextPowerIsInFirstArray = indexOfNextPower < firstLength;
+      const nextPower = nextPowerIsInFirstArray
+        ? filteredDatabasePower[indexOfNextPower]
+        : filteredLocalPower[indexOfNextPower - firstLength];
       if (!nextPower) break;
       const correctedPowerValue = power.value - toSubtract;
       const timeDiff = nextPower.time - power.time;
