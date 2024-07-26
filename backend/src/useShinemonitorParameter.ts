@@ -98,15 +98,44 @@ async function getConfiguredValueFromShinemonitor<T>(
   parameter: string
 ) {
   const [config] = configSignal;
-  const result = await makeRequestWithAuth<GetVoltageResponse>(configSignal, {
-    "sn": untrack(config).inverter_sn!,
-    "pn": untrack(config).inverter_pn!,
-    "id": parameter,
-    "devcode": "2454",
-    "i18n": "en_US",
-    "devaddr": "1",
-    "source": "1",
-  });
+  let result: GetVoltageResponse;
+  try {
+    result = await makeRequestWithAuth<GetVoltageResponse>(configSignal, {
+      "sn": untrack(config).inverter_sn!,
+      "pn": untrack(config).inverter_pn!,
+      "id": parameter,
+      "devcode": "2454",
+      "i18n": "en_US",
+      "devaddr": "1",
+      "source": "1",
+    });
+  } catch (e) {
+    // Very stupid retry logic because this keeps crashing feedWhenNoSolar
+    /* [ERROR] 2024-07-26T14:24:06.004Z Feed when no solar errored TypeError: fetch failed
+    at node:internal/deps/undici/undici:12500:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async makeRequestWithAuth (file:///home/ubuntu/mpi-15k-controller/backend/src/shineMonitor.ts:37:26)
+    at async getConfiguredValueFromShinemonitor (file:///home/ubuntu/mpi-15k-controller/backend/src/useShinemonitorParameter.ts:59:20) {
+  [cause]: ConnectTimeoutError: Connect Timeout Error
+      at onConnectTimeout (node:internal/deps/undici/undici:6621:28)
+      at node:internal/deps/undici/undici:6573:50
+      at Immediate._onImmediate (node:internal/deps/undici/undici:6605:13)
+      at process.processImmediate (node:internal/timers:478:21)
+      at process.callbackTrampoline (node:internal/async_hooks:130:17) {
+    code: 'UND_ERR_CONNECT_TIMEOUT'
+  }
+} restarting in 60s */
+    await new Promise(r => setTimeout(r, 1000));
+    result = await makeRequestWithAuth<GetVoltageResponse>(configSignal, {
+      "sn": untrack(config).inverter_sn!,
+      "pn": untrack(config).inverter_pn!,
+      "id": parameter,
+      "devcode": "2454",
+      "i18n": "en_US",
+      "devaddr": "1",
+      "source": "1",
+    });
+  }
   if (result.err || result.dat.id !== parameter + "_read") {
     error(`Failed to get ${parameter} from shinemonitor`, result, "expected id to be");
     throw new Error("Failed to get parameter value from shinemonitor (" + parameter + ")");
