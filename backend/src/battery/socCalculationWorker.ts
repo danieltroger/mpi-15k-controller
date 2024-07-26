@@ -5,38 +5,67 @@ import { createRoot } from "solid-js";
 
 const data: SocWorkerData = workerData;
 
-doWork: {
-  for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += 1) {
-    for (let parasitic = data.endParasitic; parasitic >= data.startParasitic; parasitic -= 1) {
-      const { socSinceFull, socSinceEmpty } = createRoot(dispose => {
-        const result = batteryCalculationsDependingOnUnknowns({
-          now: () => data.now,
-          localPowerHistory: () => data.localPowerHistory,
-          databasePowerValues: () => data.databasePowerValues,
-          totalLastFull: () => data.totalLastFull,
-          totalLastEmpty: () => data.totalLastEmpty,
-          subtractFromPower: () => parasitic,
-          assumedCapacity: () => capacity,
-          createMemo: fn => {
-            // Squeeze some performance by not do owner tracking, etc
-            const val = fn();
-            return () => val;
-          },
+function optimizeCalculation(data: SocWorkerData) {
+  let stepCapacity = Math.max(1, Math.floor((data.endCapacity - data.startCapacity) / 10));
+  let stepParasitic = Math.max(1, Math.floor((data.endParasitic - data.startParasitic) / 10));
+  let bestResult: WorkerResult | null = null;
+
+  while (stepCapacity >= 1 && stepParasitic >= 1) {
+    for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += stepCapacity) {
+      for (let parasitic = data.endParasitic; parasitic >= data.startParasitic; parasitic -= stepParasitic) {
+        const { socSinceFull, socSinceEmpty } = createRoot(dispose => {
+          const result = batteryCalculationsDependingOnUnknowns({
+            now: () => data.now,
+            localPowerHistory: () => data.localPowerHistory,
+            databasePowerValues: () => data.databasePowerValues,
+            totalLastFull: () => data.totalLastFull,
+            totalLastEmpty: () => data.totalLastEmpty,
+            subtractFromPower: () => parasitic,
+            assumedCapacity: () => capacity,
+            createMemo: fn => {
+              const val = fn();
+              return () => val;
+            },
+          });
+          dispose();
+          return result;
         });
-        // We don't want calculateSoc to do any reactive stuff in this case so we just give it its own root and instantly dispose it after the first run, unsure how much overhead this adds
-        dispose();
-        return result;
-      });
-      const sinceFull = socSinceFull();
-      const sinceEmpty = socSinceEmpty();
-      if (sinceEmpty == undefined || sinceFull == undefined) {
-        break doWork;
-      }
-      if (Math.abs(sinceFull - sinceEmpty) < 0.01) {
-        const result: WorkerResult = { capacity, parasitic, sinceEmpty, sinceFull };
-        parentPort!.postMessage(result);
-        break;
+
+        const sinceFull = socSinceFull();
+        const sinceEmpty = socSinceEmpty();
+        if (sinceEmpty == undefined || sinceFull == undefined) {
+          continue;
+        }
+
+        const diff = Math.abs(sinceFull - sinceEmpty);
+        if (diff < 0.01) {
+          const result: WorkerResult = { capacity, parasitic, sinceEmpty, sinceFull };
+          parentPort!.postMessage(result);
+          return; // We found a good enough result, exit early
+        }
+
+        if (!bestResult || diff < Math.abs(bestResult.sinceFull - bestResult.sinceEmpty)) {
+          bestResult = { capacity, parasitic, sinceEmpty, sinceFull };
+        }
       }
     }
+
+    // Refine the steps and search around the best result
+    if (bestResult) {
+      data.startCapacity = Math.max(data.startCapacity, bestResult.capacity - stepCapacity);
+      data.endCapacity = Math.min(data.endCapacity, bestResult.capacity + stepCapacity);
+      data.startParasitic = Math.max(data.startParasitic, bestResult.parasitic - stepParasitic);
+      data.endParasitic = Math.min(data.endParasitic, bestResult.parasitic + stepParasitic);
+    }
+
+    stepCapacity = Math.floor(stepCapacity / 2);
+    stepParasitic = Math.floor(stepParasitic / 2);
+  }
+
+  // If no result is close enough, send the best found
+  if (bestResult) {
+    parentPort!.postMessage(bestResult);
   }
 }
+
+optimizeCalculation(data);
