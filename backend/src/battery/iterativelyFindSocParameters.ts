@@ -40,8 +40,8 @@ export function iterativelyFindSocParameters({
         databasePowerValues() !== undefined &&
         localPowerHistory().length)
   );
-  // Calculate SOC stuff all the time, check every minute essentially if it's time to do it again
-  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60);
+  // Calculate SOC stuff all the time, check every 10 minutes essentially if it's time to do it again
+  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 10);
 
   createEffect(() => {
     if (!hasData()) return;
