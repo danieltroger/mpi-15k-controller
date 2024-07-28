@@ -40,8 +40,8 @@ export function iterativelyFindSocParameters({
         databasePowerValues() !== undefined &&
         localPowerHistory().length)
   );
-  // Calculate SOC stuff all the time, check every 10 minutes essentially if it's time to do it again
-  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 10);
+  // Calculate SOC stuff once an hour because the pi zero has so little ram it gets super slow when we do it
+  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
 
   createEffect(() => {
     if (!hasData()) return;
