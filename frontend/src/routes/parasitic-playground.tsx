@@ -16,6 +16,12 @@ export default function ParasiticPlayground() {
   const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
   const [ac_output_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_output_total_active_power");
   const [ac_input_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_input_total_active_power");
+  const [ac_input_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_r");
+  const [ac_input_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_s");
+  const [ac_input_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_t");
+  const [ac_input_voltage_r] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
+  const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
+  const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
   const solarInput = createMemo(() => (solar_input_power_1()?.value || 0) + (solar_input_power_2()?.value || 0));
   const battery = createMemo(() => {
     const value = currentBatteryPower()?.value;
@@ -108,6 +114,25 @@ export default function ParasiticPlayground() {
             <td>
               {ac_input_total_active_power()?.time && new Date(ac_input_total_active_power()!.time).toLocaleString()}
             </td>
+          </tr>
+          <tr>
+            <td>AC input amperage</td>
+            <td>
+              R:{" "}
+              {Math.round(
+                ((ac_input_active_power_r()?.value as number) / ((ac_input_voltage_r()?.value as number) / 10)) * 10
+              ) / 10}
+              A, S:{" "}
+              {Math.round(
+                ((ac_input_active_power_s()?.value as number) / ((ac_input_voltage_s()?.value as number) / 10)) * 10
+              ) / 10}
+              A, T:{" "}
+              {Math.round(
+                ((ac_input_active_power_t()?.value as number) / ((ac_input_voltage_t()?.value as number) / 10)) * 10
+              ) / 10}
+              A
+            </td>
+            <td>{ac_input_active_power_r()?.time && new Date(ac_input_active_power_r()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Sum</td>
