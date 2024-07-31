@@ -60,14 +60,14 @@ export function useBatteryValues(
     assumedCapacity,
   });
 
-  iterativelyFindSocParameters({
-    totalLastEmpty,
-    totalLastFull,
-    now,
-    localPowerHistory,
-    databasePowerValues,
-    configSignal,
-  });
+  // iterativelyFindSocParameters({
+  //   totalLastEmpty,
+  //   totalLastFull,
+  //   now,
+  //   localPowerHistory,
+  //   databasePowerValues,
+  //   configSignal,
+  // });
 
   const averageSOC = createMemo(() => {
     const sinceFull = socSinceFull();
