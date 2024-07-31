@@ -97,50 +97,52 @@ function main() {
           "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
         );
       }
-      // const isCharging = createMemo(() => {
-      //   if (prematureWorkaroundErrored()) return;
-      //   return catchError(
-      //     () =>
-      //       prematureFloatBugWorkaround({
-      //         mqttValues,
-      //         configSignal: configResourceValue,
-      //         energyRemovedSinceFull,
-      //       }),
-      //     e => {
-      //       setPrematureWorkaroundErrored(true);
-      //       error("Premature float bug workaround errored", e, "restarting in 60s");
-      //       setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
-      //     }
-      //   );
-      // });
+      const isCharging = createMemo(() => {
+        if (prematureWorkaroundErrored()) return;
+        return catchError(
+          () =>
+            prematureFloatBugWorkaround({
+              mqttValues,
+              configSignal: configResourceValue,
+              energyRemovedSinceFull,
+            }),
+          e => {
+            setPrematureWorkaroundErrored(true);
+            error("Premature float bug workaround errored", e, "restarting in 60s");
+            setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
+          }
+        );
+      });
 
-      // createEffect(() => {
-      //   if (feedWhenNoSolarErrored()) return;
-      //   catchError(
-      //     () => {
-      //       const obj = { what: "Initialising", when: +new Date() };
-      //       setLastChangingFeedWhenNoSolarReason(obj);
-      //       setLastFeedWhenNoSolarReason(obj);
-      //       onCleanup(() => {
-      //         const obj = { what: feedWhenNoSolarDead, when: +new Date() };
-      //         setLastChangingFeedWhenNoSolarReason(obj);
-      //         setLastFeedWhenNoSolarReason(obj);
-      //       });
-      //       return feedWhenNoSolar({
-      //         mqttValues: mqttValues,
-      //         configSignal: configResourceValue,
-      //         isCharging: () => isCharging()?.(),
-      //         setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
-      //         setLastReason: setLastFeedWhenNoSolarReason,
-      //       });
-      //     },
-      //     e => {
-      //       setFeedWhenNoSolarErrored(true);
-      //       error("Feed when no solar errored", e, "restarting in 60s");
-      //       setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
-      //     }
-      //   );
-      // });
+      createEffect(() => {
+        if (feedWhenNoSolarErrored()) return;
+        catchError(
+          () => {
+            const obj = { what: "Initialising", when: +new Date() };
+            setLastChangingFeedWhenNoSolarReason(obj);
+            setLastFeedWhenNoSolarReason(obj);
+            onCleanup(() => {
+              const obj = { what: feedWhenNoSolarDead, when: +new Date() };
+              setLastChangingFeedWhenNoSolarReason(obj);
+              setLastFeedWhenNoSolarReason(obj);
+            });
+            return feedWhenNoSolar({
+              mqttValues: mqttValues,
+              configSignal: configResourceValue,
+              isCharging: () => isCharging()?.(),
+              setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
+              setLastReason: setLastFeedWhenNoSolarReason,
+            });
+          },
+          e => {
+            setFeedWhenNoSolarErrored(true);
+            error("Feed when no solar errored", e, "restarting in 60s");
+            setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+          }
+        );
+      });
+
+      return isCharging;
     });
     createResource(() =>
       wsMessaging({
@@ -162,7 +164,7 @@ function main() {
           socSinceFull,
           assumedCapacity,
           assumedParasiticConsumption,
-          isCharging: () => "paused",
+          isCharging: () => isChargingOuterScope()?.()?.(),
           totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
           ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
         },
