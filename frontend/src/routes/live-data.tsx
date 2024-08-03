@@ -1,10 +1,10 @@
 import { Title } from "@solidjs/meta";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
-import "./parasitic-playground.scss";
+import "./live-data.scss";
 import { createMemo } from "solid-js";
 
-export default function ParasiticPlayground() {
+export default function LiveData() {
   const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
   const [battery_voltage] = getBackendSyncedSignal<MqttValue>("battery_voltage");
   const [battery_current] = getBackendSyncedSignal<MqttValue>("battery_current");
@@ -19,6 +19,9 @@ export default function ParasiticPlayground() {
   const [ac_input_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_r");
   const [ac_input_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_s");
   const [ac_input_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_t");
+  const [ac_output_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_r");
+  const [ac_output_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_s");
+  const [ac_output_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_t");
   const [ac_input_voltage_r] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
   const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
   const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
@@ -45,9 +48,9 @@ export default function ParasiticPlayground() {
   });
 
   return (
-    <main class="parasitic-playground">
-      <Title>Parasitic playground</Title>
-      <h1>Parasitic playground</h1>
+    <main class="live-data">
+      <Title>Live data</Title>
+      <h1>Live data</h1>
       <table>
         <thead>
           <tr>
@@ -103,14 +106,20 @@ export default function ParasiticPlayground() {
           </tr>
           <tr>
             <td>AC output power</td>
-            <td>{ac_output() + ""}w</td>
+            <td>
+              {ac_output() + ""}w (R: {ac_output_active_power_r()?.value}w, S: {ac_output_active_power_s()?.value}w, T:{" "}
+              {ac_output_active_power_t()?.value}w)
+            </td>
             <td>
               {ac_output_total_active_power()?.time && new Date(ac_output_total_active_power()!.time).toLocaleString()}
             </td>
           </tr>
           <tr>
             <td>AC input power</td>
-            <td>{ac_input() + ""}w</td>
+            <td>
+              {ac_input() + ""}w (R: {ac_input_active_power_r()?.value as number}w, S:{" "}
+              {ac_input_active_power_s()?.value as number}w, T: {ac_input_active_power_t()?.value as number}w)
+            </td>
             <td>
               {ac_input_total_active_power()?.time && new Date(ac_input_total_active_power()!.time).toLocaleString()}
             </td>
