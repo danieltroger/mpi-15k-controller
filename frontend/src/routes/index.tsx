@@ -34,7 +34,7 @@ export default function Home() {
             <A href="/temperatures">Temperatures</A>
           </li>
           <li>
-            <A href="/parasitic-playground">Parasitic playground</A>
+            <A href="/live-data">Live data</A>
           </li>
         </ol>
       </section>
