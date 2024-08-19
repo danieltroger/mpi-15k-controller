@@ -118,7 +118,11 @@ export default function LiveData() {
             <td>AC input power</td>
             <td>
               {ac_input() + ""}w (R: {ac_input_active_power_r()?.value as number}w, S:{" "}
-              {ac_input_active_power_s()?.value as number}w, T: {ac_input_active_power_t()?.value as number}w)
+              {ac_input_active_power_s()?.value as number}w, T: {ac_input_active_power_t()?.value as number}w ={" "}
+              {Math.abs(ac_input_active_power_r()?.value as number) +
+                Math.abs(ac_input_active_power_s()?.value as number) +
+                Math.abs(ac_input_active_power_t()?.value as number)}
+              w abs)
             </td>
             <td>
               {ac_input_total_active_power()?.time && new Date(ac_input_total_active_power()!.time).toLocaleString()}
