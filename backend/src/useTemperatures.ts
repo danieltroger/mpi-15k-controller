@@ -12,7 +12,7 @@ import { Config } from "./config";
 import { promises as fs } from "fs";
 import { exec } from "./utilities/exec";
 import { log, warn } from "./utilities/logging";
-import { wait } from "@depict-ai/utilishared/latest";
+import { rand, wait } from "@depict-ai/utilishared/latest";
 
 export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
 
@@ -64,9 +64,9 @@ function read_thermometer({
     while (!gotCleanedUp) {
       const fails = untrack(get_fails);
       if (fails > 0) {
-        await wait(1000);
+        await wait(rand(1000, 5000));
       } else if (fails > 10) {
-        await wait(5000);
+        await wait(rand(5000, 10_000));
       }
       try {
         const value = await get_thermometer_value({ thermometer_device_id, label });
@@ -89,7 +89,7 @@ function read_thermometer({
       )}), please implement a way to restart thermometers`
     );
     log("Waiting 60s before resetting, for now");
-    await wait(60_000);
+    await wait(rand(50_000, 80_000));
     log("Resetting thermometer");
     set_fails(0);
   });
