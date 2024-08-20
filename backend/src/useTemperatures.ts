@@ -66,7 +66,7 @@ function read_thermometer({
       if (fails > 0) {
         await wait(rand(1000, 5000));
       } else if (fails > 10) {
-        await wait(rand(5000, 10_000));
+        await wait(rand(10_000, 30_000));
       }
       try {
         const value = await get_thermometer_value({ thermometer_device_id, label });
