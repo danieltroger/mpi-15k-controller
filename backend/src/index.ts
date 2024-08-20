@@ -43,6 +43,7 @@ function main() {
   // TODO: Send SOC in mqtt
   // TODO: when battery completely empty and essentially disconnected for everything except charging, don't count inverter idle consumption as coming from the battery
   // TODO: automatically calculate battery capacity
+  // TODO: when AC output power high/peaks, increase feedWhenNoSolar by like 200w, see http://192.168.1.102:3000/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1724141592000&to=1724143359154
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
