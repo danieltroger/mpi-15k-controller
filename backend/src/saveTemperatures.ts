@@ -30,30 +30,19 @@ export function saveTemperatures({
     },
     children: key => {
       const value_accessor = temperatures()[key];
-      const values = new Set<ThermometerValue>();
-      let values_start = +new Date();
 
       createComputed(() => {
         const thermometer_object = value_accessor();
         if (!thermometer_object) return; // Unsure if this can happen but just in case
-        values.add(thermometer_object);
-        const now = +new Date();
-        if (now - values_start >= untrack(config).temperature_report_interval) {
-          const weighted_average = calculate_weighted_average({ values, now });
-          if (!isNaN(weighted_average)) {
-            // Don't report NaN averages when we got no data for a longer period
-            report_value({
-              averaged_value: weighted_average,
-              label: thermometer_object.label,
-              time: now,
-              file_handle,
-              mqttClient,
-              table: untrack(config).temperature_saving.table,
-              database: untrack(config).temperature_saving.database,
-            }).catch(e => error("Couldn't write averaged temperature value to log/mqtt", e));
-          }
-          values_start = now;
-        }
+        report_value({
+          averaged_value: thermometer_object.value,
+          label: thermometer_object.label,
+          time: thermometer_object.time,
+          file_handle,
+          mqttClient,
+          table: untrack(config).temperature_saving.table,
+          database: untrack(config).temperature_saving.database,
+        }).catch(e => error("Couldn't write averaged temperature value to log/mqtt", e));
       });
 
       return undefined;
@@ -101,20 +90,4 @@ async function report_value({
     await handle.write(database_import_file_header);
   }
   await handle.write(`${influx_entry} ${Math.round(time / 1000)}\n`);
-}
-
-function calculate_weighted_average({ values, now }: { values: Set<ThermometerValue>; now: number }) {
-  const values_as_array = [...values];
-  let weighted_sum = 0;
-  let duration_sum = 0;
-  for (let i = 0; i < values_as_array.length; i++) {
-    const this_value = values_as_array[i];
-    const next_value = values_as_array[i + 1] as ThermometerValue | undefined;
-    const duration_of_value = (next_value?.time ?? now) - this_value.time;
-    weighted_sum += duration_of_value * this_value.value;
-    duration_sum += duration_of_value;
-  }
-  values.clear();
-  const weighted_average = weighted_sum / duration_sum;
-  return weighted_average;
 }
