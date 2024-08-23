@@ -148,7 +148,12 @@ export async function get_config_object(owner: Owner) {
         clearTimeout(config_writing_debounce);
         setTimeout(async () => {
           try {
-            await fs_promises.writeFile(config_file_name, new_config, { encoding: "utf-8" });
+            const backup_file_name = `${path.dirname(process.argv[1])}/../config_pre_${new Date().toISOString()}.backup.json`;
+            await Promise.all([
+              current_config_file_value &&
+                fs_promises.writeFile(backup_file_name, current_config_file_value, { encoding: "utf-8" }),
+              fs_promises.writeFile(config_file_name, new_config, { encoding: "utf-8" }),
+            ]);
             current_config_file_value = new_config;
           } catch (e) {
             error("Error writing config", e);
