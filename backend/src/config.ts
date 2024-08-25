@@ -82,7 +82,13 @@ export type Config = {
 };
 
 const default_config: Config = {
-  scheduled_power_selling: { schedule: [], only_sell_above_soc: 25 },
+  scheduled_power_selling: {
+    schedule: [
+      { "start_time": "2024-08-25T21:58:00+02:00", "end_time": "2024-08-25T22:01:00+02:00", "power_watts": 1000 },
+      { "start_time": "2024-08-25T22:00:00+02:00", "end_time": "2024-08-25T22:02:00+02:00", "power_watts": 1500 },
+    ],
+    only_sell_above_soc: 25,
+  },
   elpatron_switching: {
     enabled: false,
     min_solar_input: 6000,
