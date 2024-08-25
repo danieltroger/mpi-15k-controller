@@ -1,7 +1,7 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useNow } from "../utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
-import { createMemo, createSignal, Resource, untrack } from "solid-js";
+import { createMemo, createSignal, getOwner, Resource, runWithOwner, untrack } from "solid-js";
 import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
@@ -60,14 +60,23 @@ export function useBatteryValues(
     assumedCapacity,
   });
 
-  iterativelyFindSocParameters({
-    totalLastEmpty,
-    totalLastFull,
-    now,
-    localPowerHistory,
-    databasePowerValues,
-    configSignal,
-  });
+  const owner = getOwner();
+
+  setTimeout(
+    () =>
+      runWithOwner(owner, () =>
+        iterativelyFindSocParameters({
+          totalLastEmpty,
+          totalLastFull,
+          now,
+          localPowerHistory,
+          databasePowerValues,
+          configSignal,
+        })
+      ),
+    // Start CPU intensive shit after 10 minutes so when dev:ing we get fast responses
+    60_000 * 10
+  );
 
   const averageSOC = createMemo(() => {
     const sinceFull = socSinceFull();
