@@ -15,6 +15,13 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
           const now = +new Date();
           const start = memoizedStart();
           const end = memoizedEnd();
+          const setEndTimeout = () => {
+            const endTimeout = setTimeout(() => setWantedOutput(() => () => 0), end - now);
+            onCleanup(() => {
+              console.log("deleting end timeout");
+              clearTimeout(endTimeout);
+            });
+          };
 
           console.log("effect run for now", now, "start", start, "end", end);
 
@@ -22,16 +29,16 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
           if (start <= now && now <= end) {
             console.log("In feeding timeslot, starting directly");
             setWantedOutput(() => () => schedule().power_watts);
+            setEndTimeout();
           } else if (start > now) {
             // If schedule item starts in the future, set timeout for both start and end
             console.log("scheduling start timer in", start - now, "and end timer in", end - now);
             const startTimeout = setTimeout(() => setWantedOutput(() => () => schedule().power_watts), start - now);
-            const endTimeout = setTimeout(() => setWantedOutput(() => () => 0), end - now);
+            setEndTimeout();
 
             onCleanup(() => {
-              console.log("deleting timeout");
+              console.log("deleting start timeout");
               clearTimeout(startTimeout);
-              clearTimeout(endTimeout);
             });
           }
 
@@ -51,11 +58,6 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
     if (soc > onlySellAboveSoc) {
       // return the maximum value of all schedule items
-      console.log(
-        "are above SOC, signal value",
-        scheduleOutput(),
-        scheduleOutput().map(schedule => schedule()())
-      );
       const result = Math.max(...scheduleOutput().map(schedule => schedule()()));
       if (Math.abs(result) === Infinity) {
         return 0;
@@ -65,7 +67,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     return 0;
   });
 
-  createEffect(() => log("exportAmountForSelling", exportAmountForSelling()));
+  createEffect(() => log("Starting to feed in " + exportAmountForSelling() + "watts due to scheduled power selling"));
 
   return { exportAmountForSelling };
 }
