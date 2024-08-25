@@ -56,7 +56,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
 
   createEffect(
     () =>
-      exportAmountForSelling() &&
+      exportAmountForSelling() !== undefined &&
       log("Feed in due to scheduled power selling wants to feed in " + exportAmountForSelling() + "watts")
   );
 
