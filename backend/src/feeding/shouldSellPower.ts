@@ -43,7 +43,10 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
     if (soc > onlySellAboveSoc) {
       // return the maximum value of all schedule items
-      return Math.max(...scheduleOutput().map(schedule => schedule()()));
+      const result = Math.max(...scheduleOutput().map(schedule => schedule()()));
+      if (Math.abs(result) === Infinity) {
+        return 0;
+      }
     }
     return 0;
   });
