@@ -16,10 +16,11 @@ import { wsMessaging } from "./wsMessaging";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./useTemperatures";
 import { saveTemperatures } from "./saveTemperatures";
-import { feedWhenNoSolar } from "./feedWhenNoSolar";
+import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar";
 import { useBatteryValues } from "./battery/useBatteryValues";
 import { mqttValueKeys } from "./sharedTypes";
 import { elpatronSwitching } from "./elpatronSwitching";
+import { shouldSellPower } from "./feeding/shouldSellPower";
 
 while (true) {
   await new Promise<void>(r => {
@@ -83,6 +84,7 @@ function main() {
       socSinceFull,
       assumedParasiticConsumption,
       assumedCapacity,
+      averageSOC,
     } = useBatteryValues(mqttValues, configResourceValue, mqttClient);
     const temperatures = useTemperatures(config);
 
@@ -98,6 +100,7 @@ function main() {
           "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
         );
       }
+      const { exportAmountForSelling } = shouldSellPower(config, averageSOC);
       const isCharging = createMemo(() => {
         if (prematureWorkaroundErrored()) return;
         return catchError(
@@ -133,6 +136,7 @@ function main() {
               isCharging: () => isCharging()?.(),
               setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
               setLastReason: setLastFeedWhenNoSolarReason,
+              exportAmountForSelling,
             });
           },
           e => {
