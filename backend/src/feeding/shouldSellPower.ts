@@ -60,6 +60,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
       if (Math.abs(result) === Infinity) {
         return 0;
       }
+      return result;
     }
     return 0;
   });
