@@ -100,5 +100,6 @@ export function useBatteryValues(
     socSinceFull,
     assumedCapacity,
     assumedParasiticConsumption,
+    averageSOC,
   };
 }

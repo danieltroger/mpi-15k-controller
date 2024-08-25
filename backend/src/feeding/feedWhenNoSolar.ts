@@ -1,11 +1,11 @@
-import { useMQTTValues } from "./useMQTTValues";
-import { get_config_object } from "./config";
+import { useMQTTValues } from "../useMQTTValues";
+import { get_config_object } from "../config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { useShinemonitorParameter } from "./useShinemonitorParameter";
-import { error, log } from "./utilities/logging";
-import { useNow } from "./utilities/useNow";
+import { useShinemonitorParameter } from "../useShinemonitorParameter";
+import { error, log } from "../utilities/logging";
+import { useNow } from "../utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
-import { totalSolarPower } from "./utilities/totalSolarPower";
+import { totalSolarPower } from "../utilities/totalSolarPower";
 import { appendFile } from "fs/promises";
 
 /**
@@ -17,12 +17,14 @@ export function feedWhenNoSolar({
   isCharging,
   setLastReason,
   setLastChangingReason,
+  exportAmountForSelling,
 }: {
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
   setLastReason: Setter<{ what: string; when: number }>;
   setLastChangingReason: Setter<{ what: string; when: number }>;
+  exportAmountForSelling: Accessor<number | undefined>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
@@ -79,6 +81,11 @@ export function feedWhenNoSolar({
       setLastReason({ what: `shouldEnableFeeding currently wants to be ${what} because ${reason}`, when: +new Date() });
       return what;
     };
+    // If we should feed in, ignore throttling and just do it
+    const exportAmount = exportAmountForSelling();
+    if (exportAmount) {
+      return doWithReason(true, `exportAmountForSelling is ${exportAmount}`);
+    }
     const timeSinceLastChange = now() - lastChange;
     const minTimePassed = 1000 * 60 * 3;
     if (timeSinceLastChange < minTimePassed && prev !== undefined) {
@@ -235,7 +242,7 @@ export function feedWhenNoSolar({
   createEffect(() => {
     const shouldEnable = shouldEnableFeeding();
     const currentDebouncedValue = untrack(debouncedShouldEnableFeeding);
-    if (currentDebouncedValue === undefined) {
+    if (currentDebouncedValue === undefined || untrack(exportAmountForSelling)) {
       setDebouncedShouldEnableFeeding(shouldEnable);
       return;
     }

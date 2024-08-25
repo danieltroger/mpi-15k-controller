@@ -5,6 +5,14 @@ import process from "process";
 import { error, log } from "./utilities/logging";
 
 export type Config = {
+  scheduled_power_selling: {
+    schedule: {
+      start_time: string;
+      end_time: string;
+      power_watts: number;
+    }[];
+    only_sell_above_soc: number;
+  };
   influxdb?: {
     host: string;
     database: string;
@@ -74,6 +82,7 @@ export type Config = {
 };
 
 const default_config: Config = {
+  scheduled_power_selling: { schedule: [], only_sell_above_soc: 25 },
   elpatron_switching: {
     enabled: false,
     min_solar_input: 6000,
