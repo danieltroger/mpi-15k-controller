@@ -16,6 +16,8 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
           const start = memoizedStart();
           const end = memoizedEnd();
 
+          console.log("effect run for now", now, "start", start, "end", end);
+
           // If already in the timeslot, set feeding directly
           if (start <= now && now <= end) {
             console.log("In feeding timeslot, starting directly");
