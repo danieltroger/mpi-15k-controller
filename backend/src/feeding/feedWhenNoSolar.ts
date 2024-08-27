@@ -204,13 +204,13 @@ export function feedWhenNoSolar({
       wantedToCurrentTransformerForDiffing,
     });
 
-  const feedWhenForceFeedingAmount: Accessor<string> = createMemo(() => {
+  const feedWhenForceFeedingAmount: Accessor<number> = createMemo(() => {
     const { feed_amount_watts } = config().feed_from_battery_when_no_solar;
     const toExport = exportAmountForSelling();
     if (toExport) {
-      return Math.max(feed_amount_watts, toExport).toFixed(0);
+      return Math.max(feed_amount_watts, toExport);
     }
-    return feed_amount_watts.toFixed(0);
+    return feed_amount_watts;
   });
 
   debugLog(`feedWhenNoSolar started`);
@@ -236,8 +236,8 @@ export function feedWhenNoSolar({
         ]
       }
        */
-      console.log("comparing", currentShineMaxFeedInPower(), "and", feedWhenForceFeedingAmount());
-      if (currentShineMaxFeedInPower() === feedWhenForceFeedingAmount()) {
+      const currentlySetTo = currentShineMaxFeedInPower();
+      if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
         setWantedBatteryToUtilityWhenNoSolar("49");
         setWantedBatteryToUtilityWhenSolar("49");
@@ -273,11 +273,8 @@ export function feedWhenNoSolar({
         return;
       }
     }
-    if (shouldFeed) {
-      setWantedMaxFeedInPower(feedWhenForceFeedingAmount());
-      return;
-    }
-    setWantedMaxFeedInPower(max_feed_in_power_when_feeding_from_solar.toFixed(0));
+    const target = shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar;
+    setWantedMaxFeedInPower(target.toFixed(0));
   });
 
   createEffect(
