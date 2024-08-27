@@ -1,5 +1,5 @@
 import { promises as fs_promises } from "fs";
-import { createEffect, createSignal, Owner, runWithOwner, Signal, untrack } from "solid-js";
+import { batch, createEffect, createSignal, Owner, runWithOwner, Signal, untrack } from "solid-js";
 import path from "path";
 import process from "process";
 import { error, log } from "./utilities/logging";
@@ -182,7 +182,9 @@ export async function get_config_object(owner: Owner) {
     get_config,
     (new_value_or_setter: Config | ((prev: Config) => Config)) => {
       const set = (new_value: Config) => {
-        set_actual_config({ ...default_config, ...new_value }); // So that users can't accidentally delete keys
+        // So that users can't accidentally delete keys
+        // Use batch so that if two values update we don't run effects for both updates
+        batch(() => set_actual_config({ ...default_config, ...new_value }));
       };
       if (typeof new_value_or_setter === "function") {
         set(new_value_or_setter(untrack(get_config)));
