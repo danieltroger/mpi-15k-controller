@@ -227,7 +227,9 @@ export function feedWhenNoSolar({
         ]
       }
        */
-      if (currentShineMaxFeedInPower() === config().feed_from_battery_when_no_solar.feed_amount_watts.toFixed(1)) {
+      const wantToFeedWith =
+        exportAmountForSelling() || config().feed_from_battery_when_no_solar.feed_amount_watts.toFixed(1);
+      if (currentShineMaxFeedInPower() === wantToFeedWith) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
         setWantedBatteryToUtilityWhenNoSolar("49");
         setWantedBatteryToUtilityWhenSolar("49");
