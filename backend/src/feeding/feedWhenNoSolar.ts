@@ -243,7 +243,6 @@ export function feedWhenNoSolar({
     const shouldEnable = shouldEnableFeeding();
     const currentDebouncedValue = untrack(debouncedShouldEnableFeeding);
     if (currentDebouncedValue === undefined || untrack(exportAmountForSelling)) {
-      console.log("instant calling setDebouncedShouldEnableFeeding with", shouldEnable);
       setDebouncedShouldEnableFeeding(shouldEnable);
       return;
     }
@@ -275,7 +274,6 @@ export function feedWhenNoSolar({
       currentShineMaxFeedInPower() &&
       log("Got confirmed from shinemonitor that the current max feed in power is", currentShineMaxFeedInPower())
   );
-  createEffect(() => log("debouncedShouldEnableFeeding", debouncedShouldEnableFeeding()));
   createEffect(
     () =>
       currentBatteryToUtilityWhenNoSolar() &&
