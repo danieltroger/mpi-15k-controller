@@ -236,6 +236,7 @@ export function feedWhenNoSolar({
         ]
       }
        */
+      console.log("comparing", currentShineMaxFeedInPower(), "and", feedWhenForceFeedingAmount());
       if (currentShineMaxFeedInPower() === feedWhenForceFeedingAmount()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
         setWantedBatteryToUtilityWhenNoSolar("49");
@@ -274,6 +275,7 @@ export function feedWhenNoSolar({
     }
     if (shouldFeed) {
       setWantedMaxFeedInPower(feedWhenForceFeedingAmount());
+      return;
     }
     setWantedMaxFeedInPower(max_feed_in_power_when_feeding_from_solar.toFixed(0));
   });
