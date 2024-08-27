@@ -204,6 +204,15 @@ export function feedWhenNoSolar({
       wantedToCurrentTransformerForDiffing,
     });
 
+  const feedWhenForceFeedingAmount: Accessor<string> = createMemo(() => {
+    const { feed_amount_watts } = config().feed_from_battery_when_no_solar;
+    const toExport = exportAmountForSelling();
+    if (toExport) {
+      return Math.max(feed_amount_watts, toExport).toFixed(0);
+    }
+    return feed_amount_watts.toFixed(0);
+  });
+
   debugLog(`feedWhenNoSolar started`);
   onCleanup(() => debugLog(`feedWhenNoSolar terminated (cleaned up)`));
 
@@ -227,9 +236,7 @@ export function feedWhenNoSolar({
         ]
       }
        */
-      const wantToFeedWith =
-        exportAmountForSelling() || config().feed_from_battery_when_no_solar.feed_amount_watts.toFixed(1);
-      if (currentShineMaxFeedInPower() === wantToFeedWith) {
+      if (currentShineMaxFeedInPower() === feedWhenForceFeedingAmount()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
         setWantedBatteryToUtilityWhenNoSolar("49");
         setWantedBatteryToUtilityWhenSolar("49");
@@ -256,10 +263,8 @@ export function feedWhenNoSolar({
   });
 
   createEffect(() => {
-    const { max_feed_in_power_when_feeding_from_solar, feed_amount_watts } = config().feed_from_battery_when_no_solar;
+    const { max_feed_in_power_when_feeding_from_solar } = config().feed_from_battery_when_no_solar;
     const shouldFeed = debouncedShouldEnableFeeding();
-    const toExport = exportAmountForSelling();
-    const feedWhenForceFeedingAmount = toExport ? Math.max(feed_amount_watts, toExport) : feed_amount_watts;
     if (shouldFeed == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
@@ -267,8 +272,10 @@ export function feedWhenNoSolar({
         return;
       }
     }
-    const target = shouldFeed ? feedWhenForceFeedingAmount : max_feed_in_power_when_feeding_from_solar;
-    setWantedMaxFeedInPower(target.toFixed(0));
+    if (shouldFeed) {
+      setWantedMaxFeedInPower(feedWhenForceFeedingAmount());
+    }
+    setWantedMaxFeedInPower(max_feed_in_power_when_feeding_from_solar.toFixed(0));
   });
 
   createEffect(
