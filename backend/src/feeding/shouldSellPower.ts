@@ -1,6 +1,12 @@
 import { Accessor, createEffect, createMemo, createSignal, indexArray, onCleanup } from "solid-js";
 import { Config } from "../config";
 import { log } from "../utilities/logging";
+import { catchify } from "@depict-ai/utilishared/latest";
+
+const timeoutBatches = new Map<
+  number,
+  { first: Set<VoidFunction>; last: Set<VoidFunction>; timeout: ReturnType<typeof setTimeout> }
+>();
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(
@@ -15,10 +21,8 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
           const now = +new Date();
           const start = memoizedStart();
           const end = memoizedEnd();
-          const setEndTimeout = () => {
-            const endTimeout = setTimeout(() => setWantedOutput(() => () => 0), end - now);
-            onCleanup(() => clearTimeout(endTimeout));
-          };
+          const setEndTimeout = () =>
+            batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => 0), end, false);
 
           // If already in the timeslot, set feeding directly
           if (start <= now && now <= end) {
@@ -26,10 +30,8 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
             setEndTimeout();
           } else if (start > now) {
             // If schedule item starts in the future, set timeout for both start and end
-            const startTimeout = setTimeout(() => setWantedOutput(() => () => schedule().power_watts), start - now);
+            batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => schedule().power_watts), start, true);
             setEndTimeout();
-
-            onCleanup(() => clearTimeout(startTimeout));
           }
 
           onCleanup(() => setWantedOutput(() => () => 0));
@@ -63,4 +65,51 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
   createEffect(() => log("Feed in due to scheduled power selling wants to feed in", exportAmountForSelling(), "watts"));
 
   return { exportAmountForSelling };
+}
+
+/**
+ * Function that runs a function at a future time with the option to prioritize it over other, non-prioritized functions scheduled at the same time.
+ * The idea is that we want to always start feeding before we stop feeding, to avoid momentarily feeding 0 which re-starts the slow rampup of the inverter.
+ */
+function batchedRunAtFutureTimeWithPriority(fn: VoidFunction, when: number, prioritised: boolean) {
+  const existing = timeoutBatches.get(when);
+  const { first, last } = existing || { first: new Set<VoidFunction>(), last: new Set<VoidFunction>() };
+  if (!existing) {
+    const now = +new Date();
+    const timeUntil = when - now;
+    const timeout = setTimeout(
+      catchify(() => {
+        for (const fn of first) {
+          fn();
+        }
+        for (const fn of last) {
+          fn();
+        }
+        timeoutBatches.delete(when);
+      }),
+      timeUntil
+    );
+    timeoutBatches.set(when, { first, last, timeout });
+  }
+
+  const unsetTimeoutWhenEmpty = () => {
+    if (first.size !== 0 || last.size !== 0) return;
+    const timeoutToClear = timeoutBatches.get(when)?.timeout;
+    if (timeoutToClear == undefined) return;
+    clearTimeout(timeoutToClear);
+    timeoutBatches.delete(when);
+  };
+  if (prioritised) {
+    first.add(fn);
+    onCleanup(() => {
+      first.delete(fn);
+      unsetTimeoutWhenEmpty();
+    });
+  } else {
+    last.add(fn);
+    onCleanup(() => {
+      last.delete(fn);
+      unsetTimeoutWhenEmpty();
+    });
+  }
 }
