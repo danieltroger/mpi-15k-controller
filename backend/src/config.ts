@@ -12,6 +12,7 @@ export type Config = {
       power_watts: number;
     }[];
     only_sell_above_soc: number;
+    start_selling_again_above_soc: number;
   };
   influxdb?: {
     host: string;
@@ -87,7 +88,8 @@ const default_config: Config = {
       { "start_time": "2024-08-25T21:58:00+02:00", "end_time": "2024-08-25T22:01:00+02:00", "power_watts": 1000 },
       { "start_time": "2024-08-25T22:00:00+02:00", "end_time": "2024-08-25T22:02:00+02:00", "power_watts": 1500 },
     ],
-    only_sell_above_soc: 25,
+    only_sell_above_soc: 13,
+    start_selling_again_above_soc: 25,
   },
   elpatron_switching: {
     enabled: false,
