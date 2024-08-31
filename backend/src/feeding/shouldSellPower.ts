@@ -39,11 +39,16 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     )
   );
 
+  let hitSOCLimit = false;
+
   const exportAmountForSelling = createMemo(() => {
     const soc = averageSOC();
     if (soc === undefined) return;
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
-    if (soc > onlySellAboveSoc) {
+    const startSellingAgainAboveSoc = config().scheduled_power_selling.start_selling_again_above_soc;
+    const limitToUse = hitSOCLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
+    if (soc > limitToUse) {
+      hitSOCLimit = false;
       // return the maximum value of all schedule items
       const result = Math.max(...scheduleOutput().map(schedule => schedule()()));
       if (Math.abs(result) === Infinity) {
@@ -51,6 +56,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
       }
       return result;
     }
+    hitSOCLimit = true;
     return 0;
   });
 
