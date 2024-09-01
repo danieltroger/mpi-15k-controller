@@ -1,4 +1,4 @@
-import { Accessor, createMemo as solidCreateMemo } from "solid-js";
+import { Accessor, createMemo, createMemo as solidCreateMemo } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 
@@ -9,7 +9,6 @@ export function batteryCalculationsDependingOnUnknowns({
   totalLastEmpty,
   subtractFromPower,
   assumedCapacity,
-  createMemo = solidCreateMemo,
 }: {
   currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
@@ -17,47 +16,27 @@ export function batteryCalculationsDependingOnUnknowns({
   totalLastFull: Accessor<number | undefined>;
   subtractFromPower: Accessor<number>;
   assumedCapacity: Accessor<number>;
-  createMemo?: typeof solidCreateMemo;
 }) {
-  const {
-    energyDischarged: energyDischargedSinceEmpty,
-    energyCharged: energyChargedSinceEmpty,
-    energyDischargedWithoutParasitic: energyDischargedSinceEmptyWithoutParasitic,
-    energyChargedWithoutParasitic: energyChargedSinceEmptyWithoutParasitic,
-  } = calculateBatteryEnergy({
-    currentPower,
-    databasePowerValues,
-    from: totalLastEmpty,
-    subtractFromPower,
-    createMemo,
-  });
-  const {
-    energyDischarged: energyDischargedSinceFull,
-    energyCharged: energyChargedSinceFull,
-    energyDischargedWithoutParasitic: energyDischargedSinceFullWithoutParasitic,
-    energyChargedWithoutParasitic: energyChargedSinceFullWithoutParasitic,
-  } = calculateBatteryEnergy({
+  const { energy: energyAddedSinceEmpty, energyWithoutParasitic: energyWithoutParasiticSinceEmpty } =
+    calculateBatteryEnergy({
+      currentPower,
+      databasePowerValues,
+      from: totalLastEmpty,
+      subtractFromPower,
+    });
+  const { energy: energySinceFull, energyWithoutParasitic: energyWithoutParasiticSinceFull } = calculateBatteryEnergy({
     currentPower,
     databasePowerValues,
     from: totalLastFull,
     subtractFromPower,
-    createMemo,
   });
 
   // 1000wh = 1000wh were discharged
   // -100wh = 100wh were charged
   const energyRemovedSinceFull = createMemo(() => {
-    const discharged = energyDischargedSinceFull();
-    const charged = energyChargedSinceFull();
-    if (charged == undefined || discharged == undefined) return undefined;
-    return Math.abs(discharged) - Math.abs(charged);
-  });
-
-  const energyAddedSinceEmpty = createMemo(() => {
-    const discharged = energyDischargedSinceEmpty();
-    const charged = energyChargedSinceEmpty();
-    if (charged == undefined || discharged == undefined) return undefined;
-    return Math.abs(charged) - Math.abs(discharged);
+    const sinceFull = energySinceFull();
+    if (sinceFull == undefined) return;
+    return sinceFull * -1;
   });
 
   const socSinceFull = createMemo(() => {
@@ -72,17 +51,11 @@ export function batteryCalculationsDependingOnUnknowns({
   });
 
   return {
-    energyChargedSinceFull,
-    energyChargedSinceEmpty,
-    energyDischargedSinceEmpty,
-    energyDischargedSinceFull,
     energyRemovedSinceFull,
     energyAddedSinceEmpty,
     socSinceEmpty,
     socSinceFull,
-    energyDischargedSinceEmptyWithoutParasitic,
-    energyChargedSinceEmptyWithoutParasitic,
-    energyDischargedSinceFullWithoutParasitic,
-    energyChargedSinceFullWithoutParasitic,
+    energyWithoutParasiticSinceEmpty,
+    energyWithoutParasiticSinceFull,
   };
 }

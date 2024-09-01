@@ -1,4 +1,4 @@
-import { Accessor, batch, createEffect, createMemo as solidCreateMemo, createSignal } from "solid-js";
+import { Accessor, createEffect, createMemo, createMemo as solidCreateMemo, createSignal } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { useNow } from "../utilities/useNow";
 
@@ -7,7 +7,6 @@ export function calculateBatteryEnergy({
   databasePowerValues,
   currentPower,
   subtractFromPower,
-  createMemo,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -16,7 +15,6 @@ export function calculateBatteryEnergy({
   currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
-  createMemo: typeof solidCreateMemo;
 }) {
   // Calculate from database values how much energy was charged and discharged before the application start
   const databaseEnergy = createMemo(() => {
@@ -24,8 +22,7 @@ export function calculateBatteryEnergy({
     const allDbValues = databasePowerValues();
     if (!fromValue || !allDbValues?.length) return; // Wait for data
     const powerValues = allDbValues.filter(({ time }) => time >= fromValue);
-    let databaseEnergyCharged = 0;
-    let databaseEnergyDischarged = 0;
+    let databaseEnergy = 0;
     for (let i = 0; i < powerValues.length; i++) {
       const power = powerValues[i];
       const nextPower = powerValues[i + 1];
@@ -33,22 +30,25 @@ export function calculateBatteryEnergy({
       const powerValue = power.value;
       const timeDiff = nextPower.time - power.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      if (powerValue > 0) {
-        databaseEnergyCharged += energy;
-      } else if (powerValue < 0) {
-        databaseEnergyDischarged += energy;
-      }
+      databaseEnergy += energy;
     }
-    return { databaseEnergyCharged, databaseEnergyDischarged };
+    return databaseEnergy;
   });
 
-  const [totalEnergyCharged, setTotalEnergyCharged] = createSignal<number | undefined>();
-  const [totalEnergyDischarged, setTotalEnergyDischarged] = createSignal<number | undefined>();
+  const [totalEnergy, setTotalEnergy] = createSignal<number | undefined>();
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
 
-  let localEnergyCharged = 0;
-  let localEnergyDischarged = 0;
+  let localEnergy = 0;
   let lastPowerValue: { value: number; time: number } | undefined;
+
+  // Every time from changes, assume we've reached a full/empty event and reset the local energy
+  // This is because we don't know anymore from when our energy values are
+  // But the "from" shouldn't change in any other situation (except application init but we ignore when it's undefined)
+  createEffect(() => {
+    const start = from();
+    if (!start) return;
+    localEnergy = 0;
+  });
 
   // Only keep a variable that we modify for the energy being charged/discharged while the program runs, for efficiency. This updates it
   createEffect(() => {
@@ -58,66 +58,38 @@ export function calculateBatteryEnergy({
       const powerValue = lastPowerValue.value;
       const timeDiff = currentPowerValue.time - lastPowerValue.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      if (powerValue > 0) {
-        localEnergyCharged += energy;
-      } else if (powerValue < 0) {
-        localEnergyDischarged += energy;
-      }
+      localEnergy += energy;
     }
     lastPowerValue = currentPowerValue;
     setSumEnergyToggle(prev => !prev);
   });
 
-  // Every time from changes, assume we've reached a full/empty event and reset the local energy
-  // This is because we don't know anymore from when our energy values are
-  // But the "from" shouldn't change in any other situation (except application init but we ignore when it's undefined)
-  createEffect(() => {
-    const start = from();
-    if (!start) return;
-    localEnergyCharged = 0;
-    localEnergyDischarged = 0;
-  });
-
   // When anything changes, sum up the energy from database and local
   createEffect(() => {
     sumEnergyToggle();
-    const databaseValues = databaseEnergy();
-    if (!databaseValues) return;
-    const { databaseEnergyCharged, databaseEnergyDischarged } = databaseValues;
-    const totalCharged = databaseEnergyCharged + localEnergyCharged;
-    const totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
-
-    batch(() => {
-      setTotalEnergyCharged(totalCharged);
-      setTotalEnergyDischarged(totalDischarged);
-    });
+    const databaseValue = databaseEnergy();
+    if (databaseValue == undefined) return;
+    setTotalEnergy(databaseValue + localEnergy);
   });
 
-  const energyToSubtract = createMemo(() => {
-    const now = useNow();
-    const start = from();
-    if (!start) return;
-    const powerToSubtract = subtractFromPower();
-    // Calculate the amount of energy to subtract from "from" to "now" due to parasitic consumption and subtract it
-    const timeDiff = now - start;
-
-    return (powerToSubtract * timeDiff) / 1000 / 60 / 60;
-  });
+  const energyToSubtract = createMemo(() => calculateEnergyToSubtract(from(), useNow(), subtractFromPower()));
 
   return {
-    energyChargedWithoutParasitic: totalEnergyCharged,
-    energyDischargedWithoutParasitic: totalEnergyDischarged,
-    energyCharged: createMemo(() => {
-      const totalCharged = totalEnergyCharged();
+    energyWithoutParasitic: totalEnergy,
+    energy: createMemo(() => {
+      const totalCharged = totalEnergy();
       const toSubtract = energyToSubtract();
       if (totalCharged == undefined || toSubtract == undefined) return;
       return totalCharged - toSubtract;
     }),
-    energyDischarged: createMemo(() => {
-      const totalDischarged = totalEnergyDischarged();
-      const toSubtract = energyToSubtract();
-      if (totalDischarged == undefined || toSubtract == undefined) return;
-      return totalDischarged - toSubtract;
-    }),
   };
+}
+
+/**
+ * Calculate the amount of energy to subtract from "from" to "now" due to parasitic consumption
+ */
+export function calculateEnergyToSubtract(from: number | undefined, now: number, powerToSubtract: number) {
+  if (!from) return;
+  const timeDiff = now - from;
+  return (powerToSubtract * timeDiff) / 1000 / 60 / 60;
 }

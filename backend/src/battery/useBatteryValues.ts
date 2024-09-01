@@ -39,17 +39,11 @@ export function useBatteryValues(
 
   const {
     energyAddedSinceEmpty,
-    energyChargedSinceEmpty,
-    energyDischargedSinceEmpty,
-    energyDischargedSinceFull,
     energyRemovedSinceFull,
-    energyChargedSinceFull,
     socSinceFull,
     socSinceEmpty,
-    energyDischargedSinceFullWithoutParasitic,
-    energyChargedSinceEmptyWithoutParasitic,
-    energyChargedSinceFullWithoutParasitic,
-    energyDischargedSinceEmptyWithoutParasitic,
+    energyWithoutParasiticSinceEmpty,
+    energyWithoutParasiticSinceFull,
   } = batteryCalculationsDependingOnUnknowns({
     databasePowerValues,
     totalLastFull,
@@ -63,10 +57,8 @@ export function useBatteryValues(
     totalLastEmpty,
     totalLastFull,
     configSignal,
-    energyDischargedSinceFullWithoutParasitic,
-    energyChargedSinceEmptyWithoutParasitic,
-    energyChargedSinceFullWithoutParasitic,
-    energyDischargedSinceEmptyWithoutParasitic,
+    energyWithoutParasiticSinceEmpty,
+    energyWithoutParasiticSinceFull,
   });
 
   const averageSOC = createMemo(() => {
@@ -87,10 +79,6 @@ export function useBatteryValues(
   });
 
   return {
-    energyChargedSinceFull,
-    energyChargedSinceEmpty,
-    energyDischargedSinceEmpty,
-    energyDischargedSinceFull,
     currentPower,
     totalLastEmpty,
     totalLastFull,
