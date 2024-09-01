@@ -7,6 +7,7 @@ export type SocWorkerData = {
   energyChargedSinceEmptyWithoutParasitic: number;
   energyChargedSinceFullWithoutParasitic: number;
   energyDischargedSinceEmptyWithoutParasitic: number;
+  now: number;
 };
 
 export type WorkerResult = {

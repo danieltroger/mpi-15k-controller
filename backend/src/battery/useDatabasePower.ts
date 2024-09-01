@@ -6,7 +6,6 @@ import { useNow } from "../utilities/useNow";
 import { powerValuesNotInDb } from "./powerValuesNotInDb";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
-  const currentTime = useNow();
   const host = createMemo(() => config()?.influxdb?.host);
   const database = createMemo(() => config()?.influxdb?.database);
   const username = createMemo(() => config()?.influxdb?.username);
@@ -27,8 +26,8 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     });
   });
   const lastTimeItWasMidnight = createMemo(() => {
-    const currentTimeValue = currentTime();
-    const date = new Date(currentTimeValue);
+    const currentTime = useNow();
+    const date = new Date(currentTime);
     date.setHours(0, 0, 0, 0);
     return +date;
   });

@@ -45,7 +45,6 @@ export function calculateBatteryEnergy({
   const [totalEnergyCharged, setTotalEnergyCharged] = createSignal<number | undefined>();
   const [totalEnergyDischarged, setTotalEnergyDischarged] = createSignal<number | undefined>();
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
-  const getNow = useNow();
 
   let localEnergyCharged = 0;
   let localEnergyDischarged = 0;
@@ -95,7 +94,7 @@ export function calculateBatteryEnergy({
   });
 
   const energyToSubtract = createMemo(() => {
-    const now = getNow();
+    const now = useNow();
     const start = from();
     if (!start) return;
     const powerToSubtract = subtractFromPower();

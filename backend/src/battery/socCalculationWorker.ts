@@ -1,7 +1,6 @@
 import { parentPort, workerData } from "worker_threads";
 import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
-import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
-import { createRoot } from "solid-js";
+import { socCalculationWork } from "./socCalculationWork";
 
 const data: SocWorkerData = workerData;
 
@@ -14,38 +13,29 @@ function optimizeCalculation(data: SocWorkerData) {
   while (stepCapacity >= 1 && stepParasitic >= 1) {
     for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += stepCapacity) {
       for (let parasitic = data.endParasitic; parasitic >= data.startParasitic; parasitic -= stepParasitic) {
-        const { socSinceFull, socSinceEmpty } = createRoot(dispose => {
-          const result = batteryCalculationsDependingOnUnknowns({
-            now: () => data.now,
-            localPowerHistory: () => data.localPowerHistory,
-            databasePowerValues: () => data.databasePowerValues,
-            totalLastFull: () => data.totalLastFull,
-            totalLastEmpty: () => data.totalLastEmpty,
-            subtractFromPower: () => parasitic,
-            assumedCapacity: () => capacity,
-            createMemo: fn => {
-              const val = fn();
-              return () => val;
-            },
-          });
-          dispose();
-          return result;
+        const { socSinceFull, socSinceEmpty } = socCalculationWork({
+          energyDischargedSinceFullWithoutParasitic: data.energyDischargedSinceFullWithoutParasitic,
+          energyChargedSinceEmptyWithoutParasitic: data.energyChargedSinceEmptyWithoutParasitic,
+          energyChargedSinceFullWithoutParasitic: data.energyChargedSinceFullWithoutParasitic,
+          energyDischargedSinceEmptyWithoutParasitic: data.energyDischargedSinceEmptyWithoutParasitic,
+          assumedCapacity: capacity,
+          assumedParasitic: parasitic,
+          from: data.now,
+          now: data.now,
         });
 
-        const sinceFull = socSinceFull();
-        const sinceEmpty = socSinceEmpty();
-        if (sinceEmpty == undefined || sinceFull == undefined) {
+        if (socSinceEmpty == undefined || socSinceFull == undefined) {
           continue;
         }
 
-        const diff = Math.abs(sinceFull - sinceEmpty);
+        const diff = Math.abs(socSinceFull - socSinceEmpty);
         if (diff < 0.01) {
-          const result: WorkerResult = { capacity, parasitic, sinceEmpty, sinceFull };
+          const result: WorkerResult = { capacity, parasitic, sinceEmpty: socSinceEmpty, sinceFull: socSinceFull };
           results.push(result);
         }
 
         if (!bestResult || diff < Math.abs(bestResult.sinceFull - bestResult.sinceEmpty)) {
-          bestResult = { capacity, parasitic, sinceEmpty, sinceFull };
+          bestResult = { capacity, parasitic, sinceEmpty: socSinceEmpty, sinceFull: socSinceFull };
         }
       }
     }
