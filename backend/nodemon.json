@@ -3,11 +3,11 @@
     "ts": "node --loader @swc-node/register/esm"
   },
   "restartable": "rs",
-  "delay": "2000",
+  "delay": 2000,
   "watch": ["src"],
   "ext": "ts,tsx",
   "ignore": ["config.json"],
   "events": {
-    "crash": "echo 'App crashed. Restarting in 2 seconds...' && sleep 2 && rs"
+    "crash": "echo 'App crashed. Restarting in 2 seconds...' && sleep 2 && nodemon src/index.ts"
   }
 }
