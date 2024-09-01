@@ -26,12 +26,16 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
 
           // If already in the timeslot, set feeding directly
           if (start <= now && now <= end) {
+            console.log("instant starting feeding");
             setWantedOutput(() => () => schedule().power_watts);
             setEndTimeout();
           } else if (start > now) {
+            console.log("scheduling start");
             // If schedule item starts in the future, set timeout for both start and end
             batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => schedule().power_watts), start, true);
             setEndTimeout();
+          } else {
+            console.log("ignoring schedule item", start, end);
           }
 
           onCleanup(() => setTimeout(() => setWantedOutput(() => () => 0)));
@@ -114,4 +118,5 @@ function batchedRunAtFutureTimeWithPriority(fn: VoidFunction, when: number, prio
       unsetTimeoutWhenEmpty();
     });
   }
+  console.log("updated timeoutBatches", timeoutBatches);
 }
