@@ -2,7 +2,6 @@ import { Accessor, createMemo as solidCreateMemo } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 
-// Used by worker and main thread
 export function batteryCalculationsDependingOnUnknowns({
   currentPower,
   databasePowerValues,
@@ -20,41 +19,44 @@ export function batteryCalculationsDependingOnUnknowns({
   assumedCapacity: Accessor<number>;
   createMemo?: typeof solidCreateMemo;
 }) {
-  const { energyDischarged: energyDischargedSinceEmpty, energyCharged: energyChargedSinceEmpty } =
-    calculateBatteryEnergy({
-      currentPower,
-      databasePowerValues,
-      from: totalLastEmpty,
-      subtractFromPower,
-      createMemo,
-    });
-  const { energyDischarged: energyDischargedSinceFull, energyCharged: energyChargedSinceFull } = calculateBatteryEnergy(
-    {
-      currentPower,
-      databasePowerValues,
-      from: totalLastFull,
-      subtractFromPower,
-      createMemo,
-    }
-  );
+  const {
+    energyDischarged: energyDischargedSinceEmpty,
+    energyCharged: energyChargedSinceEmpty,
+    energyDischargedWithoutParasitic: energyDischargedSinceEmptyWithoutParasitic,
+    energyChargedWithoutParasitic: energyChargedSinceEmptyWithoutParasitic,
+  } = calculateBatteryEnergy({
+    currentPower,
+    databasePowerValues,
+    from: totalLastEmpty,
+    subtractFromPower,
+    createMemo,
+  });
+  const {
+    energyDischarged: energyDischargedSinceFull,
+    energyCharged: energyChargedSinceFull,
+    energyDischargedWithoutParasitic: energyDischargedSinceFullWithoutParasitic,
+    energyChargedWithoutParasitic: energyChargedSinceFullWithoutParasitic,
+  } = calculateBatteryEnergy({
+    currentPower,
+    databasePowerValues,
+    from: totalLastFull,
+    subtractFromPower,
+    createMemo,
+  });
 
   // 1000wh = 1000wh were discharged
   // -100wh = 100wh were charged
   const energyRemovedSinceFull = createMemo(() => {
     const discharged = energyDischargedSinceFull();
     const charged = energyChargedSinceFull();
-    if (charged == undefined && discharged == undefined) return undefined;
-    if (charged == undefined) return Math.abs(discharged!);
-    if (discharged == undefined) return Math.abs(charged) * -1;
+    if (charged == undefined || discharged == undefined) return undefined;
     return Math.abs(discharged) - Math.abs(charged);
   });
 
   const energyAddedSinceEmpty = createMemo(() => {
     const discharged = energyDischargedSinceEmpty();
     const charged = energyChargedSinceEmpty();
-    if (charged == undefined && discharged == undefined) return undefined;
-    if (charged == undefined) return Math.abs(discharged!) * -1;
-    if (discharged == undefined) return Math.abs(charged);
+    if (charged == undefined || discharged == undefined) return undefined;
     return Math.abs(charged) - Math.abs(discharged);
   });
 
@@ -78,5 +80,9 @@ export function batteryCalculationsDependingOnUnknowns({
     energyAddedSinceEmpty,
     socSinceEmpty,
     socSinceFull,
+    energyDischargedSinceEmptyWithoutParasitic,
+    energyChargedSinceEmptyWithoutParasitic,
+    energyDischargedSinceFullWithoutParasitic,
+    energyChargedSinceFullWithoutParasitic,
   };
 }

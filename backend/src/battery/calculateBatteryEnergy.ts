@@ -1,4 +1,4 @@
-import { Accessor, createEffect, createMemo as solidCreateMemo, createSignal } from "solid-js";
+import { Accessor, batch, createEffect, createMemo as solidCreateMemo, createSignal } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { useNow } from "../utilities/useNow";
 
@@ -42,8 +42,8 @@ export function calculateBatteryEnergy({
     return { databaseEnergyCharged, databaseEnergyDischarged };
   });
 
-  const [totalEnergyCharged, setTotalEnergyCharged] = createSignal<number | undefined>(undefined);
-  const [totalEnergyDischarged, setTotalEnergyDischarged] = createSignal<number | undefined>(undefined);
+  const [totalEnergyCharged, setTotalEnergyCharged] = createSignal<number | undefined>();
+  const [totalEnergyDischarged, setTotalEnergyDischarged] = createSignal<number | undefined>();
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
   const getNow = useNow();
 
@@ -88,8 +88,10 @@ export function calculateBatteryEnergy({
     const totalCharged = databaseEnergyCharged + localEnergyCharged;
     const totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
 
-    setTotalEnergyCharged(totalCharged);
-    setTotalEnergyDischarged(totalDischarged);
+    batch(() => {
+      setTotalEnergyCharged(totalCharged);
+      setTotalEnergyDischarged(totalDischarged);
+    });
   });
 
   const energyToSubtract = createMemo(() => {
