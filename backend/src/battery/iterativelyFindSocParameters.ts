@@ -10,10 +10,18 @@ export function iterativelyFindSocParameters({
   totalLastEmpty,
   totalLastFull,
   configSignal: [config, setConfig],
+  energyDischargedSinceEmptyWithoutParasitic,
+  energyDischargedSinceFullWithoutParasitic,
+  energyChargedSinceFullWithoutParasitic,
+  energyChargedSinceEmptyWithoutParasitic,
 }: {
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
+  energyDischargedSinceFullWithoutParasitic: Accessor<number | undefined>;
+  energyChargedSinceEmptyWithoutParasitic: Accessor<number | undefined>;
+  energyChargedSinceFullWithoutParasitic: Accessor<number | undefined>;
+  energyDischargedSinceEmptyWithoutParasitic: Accessor<number | undefined>;
 }) {
   let effectsRunning = 0;
   const numWorkers = 1; // Hardcoded for now
@@ -31,8 +39,10 @@ export function iterativelyFindSocParameters({
       prev ||
       (totalLastFull() !== undefined &&
         totalLastEmpty() !== undefined &&
-        databasePowerValues() !== undefined &&
-        localPowerHistory().length)
+        energyDischargedSinceFullWithoutParasitic() !== undefined &&
+        energyChargedSinceEmptyWithoutParasitic() !== undefined &&
+        energyChargedSinceFullWithoutParasitic() !== undefined &&
+        energyDischargedSinceEmptyWithoutParasitic() !== undefined)
   );
   // Calculate SOC stuff once an hour because the pi zero has so little ram it gets super slow when we do it
   setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 60);

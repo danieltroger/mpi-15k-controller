@@ -46,6 +46,10 @@ export function useBatteryValues(
     energyChargedSinceFull,
     socSinceFull,
     socSinceEmpty,
+    energyDischargedSinceFullWithoutParasitic,
+    energyChargedSinceEmptyWithoutParasitic,
+    energyChargedSinceFullWithoutParasitic,
+    energyDischargedSinceEmptyWithoutParasitic,
   } = batteryCalculationsDependingOnUnknowns({
     databasePowerValues,
     totalLastFull,
@@ -64,6 +68,10 @@ export function useBatteryValues(
           totalLastEmpty,
           totalLastFull,
           configSignal,
+          energyDischargedSinceFullWithoutParasitic,
+          energyChargedSinceEmptyWithoutParasitic,
+          energyChargedSinceFullWithoutParasitic,
+          energyDischargedSinceEmptyWithoutParasitic,
         })
       ),
     // Start CPU intensive shit after 10 minutes so when dev:ing we get fast responses
