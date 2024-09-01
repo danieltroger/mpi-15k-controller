@@ -23,21 +23,20 @@ export function batteryCalculationsDependingOnUnknowns({
       databasePowerValues,
       from: totalLastEmpty,
       subtractFromPower,
+      invertValues: false,
     });
-  const { energy: energySinceFull, energyWithoutParasitic: energyWithoutParasiticSinceFull } = calculateBatteryEnergy({
-    currentPower,
-    databasePowerValues,
-    from: totalLastFull,
-    subtractFromPower,
-  });
 
+  // Due to inversion should show
   // 1000wh = 1000wh were discharged
   // -100wh = 100wh were charged
-  const energyRemovedSinceFull = createMemo(() => {
-    const sinceFull = energySinceFull();
-    if (sinceFull == undefined) return;
-    return sinceFull * -1;
-  });
+  const { energy: energyRemovedSinceFull, energyWithoutParasitic: energyWithoutParasiticSinceFull } =
+    calculateBatteryEnergy({
+      currentPower,
+      databasePowerValues,
+      from: totalLastFull,
+      subtractFromPower,
+      invertValues: true,
+    });
 
   const socSinceFull = createMemo(() => {
     const removedSinceFull = energyRemovedSinceFull();

@@ -20,15 +20,11 @@ export function socCalculationWork({
   const subtractFromFullValues = calculateEnergyToSubtract(totalLastFull, now, assumedParasitic)!;
   const subtractFromEmptyValues = calculateEnergyToSubtract(totalLastEmpty, now, assumedParasitic)!;
 
-  const energySinceEmpty = energyWithoutParasiticSinceEmpty - subtractFromEmptyValues;
-  const energySinceFull = energyWithoutParasiticSinceFull - subtractFromFullValues;
-
-  // 1000wh = 1000wh were discharged
-  // -100wh = 100wh were charged
-  const energyRemovedSinceFull = energySinceFull * -1;
+  const energyAddedSinceEmpty = energyWithoutParasiticSinceEmpty - subtractFromEmptyValues;
+  const energyRemovedSinceFull = energyWithoutParasiticSinceFull - subtractFromFullValues;
 
   const socSinceFull = 100 - (energyRemovedSinceFull / assumedCapacity) * 100;
-  const socSinceEmpty = (energySinceEmpty / assumedCapacity) * 100;
+  const socSinceEmpty = (energyAddedSinceEmpty / assumedCapacity) * 100;
 
   return { socSinceEmpty, socSinceFull };
 }

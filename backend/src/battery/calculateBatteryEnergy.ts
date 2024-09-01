@@ -7,6 +7,7 @@ export function calculateBatteryEnergy({
   databasePowerValues,
   currentPower,
   subtractFromPower,
+  invertValues,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -15,6 +16,7 @@ export function calculateBatteryEnergy({
   currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
+  invertValues: boolean;
 }) {
   // Calculate from database values how much energy was charged and discharged before the application start
   const databaseEnergy = createMemo(() => {
@@ -30,7 +32,7 @@ export function calculateBatteryEnergy({
       const powerValue = power.value;
       const timeDiff = nextPower.time - power.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      databaseEnergy += energy;
+      databaseEnergy += energy * (invertValues ? -1 : 1);
     }
     return databaseEnergy;
   });
@@ -57,7 +59,7 @@ export function calculateBatteryEnergy({
       const powerValue = lastPowerValue.value;
       const timeDiff = currentPowerValue.time - lastPowerValue.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      localEnergy += energy;
+      localEnergy += energy * (invertValues ? -1 : 1);
     }
     lastPowerValue = currentPowerValue;
     setSumEnergyToggle(prev => !prev);
