@@ -7,7 +7,7 @@ export function calculateBatteryEnergy({
   databasePowerValues,
   currentPower,
   subtractFromPower,
-  invertValues,
+  isSinceFull,
 }: {
   /**
    * Unix timestamp in milliseconds
@@ -16,7 +16,7 @@ export function calculateBatteryEnergy({
   currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
-  invertValues: boolean;
+  isSinceFull: boolean;
 }) {
   // Calculate from database values how much energy was charged and discharged before the application start
   const databaseEnergy = createMemo(() => {
@@ -24,7 +24,8 @@ export function calculateBatteryEnergy({
     const allDbValues = databasePowerValues();
     if (!fromValue || !allDbValues?.length) return; // Wait for data
     const powerValues = allDbValues.filter(({ time }) => time >= fromValue);
-    let databaseEnergy = 0;
+    let databaseEnergyCharged = 0;
+    let databaseEnergyDischarged = 0;
     for (let i = 0; i < powerValues.length; i++) {
       const power = powerValues[i];
       const nextPower = powerValues[i + 1];
@@ -32,14 +33,19 @@ export function calculateBatteryEnergy({
       const powerValue = power.value;
       const timeDiff = nextPower.time - power.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      databaseEnergy += energy * (invertValues ? -1 : 1);
+      if (powerValue > 0) {
+        databaseEnergyCharged += energy;
+      } else if (powerValue < 0) {
+        databaseEnergyDischarged += energy;
+      }
     }
-    return databaseEnergy;
+    return { databaseEnergyCharged, databaseEnergyDischarged };
   });
 
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
 
-  let localEnergy = 0;
+  let localEnergyCharged = 0;
+  let localEnergyDischarged = 0;
   let lastPowerValue: { value: number; time: number } | undefined;
 
   // Every time from changes, assume we've reached a full/empty event and reset the local energy
@@ -48,7 +54,8 @@ export function calculateBatteryEnergy({
   createEffect(() => {
     const start = from();
     if (!start) return;
-    localEnergy = 0;
+    localEnergyCharged = 0;
+    localEnergyDischarged = 0;
   });
 
   // Only keep a variable that we modify for the energy being charged/discharged while the program runs, for efficiency. This updates it
@@ -59,7 +66,11 @@ export function calculateBatteryEnergy({
       const powerValue = lastPowerValue.value;
       const timeDiff = currentPowerValue.time - lastPowerValue.time;
       const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      localEnergy += energy * (invertValues ? -1 : 1);
+      if (powerValue > 0) {
+        localEnergyCharged += energy;
+      } else if (powerValue < 0) {
+        localEnergyDischarged += energy;
+      }
     }
     lastPowerValue = currentPowerValue;
     setSumEnergyToggle(prev => !prev);
@@ -70,7 +81,16 @@ export function calculateBatteryEnergy({
     sumEnergyToggle();
     const databaseValue = databaseEnergy();
     if (databaseValue == undefined) return;
-    return databaseValue + localEnergy;
+    const { databaseEnergyDischarged, databaseEnergyCharged } = databaseValue;
+    const totalCharged = databaseEnergyCharged + localEnergyCharged;
+    const totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
+    // Legacy to divide in total charged and discharged and do this, but I can't get it working without
+    // Doing it here now so we can easily to the subtracting on the total, if we have to do it on the parts it gets complex
+    if (isSinceFull) {
+      return Math.abs(totalDischarged) - Math.abs(totalCharged);
+    } else {
+      return Math.abs(totalCharged) - Math.abs(totalDischarged);
+    }
   });
   const energyToSubtract = createMemo(() => calculateEnergyToSubtract(from(), useNow(), subtractFromPower()));
 
@@ -80,7 +100,7 @@ export function calculateBatteryEnergy({
       const totalCharged = totalEnergy();
       const toSubtract = energyToSubtract();
       if (totalCharged == undefined || toSubtract == undefined) return;
-      return totalCharged - toSubtract;
+      return totalCharged - (toSubtract * isSinceFull ? -1 : 1);
     }),
   };
 }
