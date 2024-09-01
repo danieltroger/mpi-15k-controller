@@ -21,7 +21,7 @@ export function socCalculationWork({
   const subtractFromEmptyValues = calculateEnergyToSubtract(totalLastEmpty, now, assumedParasitic)!;
 
   const energyAddedSinceEmpty = energyWithoutParasiticSinceEmpty - subtractFromEmptyValues;
-  const energyRemovedSinceFull = energyWithoutParasiticSinceFull - subtractFromFullValues;
+  const energyRemovedSinceFull = energyWithoutParasiticSinceFull + subtractFromFullValues;
 
   const socSinceFull = 100 - (energyRemovedSinceFull / assumedCapacity) * 100;
   const socSinceEmpty = (energyAddedSinceEmpty / assumedCapacity) * 100;
