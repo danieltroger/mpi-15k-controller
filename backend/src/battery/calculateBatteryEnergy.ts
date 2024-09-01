@@ -79,31 +79,44 @@ export function calculateBatteryEnergy({
     localEnergyDischarged = 0;
   });
 
-  // When anything changes, sum up the energy from database and local and subtract the parasitic consumption
+  // When anything changes, sum up the energy from database and local
   createEffect(() => {
     sumEnergyToggle();
-    const start = from();
     const databaseValues = databaseEnergy();
-    if (!databaseValues || !start) return;
+    if (!databaseValues) return;
     const { databaseEnergyCharged, databaseEnergyDischarged } = databaseValues;
-    const now = getNow();
-    const powerToSubtract = subtractFromPower();
-    let totalCharged = databaseEnergyCharged + localEnergyCharged;
-    let totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
-
-    // Calculate the amount of energy to subtract from "from" to "now" due to parasitic consumption and subtract it
-    const timeDiff = now - start;
-    const energyToSubtract = (powerToSubtract * timeDiff) / 1000 / 60 / 60;
-
-    totalCharged -= energyToSubtract;
-    totalDischarged -= energyToSubtract;
+    const totalCharged = databaseEnergyCharged + localEnergyCharged;
+    const totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
 
     setTotalEnergyCharged(totalCharged);
     setTotalEnergyDischarged(totalDischarged);
   });
 
+  const energyToSubtract = createMemo(() => {
+    const now = getNow();
+    const start = from();
+    if (!start) return;
+    const powerToSubtract = subtractFromPower();
+    // Calculate the amount of energy to subtract from "from" to "now" due to parasitic consumption and subtract it
+    const timeDiff = now - start;
+
+    return (powerToSubtract * timeDiff) / 1000 / 60 / 60;
+  });
+
   return {
-    energyCharged: totalEnergyCharged,
-    energyDischarged: totalEnergyDischarged,
+    energyChargedWithoutParasitic: totalEnergyCharged,
+    energyDischargedWithoutParasitic: totalEnergyDischarged,
+    energyCharged: createMemo(() => {
+      const totalCharged = totalEnergyCharged();
+      const toSubtract = energyToSubtract();
+      if (totalCharged == undefined || toSubtract == undefined) return;
+      return totalCharged - toSubtract;
+    }),
+    energyDischarged: createMemo(() => {
+      const totalDischarged = totalEnergyDischarged();
+      const toSubtract = energyToSubtract();
+      if (totalDischarged == undefined || toSubtract == undefined) return;
+      return totalDischarged - toSubtract;
+    }),
   };
 }
