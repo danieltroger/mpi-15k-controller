@@ -9,14 +9,8 @@ import { useDatabasePower } from "./useDatabasePower";
 export function iterativelyFindSocParameters({
   totalLastEmpty,
   totalLastFull,
-  now,
-  localPowerHistory,
-  databasePowerValues,
   configSignal: [config, setConfig],
 }: {
-  now: Accessor<number>;
-  localPowerHistory: Accessor<{ value: number; time: number }[]>;
-  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;

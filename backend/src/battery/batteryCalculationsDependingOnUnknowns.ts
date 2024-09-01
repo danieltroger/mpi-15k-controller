@@ -1,12 +1,10 @@
 import { Accessor, createMemo as solidCreateMemo } from "solid-js";
-import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 
 // Used by worker and main thread
 export function batteryCalculationsDependingOnUnknowns({
-  now,
-  localPowerHistory,
+  currentPower,
   databasePowerValues,
   totalLastFull,
   totalLastEmpty,
@@ -14,8 +12,7 @@ export function batteryCalculationsDependingOnUnknowns({
   assumedCapacity,
   createMemo = solidCreateMemo,
 }: {
-  now: Accessor<number>;
-  localPowerHistory: ReturnType<typeof useCurrentPower>["localPowerHistory"];
+  currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   totalLastEmpty: Accessor<number | undefined>;
   totalLastFull: Accessor<number | undefined>;
@@ -25,19 +22,17 @@ export function batteryCalculationsDependingOnUnknowns({
 }) {
   const { energyDischarged: energyDischargedSinceEmpty, energyCharged: energyChargedSinceEmpty } =
     calculateBatteryEnergy({
-      localPowerHistory,
+      currentPower,
       databasePowerValues,
       from: totalLastEmpty,
-      to: now,
       subtractFromPower,
       createMemo,
     });
   const { energyDischarged: energyDischargedSinceFull, energyCharged: energyChargedSinceFull } = calculateBatteryEnergy(
     {
-      localPowerHistory,
+      currentPower,
       databasePowerValues,
       from: totalLastFull,
-      to: now,
       subtractFromPower,
       createMemo,
     }
