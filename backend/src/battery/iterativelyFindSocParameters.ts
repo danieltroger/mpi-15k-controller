@@ -4,22 +4,20 @@ import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
-import { useDatabasePower } from "./useDatabasePower";
+import { useNow } from "../utilities/useNow";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,
   totalLastFull,
-  now,
-  localPowerHistory,
-  databasePowerValues,
   configSignal: [config, setConfig],
+  energyWithoutParasiticSinceEmpty,
+  energyWithoutParasiticSinceFull,
 }: {
-  now: Accessor<number>;
-  localPowerHistory: Accessor<{ value: number; time: number }[]>;
-  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
+  energyWithoutParasiticSinceEmpty: Accessor<undefined | number>;
+  energyWithoutParasiticSinceFull: Accessor<undefined | number>;
 }) {
   let effectsRunning = 0;
   const numWorkers = 1; // Hardcoded for now
@@ -32,13 +30,12 @@ export function iterativelyFindSocParameters({
   const [toggle, setToggle] = createSignal(false);
   const startParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_from);
   const endParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_to);
-  const hasData = createMemo<boolean | number | undefined>(
-    prev =>
-      prev ||
-      (totalLastFull() !== undefined &&
-        totalLastEmpty() !== undefined &&
-        databasePowerValues() !== undefined &&
-        localPowerHistory().length)
+  const hasData = createMemo(
+    () =>
+      totalLastFull() !== undefined &&
+      totalLastEmpty() !== undefined &&
+      energyWithoutParasiticSinceFull() !== undefined &&
+      energyWithoutParasiticSinceEmpty() !== undefined
   );
   // Calculate SOC stuff once an hour because the pi zero has so little ram it gets super slow when we do it
   setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
@@ -54,12 +51,12 @@ export function iterativelyFindSocParameters({
     const [workersRunning, setWorkersRunning] = createSignal(0);
     const results: WorkerResult[] = [];
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
-    let gotCleanuped = false;
+    let gotCleanedUp = false;
     let decrementedRunning = false;
 
     effectsRunning++;
     onCleanup(() => {
-      gotCleanuped = true;
+      gotCleanedUp = true;
       if (!decrementedRunning) {
         effectsRunning--;
         decrementedRunning = true;
@@ -73,15 +70,15 @@ export function iterativelyFindSocParameters({
       const endCapacity = Math.min(startCapacity + rangePerWorker - 1, totalEndCapacity);
 
       const workerData: SocWorkerData = untrack(() => ({
-        now: now(),
-        totalLastEmpty: totalLastEmpty(),
-        totalLastFull: totalLastFull(),
+        totalLastEmpty: totalLastEmpty()!,
+        totalLastFull: totalLastFull()!,
         endParasitic,
         startParasitic,
-        databasePowerValues: [...databasePowerValues()!],
         startCapacity,
         endCapacity,
-        localPowerHistory: [...localPowerHistory()],
+        energyWithoutParasiticSinceEmpty: energyWithoutParasiticSinceEmpty()!,
+        energyWithoutParasiticSinceFull: energyWithoutParasiticSinceFull()!,
+        now: useNow(),
       }));
 
       const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url), {
@@ -90,6 +87,7 @@ export function iterativelyFindSocParameters({
       setWorkersRunning(prev => prev + 1);
 
       worker.on("message", (result: WorkerResult) => {
+        log("Got result from worker", i, result);
         appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
           error("Failed to write soc calculation log", e)
         );
@@ -120,7 +118,7 @@ export function iterativelyFindSocParameters({
           decrementedRunning = true;
         }
       }
-      if (workersRunning() !== 0 || !results.length || gotCleanuped) return;
+      if (workersRunning() !== 0 || !results.length || gotCleanedUp) return;
       const middleValue = getMiddleValue(results);
       log("Settling on", middleValue, "after doing SOC calculations");
       // Have these values in config so they persist over program restarts

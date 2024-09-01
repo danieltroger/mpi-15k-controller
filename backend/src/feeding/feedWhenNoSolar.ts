@@ -28,7 +28,6 @@ export function feedWhenNoSolar({
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
-  const now = useNow();
 
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
@@ -86,7 +85,7 @@ export function feedWhenNoSolar({
     if (exportAmount) {
       return doWithReason(true, `exportAmountForSelling is ${exportAmount}`);
     }
-    const timeSinceLastChange = now() - lastChange;
+    const timeSinceLastChange = useNow() - lastChange;
     const minTimePassed = 1000 * 60 * 3;
     if (timeSinceLastChange < minTimePassed && prev !== undefined) {
       // Don't change the state more often than every 4 minutes to prevent bounce and inbetween states that occur due to throttling in talking with shinemonitor
