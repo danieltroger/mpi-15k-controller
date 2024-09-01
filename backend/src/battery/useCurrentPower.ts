@@ -1,6 +1,6 @@
 import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
-import { createEffect, createMemo, createSignal, untrack } from "solid-js";
+import { createMemo, untrack } from "solid-js";
 
 export function useCurrentPower(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
@@ -50,36 +50,7 @@ export function useCurrentPower(
     return prev;
   });
 
-  // Do not use a store since the place reading it would be depending on thousands/millions of signals which uses tons of memory and slows down the program
-  const [localPowerHistory, setLocalPowerHistory] = createSignal<{ value: number; time: number }[]>([], {
-    equals: false,
-  });
-
-  createEffect(() => {
-    const power = currentPower();
-    if (!power) return;
-    setLocalPowerHistory(prev => {
-      // FYI, in calculateBatteryEnergy we assume that this array is always sorted by time
-      prev.push(power);
-      return prev;
-    });
-  });
-
-  createEffect(() => {
-    const fullWhen = haveSeenBatteryFullAt();
-    const emptyWhen = haveSeenBatteryEmptyAt();
-    // If we're lacking one of the values, we can't delete the old ones, or we risk deleting too much while the battery is about the get full for exampel
-    if (fullWhen == undefined || emptyWhen == undefined) return;
-    const earliestValueWeNeedToKeep = Math.min(fullWhen, emptyWhen);
-    const oldestValue = localPowerHistory()[0]?.time;
-    if (oldestValue && oldestValue < earliestValueWeNeedToKeep) {
-      // FYI, in calculateBatteryEnergy we assume that this array is always sorted by time (this shouldn't break that assumption since it's already initially sorted by time)
-      setLocalPowerHistory(localPowerHistory().filter(({ time }) => time >= earliestValueWeNeedToKeep));
-    }
-  });
-
   return {
-    localPowerHistory,
     currentPower,
     lastBatterySeenFullSinceProgramStart: haveSeenBatteryFullAt,
     lastBatterySeenEmptySinceProgramStart: haveSeenBatteryEmptyAt,

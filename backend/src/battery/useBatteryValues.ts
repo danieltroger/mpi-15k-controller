@@ -1,7 +1,6 @@
 import { useCurrentPower } from "./useCurrentPower";
-import { useNow } from "../utilities/useNow";
 import { useDatabasePower } from "./useDatabasePower";
-import { createMemo, createSignal, getOwner, Resource, runWithOwner, untrack } from "solid-js";
+import { createMemo, getOwner, Resource, runWithOwner } from "solid-js";
 import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
@@ -15,13 +14,10 @@ export function useBatteryValues(
   mqttClient: Resource<AsyncMqttClient>
 ) {
   const [config] = configSignal;
-  const {
-    localPowerHistory,
-    currentPower,
-    lastBatterySeenFullSinceProgramStart,
-    lastBatterySeenEmptySinceProgramStart,
-  } = useCurrentPower(mqttValues, configSignal);
-  const now = useNow();
+  const { currentPower, lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } = useCurrentPower(
+    mqttValues,
+    configSignal
+  );
   const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase, batteryWasLastEmptyAtAccordingToDatabase } =
     useDatabasePower(configSignal);
 
@@ -51,13 +47,12 @@ export function useBatteryValues(
     socSinceFull,
     socSinceEmpty,
   } = batteryCalculationsDependingOnUnknowns({
-    now,
-    localPowerHistory,
     databasePowerValues,
     totalLastFull,
     totalLastEmpty,
     subtractFromPower: assumedParasiticConsumption,
     assumedCapacity,
+    currentPower,
   });
 
   const owner = getOwner();
@@ -68,9 +63,6 @@ export function useBatteryValues(
         iterativelyFindSocParameters({
           totalLastEmpty,
           totalLastFull,
-          now,
-          localPowerHistory,
-          databasePowerValues,
           configSignal,
         })
       ),

@@ -1,11 +1,11 @@
-import { Accessor, createMemo as solidCreateMemo } from "solid-js";
+import { Accessor, createEffect, createMemo as solidCreateMemo, createSignal } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
+import { useNow } from "../utilities/useNow";
 
 export function calculateBatteryEnergy({
   from,
-  to,
   databasePowerValues,
-  localPowerHistory,
+  currentPower,
   subtractFromPower,
   createMemo,
 }: {
@@ -13,96 +13,97 @@ export function calculateBatteryEnergy({
    * Unix timestamp in milliseconds
    */
   from: Accessor<number | undefined>;
-  to: Accessor<number>;
-  /**
-   * Reactive store with the local power history
-   */
-  localPowerHistory: Accessor<{ value: number; time: number }[]>;
+  currentPower: Accessor<{ value: number; time: number } | undefined>;
   databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
   createMemo: typeof solidCreateMemo;
 }) {
-  const totalPowerHistory = () => {
+  // Calculate from database values how much energy was charged and discharged before the application start
+  const databaseEnergy = createMemo(() => {
     const fromValue = from();
-    const filteredLocalPower: { time: number; value: number }[] = [];
-    const filteredDatabasePower: { time: number; value: number }[] = [];
-    const totalLocalHistory = localPowerHistory();
-    const allDatabaseValues = databasePowerValues();
-
-    if (!fromValue || !totalLocalHistory.length || allDatabaseValues == undefined) {
-      // Don't return anything until we both have one local value and the database returns a value
-      // This is so we don't make wrong assumptions while data is loading
-      return { filteredLocalPower, filteredDatabasePower };
-    }
-
-    for (let i = 0; i < totalLocalHistory.length; i++) {
-      const power = totalLocalHistory[i];
-      const { time } = power;
-      if (time >= fromValue) {
-        if (time <= to()) {
-          filteredLocalPower.push(power);
-        } else {
-          // Since we assume that the array is sorted by time, we can break here to make this calculation faster
-          break;
-        }
-      }
-    }
-    const firstLocalPower = filteredLocalPower[0]?.time as number | undefined;
-    for (let i = 0; i < allDatabaseValues.length; i++) {
-      const power = allDatabaseValues[i];
-      const { time } = power;
-      if (time >= fromValue) {
-        // If we don't have local power yet, use only database power
-        if (time <= to() && (firstLocalPower == undefined || time <= firstLocalPower)) {
-          filteredDatabasePower.push(power);
-        } else {
-          break;
-        }
-      }
-    }
-
-    return { filteredLocalPower, filteredDatabasePower };
-  };
-
-  const energy = createMemo<{ energyCharged: number; energyDischarged: number } | undefined>(prev => {
-    // Calculate "totalPowerHistory", but without merging the two parts, since then we have to create multiple arrays and GC:ing those takes time
-    const { filteredDatabasePower, filteredLocalPower } = totalPowerHistory();
-    const toSubtract = subtractFromPower();
-    const totalLength = filteredDatabasePower.length + filteredLocalPower.length;
-    const firstLength = filteredDatabasePower.length;
-    if (!totalLength) {
-      if (prev) {
-        // When the battery just became full (or empty) (we have returned something before), we won't have any power values for a short time, just return 0 (which is true) in that time
-        return { energyCharged: 0, energyDischarged: 0 };
-      }
-      // During program initialization, before we've gotten a value from the DB, return undefined
-      return;
-    }
-    let energyCharged = 0;
-    let energyDischarged = 0;
-    for (let i = 0; i < totalLength; i++) {
-      const isInFirstArray = i < firstLength;
-      const power = isInFirstArray ? filteredDatabasePower[i] : filteredLocalPower[i - firstLength];
-      const indexOfNextPower = i + 1;
-      const nextPowerIsInFirstArray = indexOfNextPower < firstLength;
-      const nextPower = nextPowerIsInFirstArray
-        ? filteredDatabasePower[indexOfNextPower]
-        : filteredLocalPower[indexOfNextPower - firstLength];
+    const allDbValues = databasePowerValues();
+    if (!fromValue || !allDbValues?.length) return; // Wait for data
+    const powerValues = allDbValues.filter(({ time }) => time >= fromValue);
+    let databaseEnergyCharged = 0;
+    let databaseEnergyDischarged = 0;
+    for (let i = 0; i < powerValues.length; i++) {
+      const power = powerValues[i];
+      const nextPower = powerValues[i + 1];
       if (!nextPower) break;
-      const correctedPowerValue = power.value - toSubtract;
+      const powerValue = power.value;
       const timeDiff = nextPower.time - power.time;
-      const energy = (correctedPowerValue * timeDiff) / 1000 / 60 / 60;
-      if (correctedPowerValue > 0) {
-        energyCharged += energy;
-      } else if (correctedPowerValue < 0) {
-        energyDischarged += energy;
+      const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
+      if (powerValue > 0) {
+        databaseEnergyCharged += energy;
+      } else if (powerValue < 0) {
+        databaseEnergyDischarged += energy;
       }
     }
-    return { energyCharged, energyDischarged };
+    return { databaseEnergyCharged, databaseEnergyDischarged };
+  });
+
+  const [totalEnergyCharged, setTotalEnergyCharged] = createSignal<number | undefined>(undefined);
+  const [totalEnergyDischarged, setTotalEnergyDischarged] = createSignal<number | undefined>(undefined);
+  const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
+  const getNow = useNow();
+
+  let localEnergyCharged = 0;
+  let localEnergyDischarged = 0;
+  let lastPowerValue: { value: number; time: number } | undefined;
+
+  // Only keep a variable that we modify for the energy being charged/discharged while the program runs, for efficiency. This updates it
+  createEffect(() => {
+    const currentPowerValue = currentPower();
+    if (!currentPowerValue) return;
+    if (lastPowerValue) {
+      const powerValue = lastPowerValue.value;
+      const timeDiff = currentPowerValue.time - lastPowerValue.time;
+      const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
+      if (powerValue > 0) {
+        localEnergyCharged += energy;
+      } else if (powerValue < 0) {
+        localEnergyDischarged += energy;
+      }
+    }
+    lastPowerValue = currentPowerValue;
+    setSumEnergyToggle(prev => !prev);
+  });
+
+  // Every time from changes, assume we've reached a full/empty event and reset the local energy
+  // This is because we don't know anymore from when our energy values are
+  // But the "from" shouldn't change in any other situation (except application init but we ignore when it's undefined)
+  createEffect(() => {
+    const start = from();
+    if (!start) return;
+    localEnergyCharged = 0;
+    localEnergyDischarged = 0;
+  });
+
+  // When anything changes, sum up the energy from database and local and subtract the parasitic consumption
+  createEffect(() => {
+    sumEnergyToggle();
+    const start = from();
+    const databaseValues = databaseEnergy();
+    if (!databaseValues || !start) return;
+    const { databaseEnergyCharged, databaseEnergyDischarged } = databaseValues;
+    const now = getNow();
+    const powerToSubtract = subtractFromPower();
+    let totalCharged = databaseEnergyCharged + localEnergyCharged;
+    let totalDischarged = databaseEnergyDischarged + localEnergyDischarged;
+
+    // Calculate the amount of energy to subtract from "from" to "now" due to parasitic consumption and subtract it
+    const timeDiff = now - start;
+    const energyToSubtract = (powerToSubtract * timeDiff) / 1000 / 60 / 60;
+
+    totalCharged -= energyToSubtract;
+    totalDischarged -= energyToSubtract;
+
+    setTotalEnergyCharged(totalCharged);
+    setTotalEnergyDischarged(totalDischarged);
   });
 
   return {
-    energyCharged: createMemo(() => energy()?.energyCharged),
-    energyDischarged: createMemo(() => energy()?.energyDischarged),
+    energyCharged: totalEnergyCharged,
+    energyDischarged: totalEnergyDischarged,
   };
 }
