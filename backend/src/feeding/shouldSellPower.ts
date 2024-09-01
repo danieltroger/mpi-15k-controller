@@ -22,7 +22,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
           const start = memoizedStart();
           const end = memoizedEnd();
           const setEndTimeout = () =>
-            batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => 0), end, false);
+            batchedRunAtFutureTimeWithPriority(() => setTimeout(() => setWantedOutput(() => () => 0)), end, false);
 
           // If already in the timeslot, set feeding directly
           if (start <= now && now <= end) {
@@ -34,7 +34,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
             setEndTimeout();
           }
 
-          onCleanup(() => setWantedOutput(() => () => 0));
+          onCleanup(() => setTimeout(() => setWantedOutput(() => () => 0)));
         });
         return wantedOutput;
       }
