@@ -77,10 +77,15 @@ export function calculateBatteryEnergy({
   return {
     energyWithoutParasitic: totalEnergy,
     energy: createMemo(() => {
-      const totalCharged = totalEnergy();
+      let totalChargedOrDischarged = totalEnergy();
       const toSubtract = energyToSubtract();
-      if (totalCharged == undefined || toSubtract == undefined) return;
-      return totalCharged - toSubtract;
+      if (totalChargedOrDischarged == undefined || toSubtract == undefined) return;
+      if (invertValues) {
+        totalChargedOrDischarged += toSubtract;
+      } else {
+        totalChargedOrDischarged -= toSubtract;
+      }
+      return totalChargedOrDischarged;
     }),
   };
 }
