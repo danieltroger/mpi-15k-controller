@@ -70,8 +70,8 @@ export function iterativelyFindSocParameters({
       const endCapacity = Math.min(startCapacity + rangePerWorker - 1, totalEndCapacity);
 
       const workerData: SocWorkerData = untrack(() => ({
-        totalLastEmpty: totalLastEmpty(),
-        totalLastFull: totalLastFull(),
+        totalLastEmpty: totalLastEmpty()!,
+        totalLastFull: totalLastFull()!,
         endParasitic,
         startParasitic,
         startCapacity,
