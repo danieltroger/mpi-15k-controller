@@ -118,5 +118,4 @@ function batchedRunAtFutureTimeWithPriority(fn: VoidFunction, when: number, prio
       unsetTimeoutWhenEmpty();
     });
   }
-  console.log("updated timeoutBatches", timeoutBatches);
 }
