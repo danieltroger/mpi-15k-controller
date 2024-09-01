@@ -12,7 +12,7 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_selling.schedule),
-      (startTime, index) => {
+      startTime => {
         const [wantedOutput, setWantedOutput] = createSignal<Accessor<number>>(() => 0);
         const scheduleItem = () => config().scheduled_power_selling.schedule[startTime];
         const startTimestamp = +new Date(startTime);
