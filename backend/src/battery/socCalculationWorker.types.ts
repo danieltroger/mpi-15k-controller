@@ -1,13 +1,12 @@
 export type SocWorkerData = {
-  now: number;
-  localPowerHistory: { value: number; time: number }[];
-  databasePowerValues: { time: number; value: number }[];
-  totalLastFull: number | undefined;
-  totalLastEmpty: number | undefined;
   startCapacity: number;
   endCapacity: number;
   startParasitic: number;
   endParasitic: number;
+  energyDischargedSinceFullWithoutParasitic: number;
+  energyChargedSinceEmptyWithoutParasitic: number;
+  energyChargedSinceFullWithoutParasitic: number;
+  energyDischargedSinceEmptyWithoutParasitic: number;
 };
 
 export type WorkerResult = {

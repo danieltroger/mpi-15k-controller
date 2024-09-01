@@ -21,15 +21,25 @@ import { useBatteryValues } from "./battery/useBatteryValues";
 import { mqttValueKeys } from "./sharedTypes";
 import { elpatronSwitching } from "./elpatronSwitching";
 import { shouldSellPower } from "./feeding/shouldSellPower";
+import { NowProvider } from "./utilities/useNow";
 
 while (true) {
   await new Promise<void>(r => {
     createRoot(dispose => {
-      catchError(main, e => {
-        error("Main crashed, restarting in 10s", e);
-        dispose();
-        r();
-      });
+      catchError(
+        () => {
+          NowProvider({
+            get children() {
+              return void main();
+            },
+          });
+        },
+        e => {
+          error("Main crashed, restarting in 10s", e);
+          dispose();
+          r();
+        }
+      );
     });
   });
   await wait(10000);
