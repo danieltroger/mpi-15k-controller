@@ -1,9 +1,28 @@
-import { createSignal, onCleanup } from "solid-js";
+import { Accessor, createContext, createSignal, JSX, onCleanup, useContext } from "solid-js";
+import { catchify } from "@depict-ai/utilishared/latest";
 
-export function useNow() {
+const NowContext = createContext<Accessor<number>>();
+
+export function NowProvider(props: { children?: JSX.Element }) {
   const [currentTime, setCurrentTime] = createSignal(+new Date());
-  const timeInterval = setInterval(() => setCurrentTime(+new Date()), 2000);
+  const timeInterval = setInterval(
+    catchify(() => setCurrentTime(+new Date())),
+    2000
+  );
   onCleanup(() => clearInterval(timeInterval));
 
-  return currentTime;
+  return NowContext.Provider({
+    value: currentTime,
+    get children() {
+      return props.children;
+    },
+  });
+}
+
+export function useNow() {
+  const nowAccessor = useContext(NowContext);
+  if (!nowAccessor) {
+    throw new Error("useNow must be used within a NowProvider");
+  }
+  return nowAccessor();
 }
