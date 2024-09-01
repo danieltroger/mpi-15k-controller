@@ -3,10 +3,8 @@ export type SocWorkerData = {
   endCapacity: number;
   startParasitic: number;
   endParasitic: number;
-  energyDischargedSinceFullWithoutParasitic: number;
-  energyChargedSinceEmptyWithoutParasitic: number;
-  energyChargedSinceFullWithoutParasitic: number;
-  energyDischargedSinceEmptyWithoutParasitic: number;
+  energyWithoutParasiticSinceEmpty: number;
+  energyWithoutParasiticSinceFull: number;
   now: number;
 };
 

@@ -10,18 +10,14 @@ export function iterativelyFindSocParameters({
   totalLastEmpty,
   totalLastFull,
   configSignal: [config, setConfig],
-  energyDischargedSinceEmptyWithoutParasitic,
-  energyDischargedSinceFullWithoutParasitic,
-  energyChargedSinceFullWithoutParasitic,
-  energyChargedSinceEmptyWithoutParasitic,
+  energyWithoutParasiticSinceEmpty,
+  energyWithoutParasiticSinceFull,
 }: {
   totalLastFull: Accessor<number | undefined>;
   totalLastEmpty: Accessor<number | undefined>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  energyDischargedSinceFullWithoutParasitic: Accessor<number | undefined>;
-  energyChargedSinceEmptyWithoutParasitic: Accessor<number | undefined>;
-  energyChargedSinceFullWithoutParasitic: Accessor<number | undefined>;
-  energyDischargedSinceEmptyWithoutParasitic: Accessor<number | undefined>;
+  energyWithoutParasiticSinceEmpty: Accessor<undefined | number>;
+  energyWithoutParasiticSinceFull: Accessor<undefined | number>;
 }) {
   let effectsRunning = 0;
   const numWorkers = 1; // Hardcoded for now
@@ -34,15 +30,12 @@ export function iterativelyFindSocParameters({
   const [toggle, setToggle] = createSignal(false);
   const startParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_from);
   const endParasiticConsumption = createMemo(() => config().soc_calculations.parasitic_consumption_to);
-  const hasData = createMemo<boolean | number | undefined>(
-    prev =>
-      prev ||
-      (totalLastFull() !== undefined &&
-        totalLastEmpty() !== undefined &&
-        energyDischargedSinceFullWithoutParasitic() !== undefined &&
-        energyChargedSinceEmptyWithoutParasitic() !== undefined &&
-        energyChargedSinceFullWithoutParasitic() !== undefined &&
-        energyDischargedSinceEmptyWithoutParasitic() !== undefined)
+  const hasData = createMemo(
+    () =>
+      totalLastFull() !== undefined &&
+      totalLastEmpty() !== undefined &&
+      energyWithoutParasiticSinceFull() !== undefined &&
+      energyWithoutParasiticSinceEmpty() !== undefined
   );
   // Calculate SOC stuff once an hour because the pi zero has so little ram it gets super slow when we do it
   setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
@@ -58,12 +51,12 @@ export function iterativelyFindSocParameters({
     const [workersRunning, setWorkersRunning] = createSignal(0);
     const results: WorkerResult[] = [];
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
-    let gotCleanuped = false;
+    let gotCleanedUp = false;
     let decrementedRunning = false;
 
     effectsRunning++;
     onCleanup(() => {
-      gotCleanuped = true;
+      gotCleanedUp = true;
       if (!decrementedRunning) {
         effectsRunning--;
         decrementedRunning = true;
@@ -83,10 +76,8 @@ export function iterativelyFindSocParameters({
         startParasitic,
         startCapacity,
         endCapacity,
-        energyDischargedSinceFullWithoutParasitic: energyDischargedSinceFullWithoutParasitic()!,
-        energyChargedSinceEmptyWithoutParasitic: energyChargedSinceEmptyWithoutParasitic()!,
-        energyChargedSinceFullWithoutParasitic: energyChargedSinceFullWithoutParasitic()!,
-        energyDischargedSinceEmptyWithoutParasitic: energyDischargedSinceEmptyWithoutParasitic()!,
+        energyWithoutParasiticSinceEmpty: energyWithoutParasiticSinceEmpty()!,
+        energyWithoutParasiticSinceFull: energyWithoutParasiticSinceFull()!,
         now: useNow(),
       }));
 
@@ -126,7 +117,7 @@ export function iterativelyFindSocParameters({
           decrementedRunning = true;
         }
       }
-      if (workersRunning() !== 0 || !results.length || gotCleanuped) return;
+      if (workersRunning() !== 0 || !results.length || gotCleanedUp) return;
       const middleValue = getMiddleValue(results);
       log("Settling on", middleValue, "after doing SOC calculations");
       // Have these values in config so they persist over program restarts
