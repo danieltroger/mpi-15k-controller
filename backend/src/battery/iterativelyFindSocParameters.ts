@@ -87,6 +87,7 @@ export function iterativelyFindSocParameters({
       setWorkersRunning(prev => prev + 1);
 
       worker.on("message", (result: WorkerResult) => {
+        log("Got result from worker", i, result);
         appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
           error("Failed to write soc calculation log", e)
         );
