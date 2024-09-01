@@ -52,7 +52,9 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     if (soc > limitToUse) {
       hitSOCLimit = false;
       // return the maximum value of all schedule items
-      const result = Math.max(...scheduleOutput().map(schedule => schedule()()));
+      const values = scheduleOutput().map(schedule => schedule()());
+      log("schedule values", values);
+      const result = Math.max(...values);
       if (Math.abs(result) === Infinity) {
         return 0;
       }
