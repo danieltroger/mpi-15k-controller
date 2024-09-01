@@ -1,10 +1,13 @@
 import { parentPort, workerData } from "worker_threads";
 import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { socCalculationWork } from "./socCalculationWork";
+import { log } from "../utilities/logging";
 
 const data: SocWorkerData = workerData;
 
 function optimizeCalculation(data: SocWorkerData) {
+  const start = performance.now();
+  let iterationsTried = 0;
   let stepCapacity = Math.max(1, Math.floor((data.endCapacity - data.startCapacity) / 10));
   let stepParasitic = Math.max(1, Math.floor((data.endParasitic - data.startParasitic) / 10));
   let bestResult: WorkerResult | null = null;
@@ -13,6 +16,7 @@ function optimizeCalculation(data: SocWorkerData) {
   while (stepCapacity >= 1 && stepParasitic >= 1) {
     for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += stepCapacity) {
       for (let parasitic = data.endParasitic; parasitic >= data.startParasitic; parasitic -= stepParasitic) {
+        iterationsTried++;
         const { socSinceFull, socSinceEmpty } = socCalculationWork({
           ...data,
           assumedCapacity: capacity,
@@ -56,6 +60,7 @@ function optimizeCalculation(data: SocWorkerData) {
     // If no result is close enough, send the best found
     parentPort!.postMessage(bestResult);
   }
+  log("Worker calculations took", performance.now() - start, "ms for", iterationsTried, "iterations");
 }
 
 optimizeCalculation(data);
