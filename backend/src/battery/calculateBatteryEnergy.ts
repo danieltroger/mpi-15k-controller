@@ -35,7 +35,6 @@ export function calculateBatteryEnergy({
     return databaseEnergy;
   });
 
-  const [totalEnergy, setTotalEnergy] = createSignal<number | undefined>();
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
 
   let localEnergy = 0;
@@ -65,13 +64,12 @@ export function calculateBatteryEnergy({
   });
 
   // When anything changes, sum up the energy from database and local
-  createEffect(() => {
+  const totalEnergy = createMemo(() => {
     sumEnergyToggle();
     const databaseValue = databaseEnergy();
     if (databaseValue == undefined) return;
-    setTotalEnergy(databaseValue + localEnergy);
+    return databaseValue + localEnergy;
   });
-
   const energyToSubtract = createMemo(() => calculateEnergyToSubtract(from(), useNow(), subtractFromPower()));
 
   return {
