@@ -1,6 +1,5 @@
 import { Accessor, createMemo as solidCreateMemo } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
-import { log } from "../utilities/logging";
 
 export function calculateBatteryEnergy({
   from,
@@ -24,7 +23,6 @@ export function calculateBatteryEnergy({
   createMemo: typeof solidCreateMemo;
 }) {
   const totalPowerHistory = () => {
-    const start = performance.now();
     const fromValue = from();
     const filteredLocalPower: { time: number; value: number }[] = [];
     const filteredDatabasePower: { time: number; value: number }[] = [];
@@ -63,13 +61,10 @@ export function calculateBatteryEnergy({
       }
     }
 
-    log("Merging totalPowerHistory took", performance.now() - start, "ms");
-
     return { filteredLocalPower, filteredDatabasePower };
   };
 
   const energy = createMemo<{ energyCharged: number; energyDischarged: number } | undefined>(prev => {
-    const start = performance.now();
     // Calculate "totalPowerHistory", but without merging the two parts, since then we have to create multiple arrays and GC:ing those takes time
     const { filteredDatabasePower, filteredLocalPower } = totalPowerHistory();
     const toSubtract = subtractFromPower();
@@ -103,7 +98,6 @@ export function calculateBatteryEnergy({
         energyDischarged += energy;
       }
     }
-    log("Calculating energy took", performance.now() - start, "ms");
     return { energyCharged, energyDischarged };
   });
 
