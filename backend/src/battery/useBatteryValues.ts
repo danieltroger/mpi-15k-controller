@@ -59,24 +59,15 @@ export function useBatteryValues(
     currentPower,
   });
 
-  const owner = getOwner();
-
-  setTimeout(
-    () =>
-      runWithOwner(owner, () =>
-        iterativelyFindSocParameters({
-          totalLastEmpty,
-          totalLastFull,
-          configSignal,
-          energyDischargedSinceFullWithoutParasitic,
-          energyChargedSinceEmptyWithoutParasitic,
-          energyChargedSinceFullWithoutParasitic,
-          energyDischargedSinceEmptyWithoutParasitic,
-        })
-      ),
-    // Start CPU intensive shit after 10 minutes so when dev:ing we get fast responses
-    60_000 * 10
-  );
+  iterativelyFindSocParameters({
+    totalLastEmpty,
+    totalLastFull,
+    configSignal,
+    energyDischargedSinceFullWithoutParasitic,
+    energyChargedSinceEmptyWithoutParasitic,
+    energyChargedSinceFullWithoutParasitic,
+    energyDischargedSinceEmptyWithoutParasitic,
+  });
 
   const averageSOC = createMemo(() => {
     const sinceFull = socSinceFull();
