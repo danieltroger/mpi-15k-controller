@@ -4,7 +4,7 @@ import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
-import { useDatabasePower } from "./useDatabasePower";
+import { useNow } from "../utilities/useNow";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,
@@ -77,15 +77,17 @@ export function iterativelyFindSocParameters({
       const endCapacity = Math.min(startCapacity + rangePerWorker - 1, totalEndCapacity);
 
       const workerData: SocWorkerData = untrack(() => ({
-        now: now(),
         totalLastEmpty: totalLastEmpty(),
         totalLastFull: totalLastFull(),
         endParasitic,
         startParasitic,
-        databasePowerValues: [...databasePowerValues()!],
         startCapacity,
         endCapacity,
-        localPowerHistory: [...localPowerHistory()],
+        energyDischargedSinceFullWithoutParasitic: energyDischargedSinceFullWithoutParasitic()!,
+        energyChargedSinceEmptyWithoutParasitic: energyChargedSinceEmptyWithoutParasitic()!,
+        energyChargedSinceFullWithoutParasitic: energyChargedSinceFullWithoutParasitic()!,
+        energyDischargedSinceEmptyWithoutParasitic: energyDischargedSinceEmptyWithoutParasitic()!,
+        now: useNow(),
       }));
 
       const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url), {
