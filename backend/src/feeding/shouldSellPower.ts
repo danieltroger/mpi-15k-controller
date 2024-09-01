@@ -1,4 +1,4 @@
-import { Accessor, createEffect, createMemo, createSignal, indexArray, onCleanup } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, indexArray, mapArray, onCleanup } from "solid-js";
 import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { catchify } from "@depict-ai/utilishared/latest";
@@ -10,37 +10,41 @@ const timeoutBatches = new Map<
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(
-    indexArray(
-      () => config().scheduled_power_selling.schedule,
-      (schedule, index) => {
+    mapArray(
+      () => Object.keys(config().scheduled_power_selling.schedule),
+      (startTime, index) => {
         const [wantedOutput, setWantedOutput] = createSignal<Accessor<number>>(() => 0);
-        const memoizedStart = createMemo(() => +new Date(schedule().start_time));
-        const memoizedEnd = createMemo(() => +new Date(schedule().end_time));
+        const scheduleItem = () => config().scheduled_power_selling.schedule[startTime];
+        const startTimestamp = +new Date(startTime);
+        const memoizedEnd = createMemo(() => +new Date(scheduleItem().end_time));
+        const now = +new Date();
 
-        createEffect(() => console.log("schedule item updated", index, memoizedStart(), memoizedEnd(), schedule()));
+        createEffect(() => console.log("schedule item updated", index, startTimestamp, memoizedEnd(), scheduleItem()));
 
         createEffect(() => {
-          const now = +new Date();
-          const start = memoizedStart();
           const end = memoizedEnd();
           const setEndTimeout = () =>
             batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => 0), end, false);
 
           // If already in the timeslot, set feeding directly
-          if (start <= now && now <= end) {
+          if (startTimestamp <= now && now <= end) {
             console.log("instant starting feeding");
-            setWantedOutput(() => () => schedule().power_watts);
+            setWantedOutput(() => () => scheduleItem().power_watts);
             setEndTimeout();
-          } else if (start > now) {
+          } else if (startTimestamp > now) {
             console.log("scheduling start");
             // If schedule item starts in the future, set timeout for both start and end
-            batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => schedule().power_watts), start, true);
+            batchedRunAtFutureTimeWithPriority(
+              () => setWantedOutput(() => () => scheduleItem().power_watts),
+              startTimestamp,
+              true
+            );
             setEndTimeout();
           } else {
-            console.log("ignoring schedule item", start, end);
+            // If schedule item has ended, set feeding to 0
+            console.log("setting feeding to 0");
+            setWantedOutput(() => () => 0);
           }
-
-          onCleanup(() => setWantedOutput(() => () => 0));
         });
         return wantedOutput;
       }
