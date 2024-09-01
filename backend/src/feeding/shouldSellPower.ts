@@ -19,8 +19,6 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
         const memoizedEnd = createMemo(() => +new Date(scheduleItem().end_time));
         const now = +new Date();
 
-        createEffect(() => console.log("schedule item updated", index, startTimestamp, memoizedEnd(), scheduleItem()));
-
         createEffect(() => {
           const end = memoizedEnd();
           const setEndTimeout = () =>
@@ -28,11 +26,9 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
 
           // If already in the timeslot, set feeding directly
           if (startTimestamp <= now && now <= end) {
-            console.log("instant starting feeding");
             setWantedOutput(() => () => scheduleItem().power_watts);
             setEndTimeout();
           } else if (startTimestamp > now) {
-            console.log("scheduling start");
             // If schedule item starts in the future, set timeout for both start and end
             batchedRunAtFutureTimeWithPriority(
               () => setWantedOutput(() => () => scheduleItem().power_watts),
@@ -42,7 +38,6 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
             setEndTimeout();
           } else {
             // If schedule item has ended, set feeding to 0
-            console.log("setting feeding to 0");
             setWantedOutput(() => () => 0);
           }
         });
@@ -63,7 +58,6 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
       hitSOCLimit = false;
       // return the maximum value of all schedule items
       const values = scheduleOutput().map(schedule => schedule()());
-      log("schedule values", values);
       const result = Math.max(...values);
       if (Math.abs(result) === Infinity) {
         return 0;
