@@ -14,14 +14,9 @@ function optimizeCalculation(data: SocWorkerData) {
     for (let capacity = data.startCapacity; capacity <= data.endCapacity; capacity += stepCapacity) {
       for (let parasitic = data.endParasitic; parasitic >= data.startParasitic; parasitic -= stepParasitic) {
         const { socSinceFull, socSinceEmpty } = socCalculationWork({
-          energyDischargedSinceFullWithoutParasitic: data.energyDischargedSinceFullWithoutParasitic,
-          energyChargedSinceEmptyWithoutParasitic: data.energyChargedSinceEmptyWithoutParasitic,
-          energyChargedSinceFullWithoutParasitic: data.energyChargedSinceFullWithoutParasitic,
-          energyDischargedSinceEmptyWithoutParasitic: data.energyDischargedSinceEmptyWithoutParasitic,
+          ...data,
           assumedCapacity: capacity,
           assumedParasitic: parasitic,
-          from: data.now,
-          now: data.now,
         });
 
         if (socSinceEmpty == undefined || socSinceFull == undefined) {
