@@ -12,10 +12,12 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
   const scheduleOutput = createMemo(
     indexArray(
       () => config().scheduled_power_selling.schedule,
-      schedule => {
+      (schedule, index) => {
         const [wantedOutput, setWantedOutput] = createSignal<Accessor<number>>(() => 0);
         const memoizedStart = createMemo(() => +new Date(schedule().start_time));
         const memoizedEnd = createMemo(() => +new Date(schedule().end_time));
+
+        createEffect(() => console.log("schedule item updated", index, memoizedStart(), memoizedEnd(), schedule()));
 
         createEffect(() => {
           const now = +new Date();
