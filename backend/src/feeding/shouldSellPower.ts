@@ -54,17 +54,20 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
     const startSellingAgainAboveSoc = config().scheduled_power_selling.start_selling_again_above_soc;
     const limitToUse = hitSOCLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
+    // take the maximum value of all schedule items
+    const values = scheduleOutput().map(schedule => schedule()());
+    let result = Math.max(...values);
+    if (Math.abs(result) === Infinity) {
+      result = 0;
+    }
+
     if (soc > limitToUse) {
       hitSOCLimit = false;
-      // return the maximum value of all schedule items
-      const values = scheduleOutput().map(schedule => schedule()());
-      const result = Math.max(...values);
-      if (Math.abs(result) === Infinity) {
-        return 0;
-      }
       return result;
+    } else if (result) {
+      // Only allow hitting SOC limit while we're feeding in
+      hitSOCLimit = true;
     }
-    hitSOCLimit = true;
     return 0;
   });
 
