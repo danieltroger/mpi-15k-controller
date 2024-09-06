@@ -2,7 +2,8 @@ import { MetaProvider, Title } from "@solidjs/meta";
 import { A, Router, useLocation } from "@solidjs/router";
 import { FileRoutes } from "@solidjs/start/router";
 import { Show, Suspense } from "solid-js";
-import "./app.scss";
+import "./app-dark.scss";
+import "./app-light.scss";
 import { WebSocketProvider } from "~/components/WebSocketProvider";
 
 export default function App() {

@@ -8,11 +8,17 @@
   td,
   th {
     border: 1px solid #dddddd;
+    @media (prefers-color-scheme: light) {
+      border: 1px solid #ededed;
+    }
     text-align: left;
     padding: 8px;
   }
 
   tr:nth-child(even) {
     background-color: #1b1b1b;
+    @media (prefers-color-scheme: light) {
+      background-color: #f2f2f2;
+    }
   }
 }
