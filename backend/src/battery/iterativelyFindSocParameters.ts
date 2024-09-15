@@ -20,6 +20,8 @@ export function iterativelyFindSocParameters({
   energyWithoutParasiticSinceEmpty: Accessor<undefined | number>;
   energyWithoutParasiticSinceFull: Accessor<undefined | number>;
 }) {
+  let workerReady = false;
+  let encounteredBusy = false;
   const owner = getOwner();
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
@@ -37,11 +39,16 @@ export function iterativelyFindSocParameters({
       energyWithoutParasiticSinceFull() !== undefined &&
       energyWithoutParasiticSinceEmpty() !== undefined
   );
-  const [workerReady, setWorkerReady] = createSignal(false);
   log("Starting worker for SOC calculations");
   const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url));
 
-  worker.on("message", (message: WorkerResponse) => message.started && setWorkerReady(true));
+  worker.on("message", (message: WorkerResponse) => {
+    if (message.started) {
+      workerReady = true;
+      encounteredBusy = false;
+      setToggle(prev => !prev);
+    }
+  });
   worker.on("error", err => {
     error(`Worker error:`, err);
     worker.terminate();
@@ -56,8 +63,12 @@ export function iterativelyFindSocParameters({
   setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
 
   createEffect(() => {
-    if (!hasData() || !workerReady()) return;
     toggle();
+    if (!hasData()) return;
+    if (!workerReady) {
+      encounteredBusy = true;
+      return;
+    }
     const startCapacity = startCapacityWh();
     const endCapacity = endCapacityWh();
     const startParasitic = startParasiticConsumption();
@@ -82,7 +93,7 @@ export function iterativelyFindSocParameters({
     }));
 
     worker.postMessage(workerData);
-    setWorkerReady(false);
+    workerReady = false;
 
     const messageHandler = (result: WorkerResponse) => {
       if (result.jobId !== jobId) return;
@@ -106,7 +117,11 @@ export function iterativelyFindSocParameters({
         }
 
         worker.off("message", messageHandler);
-        setWorkerReady(true);
+        workerReady = true;
+        if (encounteredBusy) {
+          encounteredBusy = false;
+          setToggle(prev => !prev);
+        }
         return;
       }
       appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
