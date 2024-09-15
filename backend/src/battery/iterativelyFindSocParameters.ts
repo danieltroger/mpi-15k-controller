@@ -1,10 +1,11 @@
-import { Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, getOwner, onCleanup, runWithOwner, untrack } from "solid-js";
 import { get_config_object } from "../config";
-import { SocWorkerData, WorkerResult } from "./socCalculationWorker.types";
+import { SocWorkerData, WorkerResponse, WorkerResult } from "./socCalculationWorker.types";
 import { error, log } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
 import { useNow } from "../utilities/useNow";
+import { random_string } from "@depict-ai/utilishared/latest";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,
@@ -19,8 +20,7 @@ export function iterativelyFindSocParameters({
   energyWithoutParasiticSinceEmpty: Accessor<undefined | number>;
   energyWithoutParasiticSinceFull: Accessor<undefined | number>;
 }) {
-  let effectsRunning = 0;
-  const numWorkers = 1; // Hardcoded for now
+  const owner = getOwner();
   const startCapacityWh = createMemo(
     () => config().soc_calculations.capacity_per_cell_from_wh * config().soc_calculations.number_of_cells
   );
@@ -37,101 +37,85 @@ export function iterativelyFindSocParameters({
       energyWithoutParasiticSinceFull() !== undefined &&
       energyWithoutParasiticSinceEmpty() !== undefined
   );
-  // Calculate SOC stuff once an hour because the pi zero has so little ram it gets super slow when we do it
-  setInterval(() => effectsRunning < 1 && setToggle(prev => !prev), 1000 * 60 * 60);
+  const [workerReady, setWorkerReady] = createSignal(false);
+  log("Starting worker for SOC calculations");
+  const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url));
+
+  worker.on("message", (message: WorkerResponse) => message.started && setWorkerReady(true));
+  worker.on("error", err => {
+    error(`Worker error:`, err);
+    worker.terminate();
+    runWithOwner(owner, () => {
+      throw new Error("Worker error, see previous log");
+    });
+  });
+  worker.on("exit", code => error(`Worker stopped with exit code ${code}, which shouldn't happen`));
+  onCleanup(() => worker.terminate());
+
+  // Calculate SOC stuff once an hour
+  setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
 
   createEffect(() => {
-    if (!hasData()) return;
+    if (!hasData() || !workerReady()) return;
     toggle();
-    const totalStartCapacity = startCapacityWh();
-    const totalEndCapacity = endCapacityWh();
+    const startCapacity = startCapacityWh();
+    const endCapacity = endCapacityWh();
     const startParasitic = startParasiticConsumption();
     const endParasitic = endParasiticConsumption();
-    const rangePerWorker = Math.ceil((totalEndCapacity - totalStartCapacity) / numWorkers);
-    const [workersRunning, setWorkersRunning] = createSignal(0);
     const results: WorkerResult[] = [];
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
-    let gotCleanedUp = false;
-    let decrementedRunning = false;
+    const jobId = random_string();
 
-    effectsRunning++;
-    onCleanup(() => {
-      gotCleanedUp = true;
-      if (!decrementedRunning) {
-        effectsRunning--;
-        decrementedRunning = true;
-      }
-    });
+    log("Giving worker work to figure out SOC requirements");
 
-    log("Spawning", numWorkers, "workers to figure out SOC requirements");
+    const workerData: SocWorkerData = untrack(() => ({
+      totalLastEmpty: totalLastEmpty()!,
+      totalLastFull: totalLastFull()!,
+      endParasitic,
+      startParasitic,
+      startCapacity,
+      endCapacity,
+      energyWithoutParasiticSinceEmpty: energyWithoutParasiticSinceEmpty()!,
+      energyWithoutParasiticSinceFull: energyWithoutParasiticSinceFull()!,
+      now: useNow(),
+      jobId,
+    }));
 
-    for (let i = 0; i < numWorkers; i++) {
-      const startCapacity = totalStartCapacity + i * rangePerWorker;
-      const endCapacity = Math.min(startCapacity + rangePerWorker - 1, totalEndCapacity);
+    worker.postMessage(workerData);
+    setWorkerReady(false);
 
-      const workerData: SocWorkerData = untrack(() => ({
-        totalLastEmpty: totalLastEmpty()!,
-        totalLastFull: totalLastFull()!,
-        endParasitic,
-        startParasitic,
-        startCapacity,
-        endCapacity,
-        energyWithoutParasiticSinceEmpty: energyWithoutParasiticSinceEmpty()!,
-        energyWithoutParasiticSinceFull: energyWithoutParasiticSinceFull()!,
-        now: useNow(),
-      }));
-
-      const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url), {
-        workerData,
-      });
-      setWorkersRunning(prev => prev + 1);
-
-      worker.on("message", (result: WorkerResult) => {
-        appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
-          error("Failed to write soc calculation log", e)
-        );
-        results.push(result);
-      });
-
-      worker.on("error", err => {
-        error(`Worker ${i} error:`, err);
-        worker.terminate();
-      });
-
-      worker.on("exit", code => {
-        setWorkersRunning(prev => prev - 1);
-        if (code !== 0) {
-          error(`Worker ${i} stopped with exit code ${code}`);
+    const messageHandler = (result: WorkerResponse) => {
+      if (result.jobId !== jobId) return;
+      if (result.done) {
+        if (results.length) {
+          const middleValue = getMiddleValue(results);
+          log("Settling on", middleValue, "after doing SOC calculations");
+          // Have these values in config so they persist over program restarts
+          setConfig(prev => ({
+            ...prev,
+            soc_calculations: {
+              ...prev.soc_calculations,
+              current_state: {
+                capacity: middleValue.capacity,
+                parasitic_consumption: middleValue.parasitic,
+              },
+            },
+          }));
         } else {
-          log(`Worker ${i} is done`);
+          log("No results from SOC calculations, keeping current values");
         }
-      });
 
-      onCleanup(() => worker.terminate());
-    }
-
-    createEffect(() => {
-      if (workersRunning() === 0) {
-        if (!decrementedRunning) {
-          effectsRunning--;
-          decrementedRunning = true;
-        }
+        worker.off("message", messageHandler);
+        setWorkerReady(true);
+        return;
       }
-      if (workersRunning() !== 0 || !results.length || gotCleanedUp) return;
-      const middleValue = getMiddleValue(results);
-      log("Settling on", middleValue, "after doing SOC calculations");
-      // Have these values in config so they persist over program restarts
-      setConfig(prev => ({
-        ...prev,
-        soc_calculations: {
-          ...prev.soc_calculations,
-          current_state: {
-            capacity: middleValue.capacity,
-            parasitic_consumption: middleValue.parasitic,
-          },
-        },
-      }));
-    });
+      appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
+        error("Failed to write soc calculation log", e)
+      );
+      results.push(result);
+    };
+
+    worker.on("message", messageHandler);
   });
 }
 
