@@ -8,6 +8,7 @@ export type SocWorkerData = {
   now: number;
   totalLastFull: number;
   totalLastEmpty: number;
+  jobId: string;
 };
 
 export type WorkerResult = {
@@ -15,4 +16,12 @@ export type WorkerResult = {
   parasitic: number;
   sinceEmpty: number;
   sinceFull: number;
+  jobId: string;
+  started?: never;
+  done?: never;
 };
+
+export type WorkerResponse =
+  | { started: true; jobId?: never; done?: never }
+  | WorkerResult
+  | { done: true; jobId: string; started?: never };

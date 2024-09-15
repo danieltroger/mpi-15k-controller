@@ -1,12 +1,13 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
-import { createMemo, getOwner, Resource, runWithOwner } from "solid-js";
+import { catchError, createEffect, createMemo, createSignal, Resource } from "solid-js";
 import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
 import { AsyncMqttClient } from "async-mqtt";
 import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters";
 import { reportSOCToMqtt } from "./reportSOCToMqtt";
+import { error } from "../utilities/logging";
 
 export function useBatteryValues(
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
@@ -53,12 +54,25 @@ export function useBatteryValues(
     currentPower,
   });
 
-  iterativelyFindSocParameters({
-    totalLastEmpty,
-    totalLastFull,
-    configSignal,
-    energyWithoutParasiticSinceEmpty,
-    energyWithoutParasiticSinceFull,
+  const [iterativeFindingFailed, setIterativeFindingFailed] = createSignal(false);
+
+  createEffect(() => {
+    if (iterativeFindingFailed()) return;
+    catchError(
+      () =>
+        iterativelyFindSocParameters({
+          totalLastEmpty,
+          totalLastFull,
+          configSignal,
+          energyWithoutParasiticSinceEmpty,
+          energyWithoutParasiticSinceFull,
+        }),
+      e => {
+        setIterativeFindingFailed(true);
+        error("Iteratively finding SOC parameters failed", e, "restarting in 60s");
+        setTimeout(() => setIterativeFindingFailed(false), 60_000);
+      }
+    );
   });
 
   const averageSOC = createMemo(() => {
