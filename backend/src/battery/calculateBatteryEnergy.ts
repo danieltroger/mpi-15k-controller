@@ -23,11 +23,11 @@ export function calculateBatteryEnergy({
     const fromValue = from();
     const allDbValues = databasePowerValues();
     if (!fromValue || !allDbValues?.length) return; // Wait for data
-    const powerValues = allDbValues.filter(({ time }) => time >= fromValue);
     let databaseEnergy = 0;
-    for (let i = 0; i < powerValues.length; i++) {
-      const power = powerValues[i];
-      const nextPower = powerValues[i + 1];
+    for (let i = 0; i < allDbValues.length; i++) {
+      const power = allDbValues[i];
+      if (power.time < fromValue) continue;
+      const nextPower = allDbValues[i + 1];
       if (!nextPower) break;
       const powerValue = power.value;
       const timeDiff = nextPower.time - power.time;
