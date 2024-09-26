@@ -80,7 +80,7 @@ async function setParameterWithThrottlingAndRefetch<T>(
   const setAgo = now - (lastShineRequestForParameter[parameter] ?? 0);
   if (setAgo < setMaxEvery) {
     const waitFor = setMaxEvery - setAgo;
-    log("Waiting with setting ", parameter, " for", waitFor, "ms, because it was set very recently");
+    log("Waiting with setting ", parameter, "to", value(), "for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
   const didFail = await setConfiguredValueInShinemonitor(configSignal, parameter, value());

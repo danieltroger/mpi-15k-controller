@@ -162,7 +162,7 @@ async function setVoltageWithThrottlingAndRefetch(
   const setAgo = now - (lastVoltageSet[type] ?? 0);
   if (setAgo < setMaxEvery) {
     const waitFor = setMaxEvery - setAgo;
-    log("Waiting with setting voltage for", waitFor, "ms, because it was set very recently");
+    log("Waiting with setting voltag to", targetVoltage, "for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
   await setConfiguredVoltageInShinemonitor(configSignal, type, targetVoltage);
