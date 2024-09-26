@@ -59,8 +59,8 @@ export function iterativelyFindSocParameters({
   worker.on("exit", code => error(`Worker stopped with exit code ${code}, which shouldn't happen`));
   onCleanup(() => worker.terminate());
 
-  // Calculate SOC stuff once an hour
-  setInterval(() => setToggle(prev => !prev), 1000 * 60 * 60);
+  // Calculate SOC stuff every 10 minutes
+  setInterval(() => setToggle(prev => !prev), 1000 * 60 * 10);
 
   createEffect(() => {
     toggle();
