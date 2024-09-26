@@ -251,11 +251,11 @@ export function feedWhenNoSolar({
   createEffect(() => {
     const shouldEnable = shouldEnableFeeding();
     const currentDebouncedValue = untrack(debouncedShouldEnableFeeding);
+    clearTimeout(debounceTimeout);
     if (currentDebouncedValue === undefined || untrack(exportAmountForSelling)) {
       setDebouncedShouldEnableFeeding(shouldEnable);
       return;
     }
-    clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(
       catchify(() => setDebouncedShouldEnableFeeding(shouldEnable)),
       config().feed_from_battery_when_no_solar.should_feed_debounce_time
