@@ -1,6 +1,6 @@
 {
   "execMap": {
-    "ts": "node --loader @swc-node/register/esm"
+    "ts": "NODE_OPTIONS=--max_old_space_size=3072 node --loader @swc-node/register/esm"
   },
   "restartable": "rs",
   "delay": 2000,
