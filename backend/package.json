@@ -1,7 +1,7 @@
 {
   "packageManager": "yarn@4.1.1",
   "scripts": {
-    "start": "SENTRY=false DEBUG=true BUILD_TARGET=node nodemon src/index.ts"
+    "start": "NODE_OPTIONS=--max_old_space_size=3072 SENTRY=false DEBUG=true BUILD_TARGET=node nodemon src/index.ts"
   },
   "dependencies": {
     "@depict-ai/utilishared": "^2.4.4",
