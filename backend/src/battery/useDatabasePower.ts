@@ -74,43 +74,38 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     return Math.min(previousMidnight, lastFull || Infinity, lastEmpty || Infinity);
   });
 
-  const [interestingDatabaseValues] = createResource(
+  const [powerValues] = createResource(
     () => [influxClient(), requestStartingAt()] as const,
     async ([db, startingAt]) => {
       if (!db || !startingAt) return;
       log("Requesting historic battery values from database");
-      const result = await queryVoltageAndCurrentBetweenTimes(db, startingAt, +new Date());
+      const values = await queryVoltageAndCurrentBetweenTimes(db, startingAt, +new Date());
       log("Got historic battery values from database");
-      return result;
+
+      const voltages = values.filter(value => value.battery_voltage !== null);
+      const currents = values.filter(value => value.battery_current !== null);
+      // Little temporary override hack because db communication was broken, and it's too annoying to discharge 65kwh just because of it
+      const firstOverride = powerValuesNotInDb[0].time;
+      const lastOverride = powerValuesNotInDb[0].time;
+      const multiplied = voltages.map((voltage, index) => {
+        const { battery_current } = currents[index] || {};
+        const { battery_voltage, time } = voltage;
+        if (battery_voltage == null || battery_current == null) return;
+        const finalTime = Math.round(time.getNanoTime() / 1000 / 1000);
+        // If within override timeframe, use override value instead
+        if (finalTime >= firstOverride && finalTime <= lastOverride) return;
+        return {
+          time: finalTime,
+          value: (battery_voltage / 10) * (battery_current / 10),
+        };
+      });
+      multiplied.push(...powerValuesNotInDb);
+      const filtered = multiplied.filter(v => v != undefined) as { time: number; value: number }[];
+      // Sort by time
+      filtered.sort((a, b) => a.time - b.time);
+      return filtered;
     }
   );
-
-  const powerValues = createMemo(() => {
-    const values = interestingDatabaseValues();
-    if (!values) return;
-    const voltages = values.filter(value => value.battery_voltage !== null);
-    const currents = values.filter(value => value.battery_current !== null);
-    // Little temporary override hack because db communication was broken, and it's too annoying to discharge 65kwh just because of it
-    const firstOverride = powerValuesNotInDb[0].time;
-    const lastOverride = powerValuesNotInDb[0].time;
-    const multiplied = voltages.map((voltage, index) => {
-      const { battery_current } = currents[index] || {};
-      const { battery_voltage, time } = voltage;
-      if (battery_voltage == null || battery_current == null) return;
-      const finalTime = Math.round(time.getNanoTime() / 1000 / 1000);
-      // If within override timeframe, use override value instead
-      if (finalTime >= firstOverride && finalTime <= lastOverride) return;
-      return {
-        time: finalTime,
-        value: (battery_voltage / 10) * (battery_current / 10),
-      };
-    });
-    multiplied.push(...powerValuesNotInDb);
-    const filtered = multiplied.filter(v => v != undefined) as { time: number; value: number }[];
-    // Sort by time
-    filtered.sort((a, b) => a.time - b.time);
-    return filtered;
-  });
 
   return {
     batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt,
