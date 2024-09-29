@@ -7,6 +7,7 @@ import { useNow } from "../utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "../utilities/totalSolarPower";
 import { appendFile } from "fs/promises";
+import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -54,6 +55,7 @@ export function feedWhenNoSolar({
   });
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
+  const outputPowerSuddenlyRose = useOutputPowerSuddenlyRose(acOutputPower, config);
   const getBatteryVoltage = () => {
     let voltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
     if (voltage) {
@@ -204,10 +206,13 @@ export function feedWhenNoSolar({
     });
 
   const feedWhenForceFeedingAmount: Accessor<number> = createMemo(() => {
-    const { feed_amount_watts } = config().feed_from_battery_when_no_solar;
+    const { feed_amount_watts, increment_with_on_peak } = config().feed_from_battery_when_no_solar;
     const toExport = exportAmountForSelling();
     if (toExport) {
       return Math.max(feed_amount_watts, toExport);
+    }
+    if (outputPowerSuddenlyRose()) {
+      return feed_amount_watts + increment_with_on_peak;
     }
     return feed_amount_watts;
   });

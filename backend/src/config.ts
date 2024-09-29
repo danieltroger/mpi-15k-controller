@@ -53,6 +53,9 @@ export type Config = {
   feed_from_battery_when_no_solar: {
     feed_below_available_power: number;
     feed_amount_watts: number;
+    increment_with_on_peak: number;
+    // seconds
+    peak_increment_duration: number;
     max_feed_in_power_when_feeding_from_solar: number;
     add_to_feed_below_when_currently_feeding: number;
     disable_below_battery_voltage: number;
@@ -60,6 +63,7 @@ export type Config = {
     allow_switching_to_solar_feeding_during_charging_x_volts_below_full: number;
     force_let_through_to_grid_over_pv_voltage1: number;
     force_let_through_to_grid_over_pv_voltage2: number;
+    peak_min_change: number;
   };
   start_bulk_charge_after_wh_discharged: number;
   shinemonitor_password?: string;
@@ -132,6 +136,9 @@ const default_config: Config = {
     allow_switching_to_solar_feeding_during_charging_x_volts_below_full: 1.4,
     force_let_through_to_grid_over_pv_voltage1: 545,
     force_let_through_to_grid_over_pv_voltage2: 670,
+    increment_with_on_peak: 1000,
+    peak_increment_duration: 90,
+    peak_min_change: 1000,
   },
 };
 
