@@ -77,8 +77,6 @@ export function iterativelyFindSocParameters({
     const fileForRun = new URL(`../socCalculationLog-${new Date().toISOString()}.txt`, import.meta.url);
     const jobId = random_string();
 
-    log("Giving worker work to figure out SOC requirements");
-
     const workerData: SocWorkerData = untrack(() => ({
       totalLastEmpty: totalLastEmpty()!,
       totalLastFull: totalLastFull()!,
