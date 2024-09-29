@@ -43,15 +43,6 @@ parentPort!.on("message", (data: SocWorkerData) => {
     parentPort!.postMessage(bestResult);
   }
 
-  log(
-    "Worker calculations took",
-    performance.now() - start,
-    "ms for",
-    iterationsTried,
-    "iterations. Job ID:",
-    data.jobId
-  );
-
   parentPort!.postMessage({ done: true, jobId: data.jobId });
 });
 
