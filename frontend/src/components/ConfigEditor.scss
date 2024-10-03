@@ -1,13 +1,11 @@
 .config-editor .save-button {
-  background: black;
-  border: 1px solid white;
+  background: light-dark(white, black);
+  border: 1px solid light-dark(black, white);
   padding: 10px 20px;
-  color: white;
+  color: light-dark(black, white);
 }
 
 .config-editor textarea {
   width: min(90vw, 800px);
   height: 10cm;
-  background: black;
-  color: white;
 }
