@@ -51,7 +51,11 @@ export default function Home() {
         <br />
         Added since empty: {energyAddedSinceEmpty()}
         <br />
-        <FullIn energyRemovedSinceFull={energyRemovedSinceFull} />
+        <FullOrEmptyIn
+          energyRemovedSinceFull={energyRemovedSinceFull}
+          assumedParasiticConsumption={assumedParasiticConsumption}
+          energyAddedSinceEmpty={energyAddedSinceEmpty}
+        />
         <h4>
           Percent SOC assuming {assumedCapacity()}
           wh capacity:
@@ -66,20 +70,47 @@ export default function Home() {
   );
 }
 
-function FullIn({ energyRemovedSinceFull }: { energyRemovedSinceFull: Accessor<number | undefined> }) {
+function FullOrEmptyIn({
+  energyRemovedSinceFull,
+  assumedParasiticConsumption,
+  energyAddedSinceEmpty,
+}: {
+  energyRemovedSinceFull: Accessor<number | undefined>;
+  energyAddedSinceEmpty: Accessor<number | undefined>;
+  assumedParasiticConsumption: Accessor<number | undefined>;
+}) {
   const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
+  const chargingAt = createMemo(() => {
+    let chargingAt = currentBatteryPower()?.value;
+    if (chargingAt == undefined) return chargingAt;
+    return chargingAt - (assumedParasiticConsumption() || 0);
+  });
+  const isDischarging = createMemo(() => {
+    return (currentBatteryPower()?.value as number) < 0;
+  });
   const fullIn = createMemo(() => {
     const capacityLeft = energyRemovedSinceFull();
-    const chargingAt = currentBatteryPower()?.value;
-    if (chargingAt == undefined || capacityLeft == undefined) return "unknown";
-    const hours = capacityLeft / chargingAt;
+    const chargingWith = chargingAt();
+    if (chargingWith == undefined || capacityLeft == undefined || chargingWith < 0) return "unknown";
+    const hours = capacityLeft / chargingWith;
     const fullAtDate = new Date(+new Date() + hours * 60 * 60 * 1000);
     return formatWithINTL(new Date(), fullAtDate, "en");
   });
 
+  const emptyIn = createMemo(() => {
+    const capacityLeft = energyAddedSinceEmpty();
+    const chargingWith = chargingAt();
+    if (chargingWith == undefined || capacityLeft == undefined || chargingWith > 0) return "unknown";
+    const hours = capacityLeft / chargingWith;
+    const emptyAtDate = new Date(+new Date() + hours * 60 * 60 * 1000);
+    return formatWithINTL(emptyAtDate, new Date(), "en");
+  });
+
   return (
     <>
-      At charge rate, battery full {fullIn()}
+      <Show when={isDischarging()} fallback={<>At charge rate, battery full {fullIn()}</>}>
+        At discharge rate, battery empty {emptyIn()}
+      </Show>
       <br />
     </>
   );
