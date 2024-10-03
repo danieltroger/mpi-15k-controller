@@ -1,7 +1,7 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { createMemo, createSignal, onMount, Show } from "solid-js";
+import { Accessor, createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { MqttValue } from "../../../backend/src/sharedTypes";
+import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
 
 export default function Home() {
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
@@ -51,6 +51,7 @@ export default function Home() {
         <br />
         Added since empty: {energyAddedSinceEmpty()}
         <br />
+        <FullIn energyRemovedSinceFull={energyRemovedSinceFull} />
         <h4>
           Percent SOC assuming {assumedCapacity()}
           wh capacity:
@@ -63,6 +64,53 @@ export default function Home() {
       </Show>
     </main>
   );
+}
+
+function FullIn({ energyRemovedSinceFull }: { energyRemovedSinceFull: Accessor<number | undefined> }) {
+  const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
+  const fullIn = createMemo(() => {
+    const capacityLeft = energyRemovedSinceFull();
+    const chargingAt = currentBatteryPower()?.value;
+    if (chargingAt == undefined || capacityLeft == undefined) return "unknown";
+    const hours = capacityLeft / chargingAt;
+    const fullAtDate = new Date(+new Date() + hours * 60 * 60 * 1000);
+    return formatWithINTL(new Date(), fullAtDate, "en");
+  });
+
+  return (
+    <>
+      At charge rate, battery full {fullIn()}
+      <br />
+    </>
+  );
+}
+
+const secondsInAMinute = 60;
+const secondsInAnHour = secondsInAMinute * 60;
+const secondsInADay = secondsInAnHour * 24;
+
+// https://github.com/tc39/proposal-intl-duration-format/issues/174#issuecomment-1807235436
+function formatWithINTL(date: Date, now: Date, locale: string): string {
+  const intlObject = new Intl.RelativeTimeFormat(locale);
+  const listFormatter = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
+  const timeComponents: string[] = [];
+  let seconds = Math.round((+now - +date) / 1000);
+
+  const days = Math.floor(seconds / secondsInADay);
+  seconds %= secondsInADay; // Remainder after subtracting days
+
+  const hours = Math.floor(seconds / secondsInAnHour);
+  seconds %= secondsInAnHour; // Remainder after subtracting hours
+
+  const minutes = Math.floor(seconds / secondsInAMinute);
+  seconds %= secondsInAMinute; // Remainder after subtracting minutes
+
+  if (days > 0) timeComponents.push(intlObject.format(days, "day"));
+  if (hours > 0) timeComponents.push(intlObject.format(hours, "hour"));
+  if (minutes > 0) timeComponents.push(intlObject.format(minutes, "minute"));
+  if (seconds > 0 || timeComponents.length === 0) timeComponents.push(intlObject.format(seconds, "second"));
+
+  return listFormatter.format(timeComponents);
 }
 
 function NoBuyDebug() {
