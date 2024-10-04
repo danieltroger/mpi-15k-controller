@@ -86,7 +86,7 @@ function FullOrEmptyIn({
     return chargingAt - (assumedParasiticConsumption() || 0);
   });
   const isDischarging = createMemo(() => {
-    return (currentBatteryPower()?.value as number) < 0;
+    return (chargingAt() as number) < 0;
   });
   const fullIn = createMemo(() => {
     const capacityLeft = energyRemovedSinceFull();
