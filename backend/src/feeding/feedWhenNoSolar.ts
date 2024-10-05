@@ -55,7 +55,7 @@ export function feedWhenNoSolar({
   });
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
-  const outputPowerSuddenlyRose = useOutputPowerSuddenlyRose(acOutputPower, config);
+  const incrementForAntiPeak = useOutputPowerSuddenlyRose(acOutputPower, config, mqttValues);
   const getBatteryVoltage = () => {
     let voltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
     if (voltage) {
@@ -206,13 +206,13 @@ export function feedWhenNoSolar({
     });
 
   const feedWhenForceFeedingAmount: Accessor<number> = createMemo(() => {
-    const { feed_amount_watts, increment_with_on_peak } = config().feed_from_battery_when_no_solar;
+    const { feed_amount_watts } = config().feed_from_battery_when_no_solar;
     const toExport = exportAmountForSelling();
     if (toExport) {
       return Math.max(feed_amount_watts, toExport);
     }
-    if (outputPowerSuddenlyRose()) {
-      return feed_amount_watts + increment_with_on_peak;
+    if (incrementForAntiPeak()) {
+      return feed_amount_watts + incrementForAntiPeak();
     }
     return feed_amount_watts;
   });
