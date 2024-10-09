@@ -76,7 +76,7 @@ export default function LiveData() {
           </tr>
           <tr>
             <td>Current battery power</td>
-            <td>{currentBatteryPower()?.value + ""}w</td>
+            <td>{Math.round(currentBatteryPower()?.value as number) + ""}w</td>
             <td>{currentBatteryPower()?.time && new Date(currentBatteryPower()!.time).toLocaleString()}</td>
           </tr>
           <tr>
