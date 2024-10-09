@@ -26,25 +26,17 @@ export default function LiveData() {
   const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
   const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
   const solarInput = createMemo(() => (solar_input_power_1()?.value || 0) + (solar_input_power_2()?.value || 0));
-  const battery = createMemo(() => {
-    const value = currentBatteryPower()?.value;
-    if (value != undefined) return Math.round(value * -1);
-  });
-  const ac_output = createMemo(() => {
-    const value = ac_output_total_active_power()?.value;
-    if (value != undefined) return value * -1;
-  });
   const ac_input = createMemo(() => ac_input_total_active_power()?.value);
 
   const sum = createMemo(() => {
     const solar = solarInput();
-    const batteryPower = battery();
-    const acOutput = ac_output();
+    const batteryPower = currentBatteryPower()?.value;
+    const acOutput = ac_output_total_active_power()?.value;
     const acInput = ac_input();
     if (solar == undefined || batteryPower == undefined || acOutput == undefined || acInput == undefined) {
       return undefined;
     }
-    return Math.round(solar + batteryPower + acOutput + acInput);
+    return Math.round(solar + batteryPower * -1 + acOutput * -1 + acInput);
   });
 
   return (
@@ -84,7 +76,7 @@ export default function LiveData() {
           </tr>
           <tr>
             <td>Current battery power</td>
-            <td>{battery() + ""}w</td>
+            <td>{currentBatteryPower()?.value + ""}w</td>
             <td>{currentBatteryPower()?.time && new Date(currentBatteryPower()!.time).toLocaleString()}</td>
           </tr>
           <tr>
@@ -107,8 +99,8 @@ export default function LiveData() {
           <tr>
             <td>AC output power</td>
             <td>
-              {ac_output() + ""}w (R: {ac_output_active_power_r()?.value}w, S: {ac_output_active_power_s()?.value}w, T:{" "}
-              {ac_output_active_power_t()?.value}w)
+              {ac_output_total_active_power()?.value + ""}w (R: {ac_output_active_power_r()?.value}w, S:{" "}
+              {ac_output_active_power_s()?.value}w, T: {ac_output_active_power_t()?.value}w)
             </td>
             <td>
               {ac_output_total_active_power()?.time && new Date(ac_output_total_active_power()!.time).toLocaleString()}
