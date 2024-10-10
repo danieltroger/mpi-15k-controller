@@ -16,6 +16,17 @@ export type Config = {
     only_sell_above_soc: number;
     start_selling_again_above_soc: number;
   };
+  scheduled_power_buying: {
+    schedule: Record<
+      string,
+      {
+        end_time: string;
+        charging_amperage: number;
+      }
+    >;
+    only_buy_below_soc: number;
+    start_buying_again_below_soc: number;
+  };
   influxdb?: {
     host: string;
     database: string;
@@ -91,10 +102,17 @@ export type Config = {
 const default_config: Config = {
   scheduled_power_selling: {
     schedule: {
-      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", "power_watts": 1500 },
+      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", power_watts: 1500 },
     },
     only_sell_above_soc: 13,
     start_selling_again_above_soc: 25,
+  },
+  scheduled_power_buying: {
+    schedule: {
+      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", charging_amperage: 200 },
+    },
+    only_buy_below_soc: 40,
+    start_buying_again_below_soc: 15,
   },
   elpatron_switching: {
     enabled: false,

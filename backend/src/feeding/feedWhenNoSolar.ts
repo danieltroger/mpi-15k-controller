@@ -19,6 +19,7 @@ export function feedWhenNoSolar({
   setLastReason,
   setLastChangingReason,
   exportAmountForSelling,
+  chargingAmperageForBuying,
 }: {
   mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
@@ -26,6 +27,7 @@ export function feedWhenNoSolar({
   setLastReason: Setter<{ what: string; when: number }>;
   setLastChangingReason: Setter<{ what: string; when: number }>;
   exportAmountForSelling: Accessor<number | undefined>;
+  chargingAmperageForBuying: Accessor<number | undefined>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
@@ -82,10 +84,20 @@ export function feedWhenNoSolar({
       setLastReason({ what: `shouldEnableFeeding currently wants to be ${what} because ${reason}`, when: +new Date() });
       return what;
     };
-    // If we should feed in, ignore throttling and just do it
+    const importAmount = chargingAmperageForBuying();
+    // If we should feed in power or charge from AC, ignore throttling and just do it
     const exportAmount = exportAmountForSelling();
-    if (exportAmount) {
+    if (exportAmount && importAmount) {
+      error(
+        "Both import and export amount are set, this should not happen",
+        exportAmount,
+        importAmount,
+        "ignoring them"
+      );
+    } else if (exportAmount) {
       return doWithReason(true, `exportAmountForSelling is ${exportAmount}`);
+    } else if (importAmount) {
+      return doWithReason(false, `chargingAmperageForBuying is ${importAmount}`);
     }
     const timeSinceLastChange = useNow() - lastChange;
     const minTimePassed = 1000 * 60 * 3;
@@ -256,8 +268,10 @@ export function feedWhenNoSolar({
   createEffect(() => {
     const shouldEnable = shouldEnableFeeding();
     const currentDebouncedValue = untrack(debouncedShouldEnableFeeding);
+    const exporting = untrack(exportAmountForSelling);
+    const importing = untrack(chargingAmperageForBuying);
     clearTimeout(debounceTimeout);
-    if (currentDebouncedValue === undefined || untrack(exportAmountForSelling)) {
+    if (currentDebouncedValue === undefined || (!(exporting && importing) && (exporting || importing))) {
       setDebouncedShouldEnableFeeding(shouldEnable);
       return;
     }
