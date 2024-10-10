@@ -22,6 +22,7 @@ import { mqttValueKeys } from "./sharedTypes";
 import { elpatronSwitching } from "./elpatronSwitching";
 import { shouldSellPower } from "./feeding/shouldSellPower";
 import { NowProvider } from "./utilities/useNow";
+import { useShouldBuyPower } from "./useShouldBuyPower";
 
 while (true) {
   await new Promise<void>(r => {
@@ -107,6 +108,7 @@ function main() {
         );
       }
       const { exportAmountForSelling } = shouldSellPower(config, averageSOC);
+      const { chargingAmperageForBuying } = useShouldBuyPower(config, averageSOC);
       const isCharging = createMemo(() => {
         if (prematureWorkaroundErrored()) return;
         return catchError(
@@ -143,6 +145,7 @@ function main() {
               setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
               setLastReason: setLastFeedWhenNoSolarReason,
               exportAmountForSelling,
+              chargingAmperageForBuying,
             });
           },
           e => {
