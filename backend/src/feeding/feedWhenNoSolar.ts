@@ -8,6 +8,7 @@ import { catchify } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "../utilities/totalSolarPower";
 import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
+import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -228,6 +229,13 @@ export function feedWhenNoSolar({
     }
     return feed_amount_watts;
   });
+  const { currentlyBuying } = useSetBuyingParameters({
+    chargingAmperageForBuying,
+    configSignal,
+    stillFeedingIn: createMemo(
+      () => currentBatteryToUtilityWhenSolar() !== "Disable" || currentBatteryToUtilityWhenNoSolar() !== "Disable"
+    ),
+  });
 
   debugLog(`feedWhenNoSolar started`);
   onCleanup(() => debugLog(`feedWhenNoSolar terminated (cleaned up)`));
@@ -253,8 +261,8 @@ export function feedWhenNoSolar({
       }
        */
       const currentlySetTo = currentShineMaxFeedInPower();
-      if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount()) {
-        // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't
+      if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount() && !currentlyBuying()) {
+        // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't. And that we're not still buying/AC Charging.
         setWantedBatteryToUtilityWhenNoSolar("49");
         setWantedBatteryToUtilityWhenSolar("49");
       }

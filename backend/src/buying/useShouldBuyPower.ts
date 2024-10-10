@@ -1,7 +1,7 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { Config } from "./config";
-import { log } from "./utilities/logging";
-import { batchedRunAtFutureTimeWithPriority } from "./utilities/batchedRunAtFutureTimeWithPriority";
+import { Config } from "../config";
+import { log } from "../utilities/logging";
+import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 
 export function useShouldBuyPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(

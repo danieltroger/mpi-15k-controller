@@ -22,7 +22,7 @@ import { mqttValueKeys } from "./sharedTypes";
 import { elpatronSwitching } from "./elpatronSwitching";
 import { shouldSellPower } from "./feeding/shouldSellPower";
 import { NowProvider } from "./utilities/useNow";
-import { useShouldBuyPower } from "./useShouldBuyPower";
+import { useShouldBuyPower } from "./buying/useShouldBuyPower";
 
 while (true) {
   await new Promise<void>(r => {
@@ -185,7 +185,7 @@ function main() {
       catchError(
         () => elpatronSwitching(config, mqttValues),
         e => {
-          setFeedWhenNoSolarErrored(true);
+          setElpatronSwitchingErrored(true);
           error("Elpatron switching errored", e, "restarting in 60s");
           setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
         }
