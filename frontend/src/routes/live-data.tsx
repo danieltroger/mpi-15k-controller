@@ -23,8 +23,8 @@ export default function LiveData() {
   const [ac_output_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_s");
   const [ac_output_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_t");
   const [ac_input_voltage_r] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
-  const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
-  const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
+  const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_s");
+  const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_t");
   const solarInput = createMemo(() => (solar_input_power_1()?.value || 0) + (solar_input_power_2()?.value || 0));
   const ac_input = createMemo(() => ac_input_total_active_power()?.value);
 
@@ -138,6 +138,14 @@ export default function LiveData() {
               A
             </td>
             <td>{ac_input_active_power_r()?.time && new Date(ac_input_active_power_r()!.time).toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td>Ac input voltage</td>
+            <td>
+              R: {(ac_input_voltage_r()?.value as number) / 10}v, S: {(ac_input_voltage_s()?.value as number) / 10}v, T:{" "}
+              {(ac_input_voltage_t()?.value as number) / 10}v
+            </td>
+            <td>{ac_input_voltage_r()?.time && new Date(ac_input_voltage_r()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Sum</td>
