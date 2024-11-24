@@ -22,8 +22,8 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
       return 0;
     }
     // We have to compare with the highest phase power because we're charging with the same power across all phases
-    // Round with 100 watts accuracy
-    const powerToChargeLessWith = Math.floor((highestPhasePower * 3) / 100) * 100;
+    // Round with 500 watts accuracy to not run into our rate limiting so often
+    const powerToChargeLessWith = Math.round((highestPhasePower * 3) / 500) * 500;
     const ampsToChargeLessWith = powerToChargeLessWith / batteryVoltage;
     return Math.round(ampsToChargeLessWith);
   });
