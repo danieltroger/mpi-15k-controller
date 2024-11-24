@@ -25,6 +25,6 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
     // Round with 100 watts accuracy
     const powerToChargeLessWith = Math.floor((highestPhasePower * 3) / 100) * 100;
     const ampsToChargeLessWith = powerToChargeLessWith / batteryVoltage;
-    return ampsToChargeLessWith;
+    return Math.round(ampsToChargeLessWith);
   });
 }
