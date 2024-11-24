@@ -159,6 +159,7 @@ function main() {
 
           return isCharging;
         });
+        const { mqttValues } = useFromMqttProvider();
         createResource(() =>
           wsMessaging({
             config_signal: configResourceValue,
@@ -177,7 +178,7 @@ function main() {
               assumedParasiticConsumption,
               isCharging: () => isChargingOuterScope()?.()?.(),
               totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
-              ...Object.fromEntries(mqttValueKeys.map(key => [key, () => useFromMqttProvider().mqttValues[key]])),
+              ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
             },
           })
         );
