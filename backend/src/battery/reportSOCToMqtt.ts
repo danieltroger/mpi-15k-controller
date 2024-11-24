@@ -1,20 +1,19 @@
-import { Accessor, createEffect, Resource, untrack } from "solid-js";
-import { AsyncMqttClient } from "async-mqtt";
+import { Accessor, createEffect, untrack } from "solid-js";
 import { Config } from "../config";
+import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
 
 export function reportSOCToMqtt({
-  mqttClient,
   config,
   averageSOC,
   socSinceEmpty,
   socSinceFull,
 }: {
-  mqttClient: Resource<AsyncMqttClient>;
   config: Accessor<Config>;
   averageSOC: Accessor<number | undefined>;
   socSinceFull: Accessor<number | undefined>;
   socSinceEmpty: Accessor<number | undefined>;
 }) {
+  const { mqttClient } = useFromMqttProvider();
   createEffect(() => {
     const client = mqttClient();
     if (!client) return;

@@ -9,7 +9,6 @@ import {
   onCleanup,
 } from "solid-js";
 import { error } from "./utilities/logging";
-import { useMQTTValues } from "./useMQTTValues";
 import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { wsMessaging } from "./wsMessaging";
@@ -23,6 +22,7 @@ import { elpatronSwitching } from "./elpatronSwitching";
 import { shouldSellPower } from "./feeding/shouldSellPower";
 import { NowProvider } from "./utilities/useNow";
 import { useShouldBuyPower } from "./buying/useShouldBuyPower";
+import { MQTTValuesProvider, useFromMqttProvider } from "./utilities/MQTTValuesProvider";
 
 while (true) {
   await new Promise<void>(r => {
@@ -63,133 +63,138 @@ function main() {
     const configResourceValue = configResource();
     if (!configResourceValue) return;
     const [config] = configResourceValue;
-    const { mqttValues, mqttClient } = useMQTTValues(createMemo(() => config().mqtt_host));
-    const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
-    const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
-    const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
-    const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
-    const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
-    const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
-    const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal<{ what: string; when: number }>({
-      what: feedWhenNoSolarDead,
-      when: +new Date(),
-    });
-    const [lastChangingFeedWhenNoSolarReason, setLastChangingFeedWhenNoSolarReason] = createSignal<{
-      what: string;
-      when: number;
-    }>({
-      what: feedWhenNoSolarDead,
-      when: +new Date(),
-    });
-    const {
-      currentPower,
-      totalLastEmpty,
-      totalLastFull,
-      energyRemovedSinceFull,
-      energyAddedSinceEmpty,
-      socSinceEmpty,
-      socSinceFull,
-      assumedParasiticConsumption,
-      assumedCapacity,
-      averageSOC,
-    } = useBatteryValues(mqttValues, configResourceValue, mqttClient);
-    const temperatures = useTemperatures(config);
 
-    saveTemperatures({ config, mqttClient, temperatures });
-
-    const isChargingOuterScope = createMemo(() => {
-      if (!hasCredentials()) {
-        return error(
-          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
-        );
-      } else if (!hasInverterDetails()) {
-        return error(
-          "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
-        );
-      }
-      const { exportAmountForSelling } = shouldSellPower(config, averageSOC);
-      const { chargingAmperageForBuying } = useShouldBuyPower(config, averageSOC);
-      const isCharging = createMemo(() => {
-        if (prematureWorkaroundErrored()) return;
-        return catchError(
-          () =>
-            prematureFloatBugWorkaround({
-              mqttValues,
-              configSignal: configResourceValue,
-              energyRemovedSinceFull,
-            }),
-          e => {
-            setPrematureWorkaroundErrored(true);
-            error("Premature float bug workaround errored", e, "restarting in 60s");
-            setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
-          }
-        );
-      });
-
-      createEffect(() => {
-        if (feedWhenNoSolarErrored()) return;
-        catchError(
-          () => {
-            const obj = { what: "Initialising", when: +new Date() };
-            setLastChangingFeedWhenNoSolarReason(obj);
-            setLastFeedWhenNoSolarReason(obj);
-            onCleanup(() => {
-              const obj = { what: feedWhenNoSolarDead, when: +new Date() };
-              setLastChangingFeedWhenNoSolarReason(obj);
-              setLastFeedWhenNoSolarReason(obj);
-            });
-            return feedWhenNoSolar({
-              mqttValues: mqttValues,
-              configSignal: configResourceValue,
-              isCharging: () => isCharging()?.(),
-              setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
-              setLastReason: setLastFeedWhenNoSolarReason,
-              exportAmountForSelling,
-              chargingAmperageForBuying,
-            });
-          },
-          e => {
-            setFeedWhenNoSolarErrored(true);
-            error("Feed when no solar errored", e, "restarting in 60s");
-            setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
-          }
-        );
-      });
-
-      return isCharging;
-    });
-    createResource(() =>
-      wsMessaging({
-        config_signal: configResourceValue,
-        owner,
-        temperatures,
-        exposedAccessors: {
-          energyAddedSinceEmpty,
-          lastFeedWhenNoSolarReason,
-          lastChangingFeedWhenNoSolarReason,
+    MQTTValuesProvider({
+      mqttHost: createMemo(() => config().mqtt_host),
+      get children() {
+        const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
+        const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
+        const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
+        const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
+        const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
+        const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
+        const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal<{ what: string; when: number }>({
+          what: feedWhenNoSolarDead,
+          when: +new Date(),
+        });
+        const [lastChangingFeedWhenNoSolarReason, setLastChangingFeedWhenNoSolarReason] = createSignal<{
+          what: string;
+          when: number;
+        }>({
+          what: feedWhenNoSolarDead,
+          when: +new Date(),
+        });
+        const {
+          currentPower,
           totalLastEmpty,
-          currentBatteryPower: currentPower,
+          totalLastFull,
           energyRemovedSinceFull,
+          energyAddedSinceEmpty,
           socSinceEmpty,
           socSinceFull,
-          assumedCapacity,
           assumedParasiticConsumption,
-          isCharging: () => isChargingOuterScope()?.()?.(),
-          totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
-          ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
-        },
-      })
-    );
-    createEffect(() => {
-      if (elpatronSwitchingErrored()) return;
-      catchError(
-        () => elpatronSwitching(config, mqttValues),
-        e => {
-          setElpatronSwitchingErrored(true);
-          error("Elpatron switching errored", e, "restarting in 60s");
-          setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
-        }
-      );
+          assumedCapacity,
+          averageSOC,
+        } = useBatteryValues(configResourceValue);
+        const temperatures = useTemperatures(config);
+
+        saveTemperatures({ config, temperatures });
+
+        const isChargingOuterScope = createMemo(() => {
+          if (!hasCredentials()) {
+            return error(
+              "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
+            );
+          } else if (!hasInverterDetails()) {
+            return error(
+              "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
+            );
+          }
+          const { exportAmountForSelling } = shouldSellPower(config, averageSOC);
+          const { chargingAmperageForBuying } = useShouldBuyPower(config, averageSOC);
+          const isCharging = createMemo(() => {
+            if (prematureWorkaroundErrored()) return;
+            return catchError(
+              () =>
+                prematureFloatBugWorkaround({
+                  configSignal: configResourceValue,
+                  energyRemovedSinceFull,
+                }),
+              e => {
+                setPrematureWorkaroundErrored(true);
+                error("Premature float bug workaround errored", e, "restarting in 60s");
+                setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
+              }
+            );
+          });
+
+          createEffect(() => {
+            if (feedWhenNoSolarErrored()) return;
+            catchError(
+              () => {
+                const obj = { what: "Initialising", when: +new Date() };
+                setLastChangingFeedWhenNoSolarReason(obj);
+                setLastFeedWhenNoSolarReason(obj);
+                onCleanup(() => {
+                  const obj = { what: feedWhenNoSolarDead, when: +new Date() };
+                  setLastChangingFeedWhenNoSolarReason(obj);
+                  setLastFeedWhenNoSolarReason(obj);
+                });
+                return feedWhenNoSolar({
+                  configSignal: configResourceValue,
+                  isCharging: () => isCharging()?.(),
+                  setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
+                  setLastReason: setLastFeedWhenNoSolarReason,
+                  exportAmountForSelling,
+                  chargingAmperageForBuying,
+                });
+              },
+              e => {
+                setFeedWhenNoSolarErrored(true);
+                error("Feed when no solar errored", e, "restarting in 60s");
+                setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+              }
+            );
+          });
+
+          return isCharging;
+        });
+        createResource(() =>
+          wsMessaging({
+            config_signal: configResourceValue,
+            owner,
+            temperatures,
+            exposedAccessors: {
+              energyAddedSinceEmpty,
+              lastFeedWhenNoSolarReason,
+              lastChangingFeedWhenNoSolarReason,
+              totalLastEmpty,
+              currentBatteryPower: currentPower,
+              energyRemovedSinceFull,
+              socSinceEmpty,
+              socSinceFull,
+              assumedCapacity,
+              assumedParasiticConsumption,
+              isCharging: () => isChargingOuterScope()?.()?.(),
+              totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
+              ...Object.fromEntries(mqttValueKeys.map(key => [key, () => useFromMqttProvider().mqttValues[key]])),
+            },
+          })
+        );
+        createEffect(() => {
+          if (elpatronSwitchingErrored()) return;
+          catchError(
+            () => elpatronSwitching(config),
+            e => {
+              setElpatronSwitchingErrored(true);
+              error("Elpatron switching errored", e, "restarting in 60s");
+              setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+            }
+          );
+        });
+
+        return undefined;
+      },
     });
   });
 }

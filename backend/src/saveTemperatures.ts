@@ -3,18 +3,17 @@ import { Config } from "./config";
 import { promises as fs } from "fs";
 import path from "path";
 import process from "process";
-import { ThermometerValue, useTemperatures } from "./useTemperatures";
+import { useTemperatures } from "./useTemperatures";
 import { error, log } from "./utilities/logging";
 import MQTT from "async-mqtt";
+import { useFromMqttProvider } from "./utilities/MQTTValuesProvider";
 
 export function saveTemperatures({
   temperatures,
   config,
-  mqttClient,
 }: {
   temperatures: ReturnType<typeof useTemperatures>;
   config: Accessor<Config>;
-  mqttClient: Resource<MQTT.AsyncMqttClient>;
 }) {
   // Write weighted average of temperatures every ~3s to a file to import into influx once MacMini is running again with Grafana and stuff
   const local_storage_file_name = path.dirname(process.argv[1]) + "/../for_influx.txt";
@@ -33,6 +32,7 @@ export function saveTemperatures({
 
       createComputed(() => {
         const thermometer_object = value_accessor();
+        const { mqttClient } = useFromMqttProvider();
         if (!thermometer_object) return; // Unsure if this can happen but just in case
         report_value({
           averaged_value: thermometer_object.value,

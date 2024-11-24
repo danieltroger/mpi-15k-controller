@@ -1,4 +1,3 @@
-import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { useShinemonitorParameter } from "../useShinemonitorParameter";
@@ -9,12 +8,12 @@ import { totalSolarPower } from "../utilities/totalSolarPower";
 import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
+import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
  */
 export function feedWhenNoSolar({
-  mqttValues,
   configSignal,
   isCharging,
   setLastReason,
@@ -22,7 +21,6 @@ export function feedWhenNoSolar({
   exportAmountForSelling,
   chargingAmperageForBuying,
 }: {
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
   setLastReason: Setter<{ what: string; when: number }>;
@@ -32,6 +30,7 @@ export function feedWhenNoSolar({
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
+  const { mqttValues } = useFromMqttProvider();
 
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
