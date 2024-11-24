@@ -66,7 +66,7 @@ export function useShouldBuyPower(config: Accessor<Config>, averageSOC: Accessor
     return 0;
   });
 
-  const buyAmpsLess = useShouldBuyAmpsLessToNotBlowFuse();
+  const buyAmpsLess = useShouldBuyAmpsLessToNotBlowFuse(config, amperageFromSchedule);
 
   const chargingAmperageForBuying = createMemo(() => {
     const fromSchedule = amperageFromSchedule();

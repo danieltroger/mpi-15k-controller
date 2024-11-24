@@ -26,6 +26,7 @@ export type Config = {
     >;
     only_buy_below_soc: number;
     start_buying_again_below_soc: number;
+    enable_subtracting_consumption_above_charging_amperage: number;
   };
   influxdb?: {
     host: string;
@@ -113,6 +114,7 @@ const default_config: Config = {
     },
     only_buy_below_soc: 40,
     start_buying_again_below_soc: 15,
+    enable_subtracting_consumption_above_charging_amperage: 150,
   },
   elpatron_switching: {
     enabled: false,
