@@ -15,3 +15,7 @@ config.json
 config.json.bak
 
 tsconfig.typecheck.tsbuildinfo
+
+backend/src/socCalculationLog*
+backend/config_pre_*
+backend/for_influx.txt
