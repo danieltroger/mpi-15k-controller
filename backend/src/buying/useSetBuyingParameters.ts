@@ -1,6 +1,7 @@
 import { Accessor, createEffect, createMemo } from "solid-js";
 import { useShinemonitorParameter } from "../useShinemonitorParameter";
 import { get_config_object } from "../config";
+import { exec } from "../utilities/exec";
 
 export function useSetBuyingParameters({
   configSignal,
@@ -11,13 +12,9 @@ export function useSetBuyingParameters({
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   chargingAmperageForBuying: Accessor<number | undefined>;
 }) {
-  const { setWantedValue: setWantedAcChargingCurrent, currentValue: currentAcChargingCurrent } =
-    useShinemonitorParameter<string>({
-      parameter: "bat_set_max_ac_charging_current",
-      configSignal,
-      wantedToCurrentTransformerForDiffing: wanted => parseFloat(wanted).toFixed(1),
-    });
-
+  const setWantedAcChargingCurrent = (newValue: number) => {
+    exec(`mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(Math.round(newValue * 10) + "").padStart(4, "0")}`);
+  };
   const { setWantedValue: setWantedChargeSourceValue, currentValue: currentChargeSourceValue } =
     useShinemonitorParameter<"PV Only" | "PV and Grid", "48" | "49">({
       parameter: "cts_ac_charge_battery_cmds",
@@ -46,10 +43,10 @@ export function useSetBuyingParameters({
   createEffect(() => {
     const wantedAmperage = chargingAmperageForBuying();
     if (shouldBuy()) {
-      setWantedAcChargingCurrent(wantedAmperage!.toFixed(0));
+      setWantedAcChargingCurrent(wantedAmperage!);
     } else {
       // When not buying, set to 10A in case the inverter glitches and charges from the grid even though disabled
-      setWantedAcChargingCurrent("10");
+      setWantedAcChargingCurrent(10);
     }
   });
 
