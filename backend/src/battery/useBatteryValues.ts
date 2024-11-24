@@ -1,24 +1,16 @@
 import { useCurrentPower } from "./useCurrentPower";
 import { useDatabasePower } from "./useDatabasePower";
-import { catchError, createEffect, createMemo, createSignal, Resource } from "solid-js";
-import { useMQTTValues } from "../useMQTTValues";
+import { catchError, createEffect, createMemo, createSignal } from "solid-js";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
-import { AsyncMqttClient } from "async-mqtt";
 import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters";
 import { reportSOCToMqtt } from "./reportSOCToMqtt";
 import { error } from "../utilities/logging";
 
-export function useBatteryValues(
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
-  configSignal: Awaited<ReturnType<typeof get_config_object>>,
-  mqttClient: Resource<AsyncMqttClient>
-) {
+export function useBatteryValues(configSignal: Awaited<ReturnType<typeof get_config_object>>) {
   const [config] = configSignal;
-  const { currentPower, lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } = useCurrentPower(
-    mqttValues,
-    configSignal
-  );
+  const { currentPower, lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } =
+    useCurrentPower(configSignal);
   const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase, batteryWasLastEmptyAtAccordingToDatabase } =
     useDatabasePower(configSignal);
 
@@ -85,7 +77,6 @@ export function useBatteryValues(
   });
 
   reportSOCToMqtt({
-    mqttClient,
     config,
     averageSOC,
     socSinceEmpty,

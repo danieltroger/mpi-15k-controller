@@ -2,6 +2,7 @@ import { Accessor, createEffect, createMemo, createSignal, mapArray } from "soli
 import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
+import { useShouldBuyAmpsLessToNotBlowFuse } from "./useShouldBuyAmpsLessToNotBlowFuse";
 
 export function useShouldBuyPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(
@@ -43,7 +44,7 @@ export function useShouldBuyPower(config: Accessor<Config>, averageSOC: Accessor
 
   let hitSOCLimit = false;
 
-  const chargingAmperageForBuying = createMemo(() => {
+  const amperageFromSchedule = createMemo(() => {
     const soc = averageSOC();
     if (soc === undefined) return;
     const { only_buy_below_soc, start_buying_again_below_soc } = config().scheduled_power_buying;
@@ -63,6 +64,14 @@ export function useShouldBuyPower(config: Accessor<Config>, averageSOC: Accessor
       hitSOCLimit = true;
     }
     return 0;
+  });
+
+  const buyAmpsLess = useShouldBuyAmpsLessToNotBlowFuse();
+
+  const chargingAmperageForBuying = createMemo(() => {
+    const fromSchedule = amperageFromSchedule();
+    if (!fromSchedule) return fromSchedule;
+    return Math.max(0, fromSchedule - buyAmpsLess());
   });
 
   createEffect(() =>

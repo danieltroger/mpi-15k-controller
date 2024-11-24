@@ -1,9 +1,9 @@
 import { Config } from "./config";
 import { Accessor, createEffect, createMemo, createResource } from "solid-js";
-import { useMQTTValues } from "./useMQTTValues";
 import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
+import { useFromMqttProvider } from "./utilities/MQTTValuesProvider";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;
@@ -11,10 +11,8 @@ globalThis.WebSocket = WebSocket;
 let socket: DepictAPIWS | undefined;
 let lastSwitch = 0;
 
-export function elpatronSwitching(
-  config: Accessor<Config>,
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"]
-) {
+export function elpatronSwitching(config: Accessor<Config>) {
+  const { mqttValues } = useFromMqttProvider();
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
   const fromSolar = createMemo(() => totalSolarPower(mqttValues));
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
@@ -27,7 +25,7 @@ export function elpatronSwitching(
   createEffect(() => {
     if (!functionalityEnabled()) return;
     socket ||= new DepictAPIWS("ws://192.168.1.100:9321");
-    const elpatronShouldBeEnabled = createMemo<boolean | undefined>(prev => {
+    const elpatronShouldBeEnabled = createMemo<boolean | undefined>(() => {
       const solar = fromSolar();
       const powerDirection = getPowerDirection();
       if (solar == undefined || powerDirection == undefined) return;

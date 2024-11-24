@@ -1,11 +1,9 @@
-import { useMQTTValues } from "../useMQTTValues";
 import { get_config_object } from "../config";
 import { createMemo, untrack } from "solid-js";
+import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
 
-export function useCurrentPower(
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"],
-  [config]: Awaited<ReturnType<typeof get_config_object>>
-) {
+export function useCurrentPower([config]: Awaited<ReturnType<typeof get_config_object>>) {
+  const { mqttValues } = useFromMqttProvider();
   const currentPower = createMemo(() => {
     // The voltage is guaranteed by mpp-solar and the inverter to always update before the current
     // Both values update practically at the same time but don't get written to the mqttValues store in a batch

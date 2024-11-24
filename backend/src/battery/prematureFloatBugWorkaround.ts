@@ -1,22 +1,21 @@
-import { useMQTTValues } from "../useMQTTValues";
 import { Accessor, createEffect, createMemo, createResource, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "../config";
 import { error, log } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
+import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
 
 export function prematureFloatBugWorkaround({
-  mqttValues,
   configSignal,
   energyRemovedSinceFull,
 }: {
-  mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"];
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   energyRemovedSinceFull: Accessor<number | undefined>;
 }) {
   const [config] = configSignal;
+  const { mqttValues } = useFromMqttProvider();
   const [localStateOfConfiguredVoltageFloat, { refetch: refetchFloat }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal, "float")
   );
