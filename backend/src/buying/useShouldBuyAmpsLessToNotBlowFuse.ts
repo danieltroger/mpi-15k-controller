@@ -13,7 +13,11 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
     const powerT = mqttValues?.["ac_output_active_power_t"]?.value as number | undefined;
     const wantToChargeWith = currentChargingAmps();
     const highestPhasePower = Math.max(powerR || 0, powerS || 0, powerT || 0);
-    const batteryVoltage = mqttValues["battery_voltage"]?.value as number | undefined;
+    let batteryVoltage = mqttValues["battery_voltage"]?.value as number | undefined;
+    if (batteryVoltage) {
+      // Convert to volts
+      batteryVoltage /= 10;
+    }
     if (
       !batteryVoltage ||
       !wantToChargeWith ||
