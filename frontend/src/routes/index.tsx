@@ -91,25 +91,34 @@ function FullOrEmptyIn({
   const fullIn = createMemo(() => {
     const capacityLeft = energyRemovedSinceFull();
     const chargingWith = chargingAt();
-    if (chargingWith == undefined || capacityLeft == undefined || chargingWith < 0) return "unknown";
+    if (chargingWith == undefined || capacityLeft == undefined || chargingWith < 0) return { timeLeft: "unknown" };
     const hours = capacityLeft / chargingWith;
     const fullAtDate = new Date(+new Date() + hours * 60 * 60 * 1000);
-    return formatWithINTL(new Date(), fullAtDate, "en");
+    const timeLeft = formatWithINTL(new Date(), fullAtDate, "en");
+    return { timeLeft, fullAtDate };
   });
 
   const emptyIn = createMemo(() => {
     const capacityLeft = energyAddedSinceEmpty();
     const chargingWith = chargingAt();
-    if (chargingWith == undefined || capacityLeft == undefined || chargingWith > 0) return "unknown";
+    if (chargingWith == undefined || capacityLeft == undefined || chargingWith > 0) return { timeLeft: "unknown" };
     const hours = capacityLeft / chargingWith;
     const emptyAtDate = new Date(+new Date() + hours * 60 * 60 * 1000);
-    return formatWithINTL(emptyAtDate, new Date(), "en");
+    const timeLeft = formatWithINTL(emptyAtDate, new Date(), "en");
+    return { timeLeft, emptyAtDate };
   });
 
   return (
     <>
-      <Show when={isDischarging()} fallback={<>At charge rate, battery full {fullIn()}</>}>
-        At discharge rate, battery empty {emptyIn()}
+      <Show
+        when={isDischarging()}
+        fallback={
+          <span title={fullIn()?.fullAtDate?.toLocaleString()}>At charge rate, battery full {fullIn().timeLeft}</span>
+        }
+      >
+        <span title={emptyIn()?.emptyAtDate?.toLocaleString()}>
+          At discharge rate, battery empty {emptyIn().timeLeft}
+        </span>
       </Show>
       <br />
     </>
