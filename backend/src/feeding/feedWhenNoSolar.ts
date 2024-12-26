@@ -33,9 +33,9 @@ export function feedWhenNoSolar({
   const { mqttValues } = useFromMqttProvider();
 
   const acOutputPower = () => {
-    const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
-    const powerS = mqttValues?.["ac_output_active_power_s"]?.value as number | undefined;
-    const powerT = mqttValues?.["ac_output_active_power_t"]?.value as number | undefined;
+    const powerR = mqttValues?.["ac_output_active_power_r"]?.value;
+    const powerS = mqttValues?.["ac_output_active_power_s"]?.value;
+    const powerT = mqttValues?.["ac_output_active_power_t"]?.value;
     if (powerR == undefined && powerS == undefined && powerT == undefined) return undefined;
     return (powerR || 0) + (powerS || 0) + (powerT || 0);
   };
@@ -59,7 +59,7 @@ export function feedWhenNoSolar({
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const incrementForAntiPeak = useOutputPowerSuddenlyRose(acOutputPower, config, mqttValues);
   const getBatteryVoltage = () => {
-    let voltage = mqttValues?.["battery_voltage"]?.value as number | undefined;
+    let voltage = mqttValues?.["battery_voltage"]?.value;
     if (voltage) {
       voltage /= 10;
     }

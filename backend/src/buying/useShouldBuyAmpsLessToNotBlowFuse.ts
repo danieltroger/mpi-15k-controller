@@ -8,12 +8,12 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
 ) {
   const { mqttValues } = useFromMqttProvider();
   return createMemo(() => {
-    const powerR = mqttValues?.["ac_output_active_power_r"]?.value as number | undefined;
-    const powerS = mqttValues?.["ac_output_active_power_s"]?.value as number | undefined;
-    const powerT = mqttValues?.["ac_output_active_power_t"]?.value as number | undefined;
+    const powerR = mqttValues?.["ac_output_active_power_r"]?.value;
+    const powerS = mqttValues?.["ac_output_active_power_s"]?.value;
+    const powerT = mqttValues?.["ac_output_active_power_t"]?.value;
     const wantToChargeWith = currentChargingAmps();
     const highestPhasePower = Math.max(powerR || 0, powerS || 0, powerT || 0);
-    let batteryVoltage = mqttValues["battery_voltage"]?.value as number | undefined;
+    let batteryVoltage = mqttValues["battery_voltage"]?.value;
     if (batteryVoltage) {
       // Convert to volts
       batteryVoltage /= 10;
@@ -29,6 +29,6 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
     // Round with 500 watts accuracy to not run into our rate limiting so often
     const powerToChargeLessWith = Math.round((highestPhasePower * 3) / 500) * 500;
     const ampsToChargeLessWith = powerToChargeLessWith / batteryVoltage;
-    return Math.round(ampsToChargeLessWith);  
+    return Math.round(ampsToChargeLessWith);
   });
 }
