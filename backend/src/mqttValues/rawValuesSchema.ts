@@ -22,9 +22,7 @@ export const rawMQTTValuesSchema = z.object({
   solar_input_1_work_status: z.enum(["Working", "Idle"]),
   solar_input_2_work_status: z.enum(["Working", "Idle"]),
   battery_power_direction: z.enum(["Charging", "Discharging"]),
-  // This is based on the type: "dc/ac_power_direction": '"DC' | '"Ac';
-  // So we literally match those strings (the data seems to include the double quotes):
-  "dc/ac_power_direction": z.enum(['"DC', '"Ac']),
+  "dc/ac_power_direction": z.enum(["DC to AC", "AC to DC"]),
   line_power_direction: z.enum(["Output", "Idle", "Input"]),
   solar_input_voltage_1: z.number(),
   solar_input_voltage_2: z.number(),
@@ -48,8 +46,7 @@ export const rawMQTTValuesSchema = z.object({
   inner_temperature: z.number(),
   component_max_temperature: z.number(),
   external_battery_temperature: z.number(),
-  // The quotes here are also intentional on my side
-  setting_change_bit: z.literal('"No'),
+  setting_change_bit: z.literal("No setting change"),
 });
 
 // 2. Infer the TS type from this schema
