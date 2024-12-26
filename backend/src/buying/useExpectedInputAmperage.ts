@@ -38,6 +38,25 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
     const ampsPhaseS = Math.round((totalDrawPhaseS / voltagePhaseS) * 10) / 10;
     const ampsPhaseT = Math.round((totalDrawPhaseT / voltagePhaseT) * 10) / 10;
 
+    log({
+      batteryVoltage,
+      voltagePhaseT,
+      chargingAmpsBattery,
+      wattsAtBattery,
+      perPhaseAtInput,
+      totalDrawPhaseT,
+      ampsPhaseT,
+      loadPhaseR,
+      loadPhaseS,
+      loadPhaseT,
+      totalDrawPhaseR,
+      totalDrawPhaseS,
+      voltagePhaseR,
+      voltagePhaseS,
+      ampsPhaseR,
+      ampsPhaseS,
+    });
+
     setStore(
       reconcile({
         ampsPhaseR,
