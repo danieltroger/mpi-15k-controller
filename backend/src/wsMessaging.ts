@@ -18,7 +18,7 @@ export async function wsMessaging({
     config: {
       getter: get_config,
       setter: set_config,
-      validator: value => {
+      validator: (value: Config) => {
         if (typeof value !== "object") {
           return "Can't write config, not an object: " + value;
         }

@@ -1,4 +1,4 @@
-function print(prefix, ...args: any[]) {
+function print(prefix: string, ...args: any[]) {
   console.log(prefix, new Date().toISOString(), ...args);
 }
 
