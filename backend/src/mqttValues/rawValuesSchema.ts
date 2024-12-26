@@ -46,7 +46,7 @@ export const rawMQTTValuesSchema = z.object({
   inner_temperature: z.number(),
   component_max_temperature: z.number(),
   external_battery_temperature: z.number(),
-  setting_change_bit: z.literal("No setting change"),
+  setting_change_bit: z.enum(["No setting change", "Settings changed - please refresh"]),
 });
 
 // 2. Infer the TS type from this schema
