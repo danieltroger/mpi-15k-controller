@@ -1,6 +1,7 @@
 import { Accessor, createEffect, createMemo } from "solid-js";
 import { useShinemonitorParameter } from "../useShinemonitorParameter";
 import { get_config_object } from "../config";
+import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage";
 
 export function useSetBuyingParameters({
   configSignal,
@@ -52,6 +53,8 @@ export function useSetBuyingParameters({
       setWantedAcChargingCurrent("10");
     }
   });
+
+  useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying);
 
   return { currentlyBuying };
 }
