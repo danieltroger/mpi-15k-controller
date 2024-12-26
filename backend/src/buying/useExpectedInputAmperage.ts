@@ -1,6 +1,11 @@
 import { Accessor, createEffect } from "solid-js";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
+import {
+  reactiveAcInputVoltageR,
+  reactiveAcInputVoltageS,
+  reactiveAcInputVoltageT,
+  reactiveBatteryVoltage,
+} from "../mqttValues/mqttHelpers";
 import { createStore, reconcile } from "solid-js/store";
 import { log } from "../utilities/logging";
 
@@ -33,32 +38,13 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
     const totalDrawPhaseR = loadPhaseR + perPhaseAtInput;
     const totalDrawPhaseS = loadPhaseS + perPhaseAtInput;
     const totalDrawPhaseT = loadPhaseT + perPhaseAtInput;
-    const voltagePhaseR = mqttValues["ac_input_voltage_r"]?.value;
-    const voltagePhaseS = mqttValues["ac_input_voltage_s"]?.value;
-    const voltagePhaseT = mqttValues["ac_input_voltage_t"]?.value;
+    const voltagePhaseR = reactiveAcInputVoltageR();
+    const voltagePhaseS = reactiveAcInputVoltageS();
+    const voltagePhaseT = reactiveAcInputVoltageT();
     if (!voltagePhaseR || !voltagePhaseS || !voltagePhaseT) return undefined;
     const ampsPhaseR = Math.round((totalDrawPhaseR / voltagePhaseR) * 10) / 10;
     const ampsPhaseS = Math.round((totalDrawPhaseS / voltagePhaseS) * 10) / 10;
     const ampsPhaseT = Math.round((totalDrawPhaseT / voltagePhaseT) * 10) / 10;
-
-    log({
-      batteryVoltage,
-      voltagePhaseT,
-      chargingAmpsBattery,
-      wattsAtBattery,
-      perPhaseAtInput,
-      totalDrawPhaseT,
-      ampsPhaseT,
-      loadPhaseR,
-      loadPhaseS,
-      loadPhaseT,
-      totalDrawPhaseR,
-      totalDrawPhaseS,
-      voltagePhaseR,
-      voltagePhaseS,
-      ampsPhaseR,
-      ampsPhaseS,
-    });
 
     setStore(
       reconcile({
