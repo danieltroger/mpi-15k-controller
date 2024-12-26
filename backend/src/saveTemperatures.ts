@@ -6,7 +6,7 @@ import process from "process";
 import { useTemperatures } from "./useTemperatures";
 import { error, log } from "./utilities/logging";
 import MQTT from "async-mqtt";
-import { useFromMqttProvider } from "./utilities/MQTTValuesProvider";
+import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 
 export function saveTemperatures({
   temperatures,

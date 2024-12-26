@@ -8,7 +8,7 @@ import { totalSolarPower } from "../utilities/totalSolarPower";
 import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
-import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.

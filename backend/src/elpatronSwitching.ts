@@ -3,7 +3,7 @@ import { Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
-import { useFromMqttProvider } from "./utilities/MQTTValuesProvider";
+import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;
