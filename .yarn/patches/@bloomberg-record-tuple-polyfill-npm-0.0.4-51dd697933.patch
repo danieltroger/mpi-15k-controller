@@ -1,0 +1,20 @@
+diff --git a/lib/index.esm.d.ts b/lib/index.esm.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..56fa361121c1eba8ffe2399e52f63977549a8a97
+--- /dev/null
++++ b/lib/index.esm.d.ts
+@@ -0,0 +1,2 @@
++export function Record<T>(t: T): T;
++export function Tuple<T extends any[]>(...ts: T): T;
+diff --git a/package.json b/package.json
+index 4532dfe360f8fd11ef89329ae711e1131eece36b..0577fa195ef5b63e3605e0779d0bcaccae5b3f11 100644
+--- a/package.json
++++ b/package.json
+@@ -4,6 +4,7 @@
+   "description": "A polyfill for the Record and Tuple Stage 2 ECMAScript proposal.",
+   "main": "lib/index.umd.js",
+   "module": "lib/index.esm.js",
++  "types": "lib/index.esm.d.ts",
+   "files": [
+     "lib/*.js"
+   ],

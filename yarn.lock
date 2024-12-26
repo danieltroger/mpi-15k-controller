@@ -423,10 +423,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@bloomberg/record-tuple-polyfill@npm:^0.0.4":
+"@bloomberg/record-tuple-polyfill@npm:0.0.4":
   version: 0.0.4
   resolution: "@bloomberg/record-tuple-polyfill@npm:0.0.4"
   checksum: 10c0/42f9152cf09aea76e91d5bd58dfc18d05b26aa9556cf07372096d62071898c9db378af139a9c0debf08340b5e1d21d5e45793a21f7d26c62e279ba58d79638e1
+  languageName: node
+  linkType: hard
+
+"@bloomberg/record-tuple-polyfill@patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch":
+  version: 0.0.4
+  resolution: "@bloomberg/record-tuple-polyfill@patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch::version=0.0.4&hash=7bf1cb"
+  checksum: 10c0/9c02689f5bfb75882563d724e9bbe977a5de03bc2911e61499b620c4f58fd217688da7c4ced893491f718370bb54d810224c9626f08a84e0136d1a5917de4c88
   languageName: node
   linkType: hard
 
@@ -2396,7 +2403,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "backend-0a1d4c@workspace:backend"
   dependencies:
-    "@bloomberg/record-tuple-polyfill": "npm:^0.0.4"
+    "@bloomberg/record-tuple-polyfill": "patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch"
     "@depict-ai/utilishared": "npm:^2.4.4"
     "@swc-node/register": "npm:1.9.0"
     "@swc/core": "npm:^1.4.17"
