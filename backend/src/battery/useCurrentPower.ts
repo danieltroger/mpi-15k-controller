@@ -1,6 +1,6 @@
 import { get_config_object } from "../config";
 import { createMemo, untrack } from "solid-js";
-import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 
 export function useCurrentPower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const { mqttValues } = useFromMqttProvider();

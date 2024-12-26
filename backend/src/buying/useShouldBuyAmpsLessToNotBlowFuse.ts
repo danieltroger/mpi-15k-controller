@@ -1,5 +1,5 @@
 import { Accessor, createMemo } from "solid-js";
-import { useFromMqttProvider } from "../utilities/MQTTValuesProvider";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { Config } from "../config";
 
 export function useShouldBuyAmpsLessToNotBlowFuse(

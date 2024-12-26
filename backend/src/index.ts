@@ -22,7 +22,7 @@ import { elpatronSwitching } from "./elpatronSwitching";
 import { shouldSellPower } from "./feeding/shouldSellPower";
 import { NowProvider } from "./utilities/useNow";
 import { useShouldBuyPower } from "./buying/useShouldBuyPower";
-import { MQTTValuesProvider, useFromMqttProvider } from "./utilities/MQTTValuesProvider";
+import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 
 while (true) {
   await new Promise<void>(r => {
