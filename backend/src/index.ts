@@ -49,13 +49,9 @@ while (true) {
 function main() {
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
-  // TODO: improve/finish SOC calculation
   // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
-  // TODO: Send SOC in mqtt
   // TODO: when battery completely empty and essentially disconnected for everything except charging, don't count inverter idle consumption as coming from the battery
-  // TODO: automatically calculate battery capacity
-  // TODO: when AC output power high/peaks, increase feedWhenNoSolar by like 200w, see http://192.168.1.102:3000/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1724141592000&to=1724143359154 (second glitch that makes us pull from grid example http://192.168.0.3:3002/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1723970675920&to=1723982588592)
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
 
