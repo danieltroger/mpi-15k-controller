@@ -1,6 +1,7 @@
 import { get_config_object } from "../config";
 import { createMemo, untrack } from "solid-js";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { reactiveBatteryCurrent, reactiveBatteryVoltage, reactiveBatteryVoltageTime } from "../mqttValues/mqttHelpers";
 
 export function useCurrentPower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const { mqttValues } = useFromMqttProvider();
@@ -29,21 +30,22 @@ export function useCurrentPower([config]: Awaited<ReturnType<typeof get_config_o
     const power = voltageNow * currentNow;
     return { value: power, time: Math.min(amperageTimestamp, voltageTimestamp) };
   });
+
   const haveSeenBatteryFullAt = createMemo<number | undefined>(prev => {
-    const voltage = mqttValues.battery_voltage?.value as undefined | number;
-    const current = mqttValues.battery_current?.value as undefined | number;
+    const voltage = reactiveBatteryVoltage();
+    const current = reactiveBatteryCurrent();
     if (voltage == undefined || current == undefined) return prev;
-    if (voltage / 10 >= config().full_battery_voltage && current / 10 < config().stop_charging_below_current) {
-      return mqttValues.battery_voltage!.time;
+    if (voltage >= config().full_battery_voltage && current < config().stop_charging_below_current) {
+      return reactiveBatteryVoltageTime();
     }
     return prev;
   });
 
   const haveSeenBatteryEmptyAt = createMemo<number | undefined>(prev => {
-    const voltage = mqttValues.battery_voltage?.value as undefined | number;
+    const voltage = reactiveBatteryVoltage();
     if (voltage == undefined) return prev;
-    if (voltage / 10 <= config().soc_calculations.battery_empty_at) {
-      return mqttValues.battery_voltage!.time;
+    if (voltage <= config().soc_calculations.battery_empty_at) {
+      return reactiveBatteryVoltageTime();
     }
     return prev;
   });
