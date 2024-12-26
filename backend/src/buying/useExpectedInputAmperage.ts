@@ -18,7 +18,10 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
 
   createEffect(() => {
     const chargingAmpsBattery = batteryChargingAmperage();
-    if (chargingAmpsBattery == undefined) return chargingAmpsBattery;
+    if (!chargingAmpsBattery) {
+      setStore({ ampsPhaseR: 0, ampsPhaseT: 0, ampsPhaseS: 0 });
+      return;
+    }
     const batteryVoltage = reactiveBatteryVoltage();
     if (batteryVoltage == undefined) return undefined;
     const wattsAtBattery = batteryVoltage * chargingAmpsBattery;
