@@ -1,4 +1,4 @@
-import { useMQTTValues } from "../useMQTTValues";
+import { useMQTTValues } from "../mqttValues/useMQTTValues";
 
 export const totalSolarPower = (mqttValues: ReturnType<typeof useMQTTValues>["mqttValues"]) => {
   const array1 = mqttValues?.["solar_input_power_1"]?.value as number | undefined;
