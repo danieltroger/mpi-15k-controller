@@ -1,7 +1,8 @@
 import MQTT from "async-mqtt";
 import { Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
-import { log } from "./utilities/logging";
+import { log, warn } from "../utilities/logging";
 import { createStore } from "solid-js/store";
+import { RawMQTTValues, validateMessage } from "./rawValuesSchema";
 
 export function useMQTTValues(mqttHost: Accessor<string>) {
   const [reconnectToggle, setReconnectToggle] = createSignal(1); // Needs to be truthy or createResource won't fetch
@@ -14,7 +15,11 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
     }
   );
   const [subscription] = createResource(client, client => client.subscribe("#"));
-  const [values, setValues] = createStore<Record<string, undefined | { time: number; value: string | number }>>({});
+  const [values, setValues] = createStore<
+    Partial<{
+      [key in keyof RawMQTTValues]: { value: RawMQTTValues[key]; time: number };
+    }>
+  >({});
   const owner = getOwner();
 
   createEffect(() => {
@@ -42,7 +47,15 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
           try {
             parsed = JSON.parse(value);
           } catch (e) {}
-          setValues(key, { value: parsed, time: Date.now() });
+          try {
+            validateMessage(key as keyof RawMQTTValues, parsed);
+          } catch (e) {
+            warn("Validation for MQTT key/value", key, ":", value, "failed", e);
+          }
+          setValues(key as keyof RawMQTTValues, {
+            value: parsed as RawMQTTValues[keyof RawMQTTValues],
+            time: +new Date(),
+          });
         }
       })
     );
