@@ -5,6 +5,7 @@
     "run-no-nodemon": "SENTRY=false DEBUG=true BUILD_TARGET=node node --max-old-space-size=3072 --loader @swc-node/register/esm src/index.ts"
   },
   "dependencies": {
+    "@bloomberg/record-tuple-polyfill": "^0.0.4",
     "@depict-ai/utilishared": "^2.4.4",
     "@swc-node/register": "1.9.0",
     "@swc/core": "^1.4.17",

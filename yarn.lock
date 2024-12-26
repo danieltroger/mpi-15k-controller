@@ -423,6 +423,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bloomberg/record-tuple-polyfill@npm:^0.0.4":
+  version: 0.0.4
+  resolution: "@bloomberg/record-tuple-polyfill@npm:0.0.4"
+  checksum: 10c0/42f9152cf09aea76e91d5bd58dfc18d05b26aa9556cf07372096d62071898c9db378af139a9c0debf08340b5e1d21d5e45793a21f7d26c62e279ba58d79638e1
+  languageName: node
+  linkType: hard
+
 "@cloudflare/kv-asset-handler@npm:^0.3.1":
   version: 0.3.2
   resolution: "@cloudflare/kv-asset-handler@npm:0.3.2"
@@ -2389,6 +2396,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "backend-0a1d4c@workspace:backend"
   dependencies:
+    "@bloomberg/record-tuple-polyfill": "npm:^0.0.4"
     "@depict-ai/utilishared": "npm:^2.4.4"
     "@swc-node/register": "npm:1.9.0"
     "@swc/core": "npm:^1.4.17"
