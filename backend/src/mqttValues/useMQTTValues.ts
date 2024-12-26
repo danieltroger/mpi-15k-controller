@@ -35,9 +35,9 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
     clientValue.on("message", (topic, message) =>
       runWithOwner(owner, () => {
         if (topic == "mpp-solar") {
-          const [topic_in_msg, payload] = message.toString().split(",");
-          const [command_str, key_value_pair] = payload.split(" ");
-          const [key, value] = key_value_pair.split("=");
+          const [topicInMsg, payload] = message.toString().split(",");
+          const [commandString, ...keyValuePair] = payload.split(" ");
+          const [key, value] = keyValuePair.join(" ").split("=");
           let parsed = value;
           if (!receivedFirstValue) {
             receivedFirstValue = true;
@@ -50,7 +50,7 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
           try {
             validateMessage(key as keyof RawMQTTValues, parsed);
           } catch (e) {
-            warn("Validation for MQTT key/value", key, ":", value, "failed", e);
+            warn("Validation for MQTT message failed", e);
           }
           setValues(key as keyof RawMQTTValues, {
             value: parsed as RawMQTTValues[keyof RawMQTTValues],
