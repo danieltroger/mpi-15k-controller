@@ -112,7 +112,7 @@ export function feedWhenNoSolar({
         force_let_through_to_grid_over_pv_voltage2,
       },
     } = config();
-    const batteryVoltage = getBatteryVoltage();
+    const batteryVoltage = reactiveBatteryVoltage();
     const charging = isCharging();
     const startForceFeedingFromSolarAt =
       full_battery_voltage - allow_switching_to_solar_feeding_during_charging_x_volts_below_full;
