@@ -32,7 +32,7 @@ export function elpatronSwitching(config: Accessor<Config>) {
       return (
         solar > config().elpatron_switching.min_solar_input &&
         // Output direction apparently flakey?
-        (powerDirection === "Output" || powerDirection === "Juice" || (batteryVoltage() as number) >= 52.8)
+        (powerDirection === "Output" || powerDirection === "Idle" || (batteryVoltage() as number) >= 52.8)
       );
     });
 
