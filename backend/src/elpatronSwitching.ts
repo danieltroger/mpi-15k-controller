@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
 import { totalSolarPower } from "./utilities/totalSolarPower";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
+import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;
@@ -16,11 +17,6 @@ export function elpatronSwitching(config: Accessor<Config>) {
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
   const fromSolar = createMemo(() => totalSolarPower(mqttValues));
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
-  const batteryVoltage = createMemo(() => {
-    const voltage = mqttValues.battery_voltage?.value as undefined | number;
-    if (voltage == undefined) return;
-    return voltage / 10;
-  });
 
   createEffect(() => {
     if (!functionalityEnabled()) return;
@@ -32,7 +28,7 @@ export function elpatronSwitching(config: Accessor<Config>) {
       return (
         solar > config().elpatron_switching.min_solar_input &&
         // Output direction apparently flakey?
-        (powerDirection === "Output" || powerDirection === "Idle" || (batteryVoltage() as number) >= 52.8)
+        (powerDirection === "Output" || powerDirection === "Idle" || (reactiveBatteryVoltage() as number) >= 52.8)
       );
     });
 

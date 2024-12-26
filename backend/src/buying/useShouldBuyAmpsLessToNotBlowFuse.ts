@@ -1,6 +1,7 @@
 import { Accessor, createMemo } from "solid-js";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { Config } from "../config";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 export function useShouldBuyAmpsLessToNotBlowFuse(
   config: Accessor<Config>,
@@ -13,11 +14,7 @@ export function useShouldBuyAmpsLessToNotBlowFuse(
     const powerT = mqttValues?.["ac_output_active_power_t"]?.value;
     const wantToChargeWith = currentChargingAmps();
     const highestPhasePower = Math.max(powerR || 0, powerS || 0, powerT || 0);
-    let batteryVoltage = mqttValues["battery_voltage"]?.value;
-    if (batteryVoltage) {
-      // Convert to volts
-      batteryVoltage /= 10;
-    }
+    const batteryVoltage = reactiveBatteryVoltage();
     if (
       !batteryVoltage ||
       !wantToChargeWith ||

@@ -4,6 +4,7 @@ import { error, log } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { reactiveBatteryCurrent, reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
 
@@ -15,15 +16,12 @@ export function prematureFloatBugWorkaround({
   energyRemovedSinceFull: Accessor<number | undefined>;
 }) {
   const [config] = configSignal;
-  const { mqttValues } = useFromMqttProvider();
   const [localStateOfConfiguredVoltageFloat, { refetch: refetchFloat }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal, "float")
   );
   const [localStateOfConfiguredVoltageBulk, { refetch: refetchBulk }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal, "bulk")
   );
-  const getVoltage = () => mqttValues.battery_voltage?.value && (mqttValues.battery_voltage.value as number) / 10;
-  const getCurrent = () => mqttValues.battery_current?.value && (mqttValues.battery_current?.value as number) / 10;
   const deparallelizedSetChargeVoltageFloat = deparallelize_no_drop((targetVoltage: number) =>
     setVoltageWithThrottlingAndRefetch(configSignal, "float", targetVoltage, refetchFloat)
   );
@@ -32,14 +30,17 @@ export function prematureFloatBugWorkaround({
   );
   const refetchInterval = setInterval(() => (refetchBulk(), refetchFloat()), 1000 * 60 * 10); // refetch every ten minutes so we diff against the latest value
   const wantVoltagesToBeSetTo = createMemo<number | undefined>(prev => {
-    const voltage = getVoltage();
+    const voltage = reactiveBatteryVoltage();
     const startChargingBelow = config().start_bulk_charge_voltage;
     const { full_battery_voltage, start_bulk_charge_after_wh_discharged, float_charging_voltage } = config();
     if (!voltage) return prev;
     if (voltage <= startChargingBelow) {
       // Emergency voltage based charging, in case something breaks with DB or something
       return full_battery_voltage;
-    } else if (voltage >= full_battery_voltage && (getCurrent() as number) < config().stop_charging_below_current) {
+    } else if (
+      voltage >= full_battery_voltage &&
+      (reactiveBatteryCurrent() as number) < config().stop_charging_below_current
+    ) {
       // When battery full, stop charging
       return float_charging_voltage;
     } else if (prev === full_battery_voltage) {
@@ -109,9 +110,9 @@ export function prematureFloatBugWorkaround({
       voltageSetToRn,
       "right now.",
       "Current voltage of battery",
-      untrack(getVoltage),
+      untrack(reactiveBatteryVoltage),
       "V, current current of battery",
-      untrack(getCurrent),
+      untrack(reactiveBatteryCurrent),
       "A"
     );
     deparallelizedSetChargeVoltageFloat(wantsVoltage);
@@ -135,9 +136,9 @@ export function prematureFloatBugWorkaround({
       voltageSetToRn,
       "right now.",
       "Current voltage of battery",
-      untrack(getVoltage),
+      untrack(reactiveBatteryVoltage),
       "V, current current of battery",
-      untrack(getCurrent),
+      untrack(reactiveBatteryCurrent),
       "A"
     );
     deparallelizedSetChargeVoltageBulk(wantsVoltage);

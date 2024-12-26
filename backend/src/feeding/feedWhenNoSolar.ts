@@ -9,6 +9,7 @@ import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -58,16 +59,9 @@ export function feedWhenNoSolar({
   const [config] = configSignal;
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const incrementForAntiPeak = useOutputPowerSuddenlyRose(acOutputPower, config, mqttValues);
-  const getBatteryVoltage = () => {
-    let voltage = mqttValues?.["battery_voltage"]?.value;
-    if (voltage) {
-      voltage /= 10;
-    }
-    return voltage;
-  };
   // If we are between having reached nearly 58.4v the first time, and the charge process having completed due to no current flowing
   const batteryIsNearlyFull = createMemo<boolean | undefined>(
-    prev => getBatteryVoltage()! >= config().full_battery_voltage || (isCharging() === false ? false : prev)
+    prev => reactiveBatteryVoltage()! >= config().full_battery_voltage || (isCharging() === false ? false : prev)
   );
 
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
