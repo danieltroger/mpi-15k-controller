@@ -21,6 +21,7 @@ export function feedWhenNoSolar({
   setLastChangingReason,
   exportAmountForSelling,
   chargingAmperageForBuying,
+  assumedParasiticConsumption,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
@@ -28,6 +29,7 @@ export function feedWhenNoSolar({
   setLastChangingReason: Setter<{ what: string; when: number }>;
   exportAmountForSelling: Accessor<number | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
+  assumedParasiticConsumption: Accessor<number>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
@@ -224,6 +226,7 @@ export function feedWhenNoSolar({
   });
   const { currentlyBuying } = useSetBuyingParameters({
     chargingAmperageForBuying,
+    assumedParasiticConsumption,
     configSignal,
     stillFeedingIn: createMemo(
       () => currentBatteryToUtilityWhenSolar() !== "Disable" || currentBatteryToUtilityWhenNoSolar() !== "Disable"

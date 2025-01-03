@@ -7,10 +7,12 @@ export function useSetBuyingParameters({
   configSignal,
   stillFeedingIn,
   chargingAmperageForBuying,
+  assumedParasiticConsumption,
 }: {
   stillFeedingIn: Accessor<boolean>;
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   chargingAmperageForBuying: Accessor<number | undefined>;
+  assumedParasiticConsumption: Accessor<number>;
 }) {
   const { setWantedValue: setWantedAcChargingCurrent, currentValue: currentAcChargingCurrent } =
     useShinemonitorParameter<string>({
@@ -54,7 +56,7 @@ export function useSetBuyingParameters({
     }
   });
 
-  useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying);
+  useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying, assumedParasiticConsumption);
 
   return { currentlyBuying };
 }

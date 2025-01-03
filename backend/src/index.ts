@@ -143,6 +143,7 @@ function main() {
                   setLastReason: setLastFeedWhenNoSolarReason,
                   exportAmountForSelling,
                   chargingAmperageForBuying,
+                  assumedParasiticConsumption,
                 });
               },
               e => {

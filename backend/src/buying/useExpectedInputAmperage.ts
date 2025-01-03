@@ -12,7 +12,10 @@ import { log } from "../utilities/logging";
 /**
  * Calculates what we expect the 230v input (grid) amperage to be when telling the inverter to charge the battery at a certain amperage (amperage at battery).
  */
-export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<number | undefined>) {
+export function useExpectedInputAmperage(
+  batteryChargingAmperage: Accessor<number | undefined>,
+  assumedParasiticConsumption: Accessor<number>
+) {
   const { mqttValues } = useFromMqttProvider();
 
   const [$calculatedHvAmpsPerPhase, setStore] = createStore<{
@@ -22,6 +25,7 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
   }>({});
 
   createEffect(() => {
+    // TODO: take in consideration solar showing up too
     const chargingAmpsBattery = batteryChargingAmperage();
     if (!chargingAmpsBattery) {
       setStore({ ampsPhaseR: 0, ampsPhaseT: 0, ampsPhaseS: 0 });
@@ -35,16 +39,17 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
     const loadPhaseS = mqttValues["ac_output_active_power_s"]?.value;
     const loadPhaseT = mqttValues["ac_output_active_power_t"]?.value;
     if (!loadPhaseR || !loadPhaseS || !loadPhaseT) return undefined;
-    const totalDrawPhaseR = loadPhaseR + perPhaseAtInput;
-    const totalDrawPhaseS = loadPhaseS + perPhaseAtInput;
-    const totalDrawPhaseT = loadPhaseT + perPhaseAtInput;
+    const assumedSelfConsumptionPerPhase = assumedParasiticConsumption() / 3;
+    const totalDrawPhaseR = loadPhaseR + perPhaseAtInput + assumedSelfConsumptionPerPhase;
+    const totalDrawPhaseS = loadPhaseS + perPhaseAtInput + assumedSelfConsumptionPerPhase;
+    const totalDrawPhaseT = loadPhaseT + perPhaseAtInput + assumedSelfConsumptionPerPhase;
     const voltagePhaseR = reactiveAcInputVoltageR();
     const voltagePhaseS = reactiveAcInputVoltageS();
     const voltagePhaseT = reactiveAcInputVoltageT();
     if (!voltagePhaseR || !voltagePhaseS || !voltagePhaseT) return undefined;
-    const ampsPhaseR = Math.round((totalDrawPhaseR / voltagePhaseR) * 10) / 10;
-    const ampsPhaseS = Math.round((totalDrawPhaseS / voltagePhaseS) * 10) / 10;
-    const ampsPhaseT = Math.round((totalDrawPhaseT / voltagePhaseT) * 10) / 10;
+    const ampsPhaseR = Math.round((totalDrawPhaseR / voltagePhaseR) * 100) / 100;
+    const ampsPhaseS = Math.round((totalDrawPhaseS / voltagePhaseS) * 100) / 100;
+    const ampsPhaseT = Math.round((totalDrawPhaseT / voltagePhaseT) * 100) / 100;
 
     setStore(
       reconcile({
@@ -58,9 +63,12 @@ export function useExpectedInputAmperage(batteryChargingAmperage: Accessor<numbe
   return { $calculatedHvAmpsPerPhase };
 }
 
-export function useLogExpectedVsActualChargingAmperage(batteryChargingAmperage: Accessor<number | undefined>) {
+export function useLogExpectedVsActualChargingAmperage(
+  batteryChargingAmperage: Accessor<number | undefined>,
+  assumedParasiticConsumption: Accessor<number>
+) {
   const { mqttClient } = useFromMqttProvider();
-  const { $calculatedHvAmpsPerPhase } = useExpectedInputAmperage(batteryChargingAmperage);
+  const { $calculatedHvAmpsPerPhase } = useExpectedInputAmperage(batteryChargingAmperage, assumedParasiticConsumption);
   const table = "input_amp_experiment";
 
   createEffect(() => {
