@@ -4,7 +4,7 @@ import { useShinemonitorParameter } from "../useShinemonitorParameter";
 import { error, log } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
-import { totalSolarPower } from "../utilities/totalSolarPower";
+import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
 import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
@@ -53,7 +53,7 @@ export function feedWhenNoSolar({
     return voltage2 / 10;
   });
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
-    const solar = totalSolarPower(mqttValues);
+    const solar = useTotalSolarPower();
     const acOutput = acOutputPower();
     if (solar == undefined || acOutput == undefined) return undefined;
     return solar - acOutput;

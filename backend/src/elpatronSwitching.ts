@@ -2,7 +2,7 @@ import { Config } from "./config";
 import { Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { WebSocket } from "ws";
 import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
-import { totalSolarPower } from "./utilities/totalSolarPower";
+import { useTotalSolarPower } from "./utilities/useTotalSolarPower";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers";
 
@@ -15,7 +15,7 @@ let lastSwitch = 0;
 export function elpatronSwitching(config: Accessor<Config>) {
   const { mqttValues } = useFromMqttProvider();
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
-  const fromSolar = createMemo(() => totalSolarPower(mqttValues));
+  const fromSolar = createMemo(() => useTotalSolarPower());
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
 
   createEffect(() => {
