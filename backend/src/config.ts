@@ -21,12 +21,12 @@ export type Config = {
       string,
       {
         end_time: string;
-        charging_amperage: number;
+        charging_power: number;
       }
     >;
     only_buy_below_soc: number;
     start_buying_again_below_soc: number;
-    enable_subtracting_consumption_above_charging_amperage: number;
+    max_grid_input_amperage: number;
   };
   influxdb?: {
     host: string;
@@ -110,11 +110,11 @@ const default_config: Config = {
   },
   scheduled_power_buying: {
     schedule: {
-      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", charging_amperage: 200 },
+      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", charging_power: 9000 },
     },
     only_buy_below_soc: 40,
     start_buying_again_below_soc: 15,
-    enable_subtracting_consumption_above_charging_amperage: 150,
+    max_grid_input_amperage: 21,
   },
   elpatron_switching: {
     enabled: false,
