@@ -83,6 +83,7 @@ export function useShouldBuyPower({
 
   const maxGridAmps = createMemo(() => config().scheduled_power_buying.max_grid_input_amperage);
 
+  // Max amperage we can charge at battery (~50v) without blowing the fuse to the grid
   const maxBatteryChargingAmperage = createMemo(() =>
     calculateChargingAmperage(maxGridAmps(), assumedParasiticConsumption)
   );
