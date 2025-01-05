@@ -21,7 +21,7 @@ export const rawMQTTValuesSchema = z.object({
   ac_output_connect_status: z.enum(["Connected", "Disconnected"]),
   solar_input_1_work_status: z.enum(["Working", "Idle"]),
   solar_input_2_work_status: z.enum(["Working", "Idle"]),
-  battery_power_direction: z.enum(["Charging", "Discharging"]),
+  battery_power_direction: z.enum(["Charging", "Discharging", "Idle"]),
   "dc/ac_power_direction": z.enum(["DC to AC", "AC to DC", "Idle"]),
   line_power_direction: z.enum(["Output", "Idle", "Input"]),
   solar_input_voltage_1: z.number(),
