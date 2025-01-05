@@ -4,6 +4,7 @@ import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
 import { reactiveAcInputVoltageR, reactiveAcInputVoltageS, reactiveAcInputVoltageT } from "../mqttValues/mqttHelpers";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 
 export function useShouldBuyPower({
   config,
@@ -76,7 +77,8 @@ export function useShouldBuyPower({
   });
 
   const maxGridAmps = createMemo(() => config().scheduled_power_buying.max_grid_input_amperage);
-  const chargingAmperageForBuying = createMemo(() => {
+  // How many amps the set power wants us to CHARGE WITH at the grid input (~230v), given the current grid value and max limit defined in the config
+  const wantedGridAmperage = createMemo(() => {
     const power = powerFromSchedule();
     if (!power) return power;
     const voltageR = reactiveAcInputVoltageR();
@@ -86,14 +88,67 @@ export function useShouldBuyPower({
     const lowestVoltage = Math.min(voltageR, voltageS, voltageT);
     const unlimitedGridInAmperage = power / lowestVoltage;
     const limitedGridInAmperage = Math.min(unlimitedGridInAmperage, maxGridAmps());
-    const amperageAtBattery = calculateChargingAmperage(limitedGridInAmperage, assumedParasiticConsumption);
+    return limitedGridInAmperage;
+  });
 
+  // How many amperes we can charge with AT THE BATTERY (50v), given the current grid phase voltages, house power consumption and battery voltage, to not exceed the grid amperage limit
+  const chargingAmperageForBuyingUnrounded = createMemo(() => {
+    const limitedGridInAmperage = wantedGridAmperage();
+    if (!limitedGridInAmperage) return limitedGridInAmperage;
+    const amperageAtBattery = calculateChargingAmperage(limitedGridInAmperage, assumedParasiticConsumption);
     return amperageAtBattery;
+  });
+
+  // Round to 10-ampere accuracy for now to avoid running into rate-limiting too much
+  const chargingAmperageForBuying = createMemo(() => {
+    const amperage = chargingAmperageForBuyingUnrounded();
+    if (!amperage) return amperage;
+    return Math.round(amperage * 10) / 10;
   });
 
   createEffect(() =>
     log("AC Charging due to scheduled power buying wants to AC charge with", chargingAmperageForBuying(), "ampere(s)")
   );
 
+  useLogGridAmperageEvaluation({ wantedGridAmperage, chargingAmperageForBuying });
+
   return { chargingAmperageForBuying };
+}
+
+export function useLogGridAmperageEvaluation({
+  wantedGridAmperage,
+  chargingAmperageForBuying,
+}: {
+  wantedGridAmperage: Accessor<number | undefined>;
+  chargingAmperageForBuying: Accessor<number | undefined>;
+}) {
+  const { mqttClient } = useFromMqttProvider();
+  const table = "input_amp_experiment";
+
+  createEffect(() => {
+    const client = mqttClient();
+    if (!client) return;
+
+    createEffect(() => {
+      const value = wantedGridAmperage();
+      if (value == undefined) return;
+      const influx_entry = `${table} wanted_grid_amperage=${value}`;
+      if (client.connected) {
+        client.publish(table, influx_entry).catch(e => {
+          log("Couldn't publish message", influx_entry, e);
+        });
+      }
+    });
+
+    createEffect(() => {
+      const value = chargingAmperageForBuying();
+      if (value == undefined) return;
+      const influx_entry = `${table} charging_amperage_for_buying=${value}`;
+      if (client.connected) {
+        client.publish(table, influx_entry).catch(e => {
+          log("Couldn't publish message", influx_entry, e);
+        });
+      }
+    });
+  });
 }
