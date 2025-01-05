@@ -107,7 +107,7 @@ function main() {
             );
           }
           const { exportAmountForSelling } = shouldSellPower(config, averageSOC);
-          const { chargingAmperageForBuying } = useShouldBuyPower(config, averageSOC);
+          const { chargingAmperageForBuying } = useShouldBuyPower({ config, averageSOC, assumedParasiticConsumption });
           const isCharging = createMemo(() => {
             if (prematureWorkaroundErrored()) return;
             return catchError(
