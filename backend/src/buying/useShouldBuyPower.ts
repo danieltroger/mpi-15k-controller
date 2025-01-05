@@ -3,7 +3,12 @@ import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
-import { reactiveAcInputVoltageR, reactiveAcInputVoltageS, reactiveAcInputVoltageT } from "../mqttValues/mqttHelpers";
+import {
+  reactiveAcInputVoltageR,
+  reactiveAcInputVoltageS,
+  reactiveAcInputVoltageT,
+  reactiveBatteryVoltage,
+} from "../mqttValues/mqttHelpers";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 
 export function useShouldBuyPower({
@@ -77,28 +82,21 @@ export function useShouldBuyPower({
   });
 
   const maxGridAmps = createMemo(() => config().scheduled_power_buying.max_grid_input_amperage);
-  // How many amps the set power wants us to CHARGE WITH at the grid input (~230v), given the current grid value and max limit defined in the config
-  const wantedGridAmperage = createMemo(() => {
-    const power = powerFromSchedule();
-    if (!power) return power;
-    const voltageR = reactiveAcInputVoltageR();
-    const voltageS = reactiveAcInputVoltageS();
-    const voltageT = reactiveAcInputVoltageT();
-    if (voltageR == undefined || voltageS == undefined || voltageT == undefined) return undefined;
-    const powerPerPhase = power / 3;
-    const maxAmps = maxGridAmps();
-    const gridInAmperageR = Math.min(powerPerPhase / voltageR, maxAmps);
-    const gridInAmperageS = Math.min(powerPerPhase / voltageS, maxAmps);
-    const gridInAmperageT = Math.min(powerPerPhase / voltageT, maxAmps);
-    return Math.max(gridInAmperageR, gridInAmperageS, gridInAmperageT);
-  });
 
-  // How many amperes we can charge with AT THE BATTERY (50v), given the current grid phase voltages, house power consumption and battery voltage, to not exceed the grid amperage limit
+  const maxBatteryChargingAmperage = createMemo(() =>
+    calculateChargingAmperage(maxGridAmps(), assumedParasiticConsumption)
+  );
+
+  // Charging amperage at the battery (at ~50v)
   const chargingAmperageForBuyingUnrounded = createMemo(() => {
-    const limitedGridInAmperage = wantedGridAmperage();
-    if (!limitedGridInAmperage) return limitedGridInAmperage;
-    const amperageAtBattery = calculateChargingAmperage(limitedGridInAmperage, assumedParasiticConsumption);
-    return amperageAtBattery;
+    const userSpecifiedPower = powerFromSchedule();
+    if (!userSpecifiedPower) return userSpecifiedPower;
+    const batteryVoltage = reactiveBatteryVoltage();
+    if (batteryVoltage == undefined) return undefined;
+    const unlimitedAmperage = userSpecifiedPower / batteryVoltage;
+    const maxAmperage = maxBatteryChargingAmperage();
+    if (maxAmperage == undefined) return undefined;
+    return Math.min(unlimitedAmperage, maxAmperage);
   });
 
   // Round to 10-ampere accuracy for now to avoid running into rate-limiting too much
@@ -114,7 +112,7 @@ export function useShouldBuyPower({
     log("AC Charging due to scheduled power buying wants to AC charge with", chargingAmperageForBuying(), "ampere(s)")
   );
 
-  useLogGridAmperageEvaluation({ wantedGridAmperage, chargingAmperageForBuying });
+  useLogGridAmperageEvaluation({ wantedGridAmperage: maxBatteryChargingAmperage, chargingAmperageForBuying });
 
   return { chargingAmperageForBuying };
 }
