@@ -104,6 +104,8 @@ export function useShouldBuyPower({
   const chargingAmperageForBuying = createMemo(() => {
     const amperage = chargingAmperageForBuyingUnrounded();
     if (!amperage) return amperage;
+    // So very low amps can be used just to be "on grid" without really charging
+    if (amperage < 10) return 1;
     const roundedAmperage = Math.floor(amperage / 10) * 10;
     // Hardcoded because our inverter can AC charge with 300A max
     return Math.max(Math.min(roundedAmperage, 300), 0);
