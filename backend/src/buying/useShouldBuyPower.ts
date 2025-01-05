@@ -105,7 +105,7 @@ export function useShouldBuyPower({
     if (!amperage) return amperage;
     const roundedAmperage = Math.round(amperage / 10) * 10;
     // Hardcoded because our inverter can AC charge with 300A max
-    return Math.min(roundedAmperage, 300);
+    return Math.max(Math.min(roundedAmperage, 300), 0);
   });
 
   createEffect(() =>
