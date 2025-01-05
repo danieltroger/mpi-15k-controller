@@ -103,7 +103,7 @@ export function useShouldBuyPower({
   const chargingAmperageForBuying = createMemo(() => {
     const amperage = chargingAmperageForBuyingUnrounded();
     if (!amperage) return amperage;
-    return Math.round(amperage * 10) / 10;
+    return Math.round(amperage / 10) * 10;
   });
 
   createEffect(() =>
