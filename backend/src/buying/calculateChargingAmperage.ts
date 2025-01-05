@@ -1,4 +1,4 @@
-import { Accessor, createEffect, createMemo } from "solid-js";
+import { Accessor, createMemo } from "solid-js";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import {
   reactiveAcInputVoltageR,
@@ -6,8 +6,6 @@ import {
   reactiveAcInputVoltageT,
   reactiveBatteryVoltage,
 } from "../mqttValues/mqttHelpers";
-import { createStore, reconcile } from "solid-js/store";
-import { log } from "../utilities/logging";
 import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
 
 /**
@@ -80,7 +78,7 @@ export function calculateChargingAmperage(
       targetPowerWithoutHouseS,
       targetPowerWithoutHouseT
     );
-    const chargingAmpsBattery = smallestTargetChargingPower / batteryVoltage;
+    const chargingAmpsBattery = (smallestTargetChargingPower / batteryVoltage) * 3;
 
     return chargingAmpsBattery;
   });
