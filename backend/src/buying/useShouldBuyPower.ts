@@ -116,16 +116,16 @@ export function useShouldBuyPower({
     log("AC Charging due to scheduled power buying wants to AC charge with", chargingAmperageForBuying(), "ampere(s)")
   );
 
-  useLogGridAmperageEvaluation({ wantedGridAmperage: maxBatteryChargingAmperage, chargingAmperageForBuying });
+  useLogGridAmperageEvaluation({ maxBatteryChargingAmperage, chargingAmperageForBuying });
 
   return { chargingAmperageForBuying };
 }
 
 export function useLogGridAmperageEvaluation({
-  wantedGridAmperage,
+  maxBatteryChargingAmperage,
   chargingAmperageForBuying,
 }: {
-  wantedGridAmperage: Accessor<number | undefined>;
+  maxBatteryChargingAmperage: Accessor<number | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
 }) {
   const { mqttClient } = useFromMqttProvider();
@@ -136,9 +136,9 @@ export function useLogGridAmperageEvaluation({
     if (!client) return;
 
     createEffect(() => {
-      const value = wantedGridAmperage();
+      const value = maxBatteryChargingAmperage();
       if (value == undefined) return;
-      const influx_entry = `${table} wanted_grid_amperage=${value}`;
+      const influx_entry = `${table} max_battery_charging_amperage=${value}`;
       if (client.connected) {
         client.publish(table, influx_entry).catch(e => {
           log("Couldn't publish message", influx_entry, e);
