@@ -85,10 +85,12 @@ export function useShouldBuyPower({
     const voltageS = reactiveAcInputVoltageS();
     const voltageT = reactiveAcInputVoltageT();
     if (voltageR == undefined || voltageS == undefined || voltageT == undefined) return undefined;
-    const lowestVoltage = Math.min(voltageR, voltageS, voltageT);
-    const unlimitedGridInAmperage = power / 3 / lowestVoltage;
-    const limitedGridInAmperage = Math.min(unlimitedGridInAmperage, maxGridAmps());
-    return limitedGridInAmperage;
+    const powerPerPhase = power / 3;
+    const maxAmps = maxGridAmps();
+    const gridInAmperageR = Math.min(powerPerPhase / voltageR, maxAmps);
+    const gridInAmperageS = Math.min(powerPerPhase / voltageS, maxAmps);
+    const gridInAmperageT = Math.min(powerPerPhase / voltageT, maxAmps);
+    return Math.max(gridInAmperageR, gridInAmperageS, gridInAmperageT);
   });
 
   // How many amperes we can charge with AT THE BATTERY (50v), given the current grid phase voltages, house power consumption and battery voltage, to not exceed the grid amperage limit
