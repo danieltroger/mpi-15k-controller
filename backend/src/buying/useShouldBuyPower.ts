@@ -91,14 +91,11 @@ export function useShouldBuyPower({
   // Charging amperage at the battery (at ~50v)
   const chargingAmperageForBuyingUnrounded = createMemo(() => {
     const userSpecifiedPower = powerFromSchedule();
-    console.log("userSpecifiedPower", userSpecifiedPower);
     if (!userSpecifiedPower) return userSpecifiedPower;
     const batteryVoltage = reactiveBatteryVoltage();
-    console.log("batteryVoltage", batteryVoltage);
     if (batteryVoltage == undefined) return undefined;
     const unlimitedAmperage = userSpecifiedPower / batteryVoltage;
     const maxAmperage = maxBatteryChargingAmperage();
-    console.log("maxAmperage", maxAmperage, "unlimitedAmperage", unlimitedAmperage);
     if (maxAmperage == undefined) return undefined;
     return Math.min(unlimitedAmperage, maxAmperage);
   });
