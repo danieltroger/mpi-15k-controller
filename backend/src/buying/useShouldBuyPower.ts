@@ -86,7 +86,7 @@ export function useShouldBuyPower({
     const voltageT = reactiveAcInputVoltageT();
     if (voltageR == undefined || voltageS == undefined || voltageT == undefined) return undefined;
     const lowestVoltage = Math.min(voltageR, voltageS, voltageT);
-    const unlimitedGridInAmperage = power / lowestVoltage;
+    const unlimitedGridInAmperage = power / 3 / lowestVoltage;
     const limitedGridInAmperage = Math.min(unlimitedGridInAmperage, maxGridAmps());
     return limitedGridInAmperage;
   });
