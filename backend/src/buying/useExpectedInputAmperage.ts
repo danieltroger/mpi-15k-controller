@@ -51,7 +51,7 @@ export function useExpectedInputAmperage(
     const satisfiedPhases = new Set<"r" | "s" | "t">();
     // First, every phase gets an equal amount of solar power
     // Then, if there's still solar power left, it gets shared equally among the phases until there's nothing left
-    while (solarPowerToDistribute > 0 && satisfiedPhases.size < 3) {
+    while (solarPowerToDistribute >= 1 && satisfiedPhases.size < 3) {
       const solarForEachPhase = solarPowerToDistribute / (3 - satisfiedPhases.size);
       for (const phase in totalPowerFromGrid) {
         if (satisfiedPhases.has(phase as keyof typeof totalPowerFromGrid)) continue;
