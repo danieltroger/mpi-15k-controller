@@ -96,7 +96,8 @@ export function useShouldBuyPower({
     if (batteryVoltage == undefined) return undefined;
     const unlimitedAmperage = userSpecifiedPower / batteryVoltage;
     const maxAmperage = maxBatteryChargingAmperage();
-    if (maxAmperage == undefined) return undefined;
+    // Limit to hardcoded 50A so we're still charging a bit if this happens and so we can diagnose this case, because we have some bug that periodically makes this memo return undefined when it shouldn't
+    if (maxAmperage == undefined) return Math.min(unlimitedAmperage, 50);
     return Math.min(unlimitedAmperage, maxAmperage);
   });
 
