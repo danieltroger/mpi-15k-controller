@@ -21,7 +21,7 @@ export function calculateChargingAmperage(
   const acOutPowerR = mqttValues["ac_output_active_power_r"]?.value;
   const acOutPowerS = mqttValues["ac_output_active_power_s"]?.value;
   const acOutPowerT = mqttValues["ac_output_active_power_t"]?.value;
-  if (!acOutPowerR || !acOutPowerS || !acOutPowerT) return undefined;
+  if (acOutPowerR == undefined || acOutPowerS == undefined || acOutPowerT == undefined) return undefined;
   let solarPowerToDistribute = useTotalSolarPower() ?? 0;
   const assumedSelfConsumptionPerPhase = assumedParasiticConsumption() / 3;
   // Not yet including charger watts as they can't be canceled out by solar
