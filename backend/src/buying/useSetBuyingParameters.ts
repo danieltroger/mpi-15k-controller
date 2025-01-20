@@ -60,7 +60,7 @@ export function useSetBuyingParameters({
     }
     // When not buying, set to 10A in case the inverter glitches and charges from the grid even though disabled
     const targetAmperes = shouldBuy() ? wantedAmperage! : 10;
-    const targetDeciAmperes = Math.round(targetAmperes * 10);
+    const targetDeciAmperes = Math.floor(targetAmperes * 10);
 
     // Value didn't change, don't do anything
     if (prev === targetDeciAmperes) return;
