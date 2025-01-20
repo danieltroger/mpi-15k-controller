@@ -17,17 +17,6 @@ export function useSetBuyingParameters({
   assumedParasiticConsumption: Accessor<number>;
 }) {
   const [maySetCurrent, setMaySetCurrent] = createSignal(true);
-  const setWantedAcChargingCurrent = async (targetDeciAmperes: number) => {
-    try {
-      debugLog("beginning setting charging current to", targetDeciAmperes, "deci amperes");
-      const { stdout, stderr } = await exec(
-        `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
-      );
-      debugLog("Set wanted charging current", stdout, stderr);
-    } catch (e) {
-      error("Setting wanted charging current failed", e);
-    }
-  };
   const { setWantedValue: setWantedChargeSourceValue, currentValue: currentChargeSourceValue } =
     useShinemonitorParameter<"PV Only" | "PV and Grid", "48" | "49">({
       parameter: "cts_ac_charge_battery_cmds",
@@ -67,7 +56,7 @@ export function useSetBuyingParameters({
 
     setMaySetCurrent(false);
     const start = performance.now();
-    setWantedAcChargingCurrent(targetDeciAmperes).then(() => {
+    usbSendChargingCurrent(targetDeciAmperes).then(() => {
       debugLog("setting charging current took", performance.now() - start, "ms");
       // Wait 5 seconds before allowing setting again
       setTimeout(() => setMaySetCurrent(true), 5_000);
@@ -100,3 +89,15 @@ export function useSetBuyingParameters({
         ]
       }
     */
+
+async function usbSendChargingCurrent(targetDeciAmperes: number) {
+  try {
+    debugLog("beginning setting charging current to", targetDeciAmperes, "deci amperes");
+    const { stdout, stderr } = await exec(
+      `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
+    );
+    debugLog("Set wanted charging current", stdout, stderr);
+  } catch (e) {
+    error("Setting wanted charging current failed", e);
+  }
+}
