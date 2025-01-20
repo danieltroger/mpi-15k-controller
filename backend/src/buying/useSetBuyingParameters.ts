@@ -96,7 +96,7 @@ async function usbSendChargingCurrent(targetDeciAmperes: number) {
     const { stdout, stderr } = await exec(
       `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
     );
-    debugLog("Set wanted charging current", stdout, stderr);
+    debugLog("Set wanted charging current", { stdout, stderr });
   } catch (e) {
     error("Setting wanted charging current failed", e);
   }
