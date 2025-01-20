@@ -5,7 +5,9 @@ function print(prefix: string, ...args: any[]) {
 export function log(...args: any[]) {
   print("[LOG]", ...args);
 }
-
+export function debugLog(...args: any[]) {
+  print("[DEBUG]", ...args);
+}
 export function warn(...args: any[]) {
   print("[WARN]", ...args);
 }
