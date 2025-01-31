@@ -14,7 +14,11 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
 
   onCleanup(() => (cleanedUp = true));
 
-  makeReading(setVoltageSagMillivolts, () => cleanedUp);
+  makeReading({
+    setValue: setVoltageSagMillivolts,
+    getWasCleanedUp: () => cleanedUp,
+    getGain: () => untrack(() => config().current_measuring.gain_constant),
+  });
 
   createEffect(() => {
     const value = voltageSagMillivolts();
@@ -41,12 +45,20 @@ function reportToMqtt(value: number, config: Accessor<Config>) {
   }
 }
 
-function makeReading(setValue: Setter<number | undefined>, getWasCleanedUp: () => boolean) {
+function makeReading({
+  setValue,
+  getWasCleanedUp,
+  getGain,
+}: {
+  setValue: Setter<number | undefined>;
+  getWasCleanedUp: () => boolean;
+  getGain: () => number;
+}) {
   adc.read(
     PORT,
     adc.ADR_48,
     adc.MUX_I0_I1,
-    adc.GAIN_256,
+    getGain(),
     adc.RATE_8,
     RAWDATA, // rawdata ?
     function (data) {
@@ -55,7 +67,7 @@ function makeReading(setValue: Setter<number | undefined>, getWasCleanedUp: () =
       } else {
         setValue(data);
         if (!getWasCleanedUp()) {
-          makeReading(setValue, getWasCleanedUp);
+          makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getGain });
         }
       }
     }
