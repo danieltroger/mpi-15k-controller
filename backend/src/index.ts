@@ -23,6 +23,7 @@ import { shouldSellPower } from "./feeding/shouldSellPower";
 import { NowProvider } from "./utilities/useNow";
 import { useShouldBuyPower } from "./buying/useShouldBuyPower";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
+import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring";
 
 while (true) {
   await new Promise<void>(r => {
@@ -67,6 +68,7 @@ function main() {
         const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
         const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
         const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
+        const [currentMeasuringErrored, setCurrentMeasuringErrored] = createSignal(false);
         const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
         const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
         const [lastFeedWhenNoSolarReason, setLastFeedWhenNoSolarReason] = createSignal<{ what: string; when: number }>({
@@ -92,9 +94,21 @@ function main() {
           assumedCapacity,
           averageSOC,
         } = useBatteryValues(configResourceValue);
-        const temperatures = useTemperatures(config);
 
+        const temperatures = useTemperatures(config);
         saveTemperatures({ config, temperatures });
+
+        const currentReturn = createMemo(() => {
+          if (currentMeasuringErrored()) return;
+          return catchError(
+            () => useCurrentMeasuring(config),
+            e => {
+              setCurrentMeasuringErrored(true);
+              error("Current measuring errored", e, "restarting in 60s");
+              setTimeout(() => setCurrentMeasuringErrored(false), 60_000);
+            }
+          );
+        });
 
         const isChargingOuterScope = createMemo(() => {
           if (!hasCredentials()) {
@@ -169,6 +183,7 @@ function main() {
               totalLastEmpty,
               currentBatteryPower: currentPower,
               energyRemovedSinceFull,
+              voltageSagMillivolts: () => currentReturn()?.voltageSagMillivolts(),
               socSinceEmpty,
               socSinceFull,
               assumedCapacity,
