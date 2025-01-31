@@ -5,6 +5,10 @@ import process from "process";
 import { error, log } from "./utilities/logging";
 
 export type Config = {
+  current_measuring: {
+    table: string;
+    gain_constant: number;
+  };
   scheduled_power_selling: {
     schedule: Record<
       string,
@@ -132,6 +136,10 @@ const default_config: Config = {
       capacity: 19.2 * 12 * 3 * 16,
       parasitic_consumption: 315,
     },
+  },
+  current_measuring: {
+    table: "current_values",
+    gain_constant: 5,
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
