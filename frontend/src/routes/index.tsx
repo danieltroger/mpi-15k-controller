@@ -13,6 +13,7 @@ export default function Home() {
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
   const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
+  const [voltageSagMillivolts] = getBackendSyncedSignal<number>("voltageSagMillivolts");
   const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
   const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
 
@@ -61,7 +62,8 @@ export default function Home() {
           wh capacity:
         </h4>
         Since full: {socSinceFull()}%<br />
-        Since empty: {socSinceEmpty()}%
+        Since empty: {socSinceEmpty()}%<br />
+        Voltage sag (battery current measuring): {voltageSagMillivolts()}mv
       </section>
       <Show when={hasHydrated()}>
         <NoBuyDebug />
