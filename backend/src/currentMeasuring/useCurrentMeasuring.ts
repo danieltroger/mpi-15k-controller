@@ -5,7 +5,6 @@ import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { Config } from "../config";
 
 const PORT = 1; // i2c-1
-const RAWDATA = false;
 
 export function useCurrentMeasuring(config: Accessor<Config>) {
   const [voltageSagMillivolts, setVoltageSagMillivolts] = createSignal<number | undefined>(undefined);
@@ -54,22 +53,14 @@ function makeReading({
   getWasCleanedUp: () => boolean;
   getGain: () => number;
 }) {
-  adc.read(
-    PORT,
-    adc.ADR_48,
-    adc.MUX_I0_I1,
-    getGain(),
-    adc.RATE_8,
-    RAWDATA, // rawdata ?
-    function (data) {
-      if (data === undefined) {
-        error("Failed reading amperemeter ADC", adc.error_text());
-      } else {
-        setValue(data);
-        if (!getWasCleanedUp()) {
-          makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getGain });
-        }
+  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, getGain(), adc.RATE_8, true, function (data) {
+    if (data === undefined) {
+      error("Failed reading amperemeter ADC", adc.error_text());
+    } else {
+      setValue(data / 100);
+      if (!getWasCleanedUp()) {
+        makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getGain });
       }
     }
-  );
+  });
 }
