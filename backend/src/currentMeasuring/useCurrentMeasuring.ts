@@ -57,7 +57,7 @@ function makeReading({
     if (data === undefined) {
       error("Failed reading amperemeter ADC", adc.error_text());
     } else {
-      setValue(data / 100);
+      setValue(data / 128);
       if (!getWasCleanedUp()) {
         makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getGain });
       }
