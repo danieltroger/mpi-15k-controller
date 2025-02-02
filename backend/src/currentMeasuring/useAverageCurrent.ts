@@ -11,7 +11,7 @@ export function useAverageCurrent({
   const values = new Set<{ value: number; time: number }>();
   let values_start = +new Date();
 
-  return createMemo(() => {
+  return createMemo(prev => {
     let returnValue: number | undefined;
     const currentValue = rawMeasurement();
     if (!currentValue) return; // Unsure if this can happen but just in case
@@ -25,7 +25,10 @@ export function useAverageCurrent({
       }
       values_start = now;
     }
-    if (typeof returnValue !== undefined) return returnValue;
+    if (typeof returnValue !== undefined) {
+      return returnValue;
+    }
+    return prev;
   });
 }
 
