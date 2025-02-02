@@ -1,16 +1,19 @@
-import { useCurrentPower } from "./useCurrentPower";
+import { useLastFullAndEmpty } from "./useLastFullAndEmpty";
 import { useDatabasePower } from "./useDatabasePower";
-import { catchError, createEffect, createMemo, createSignal } from "solid-js";
+import { Accessor, catchError, createEffect, createMemo, createSignal } from "solid-js";
 import { get_config_object } from "../config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
 import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters";
 import { reportSOCToMqtt } from "./reportSOCToMqtt";
 import { error } from "../utilities/logging";
 
-export function useBatteryValues(configSignal: Awaited<ReturnType<typeof get_config_object>>) {
+export function useBatteryValues(
+  configSignal: Awaited<ReturnType<typeof get_config_object>>,
+  currentPower: Accessor<{ value: number; time: number } | undefined>
+) {
   const [config] = configSignal;
-  const { currentPower, lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } =
-    useCurrentPower(configSignal);
+  const { lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } =
+    useLastFullAndEmpty(configSignal);
   const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase, batteryWasLastEmptyAtAccordingToDatabase } =
     useDatabasePower(configSignal);
 
