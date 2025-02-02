@@ -1,5 +1,5 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { Accessor, createMemo, createSignal, onMount, Show } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
 
