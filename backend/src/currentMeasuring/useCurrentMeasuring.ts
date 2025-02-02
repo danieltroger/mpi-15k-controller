@@ -24,12 +24,13 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
     const batteryVoltage = reactiveBatteryVoltage();
     if (!measurementValue || batteryVoltage == undefined) return;
     const calculatedCurrent = rawToAmperage(measurementValue.value);
-    return calculatedCurrent * batteryVoltage;
+    return { value: calculatedCurrent * batteryVoltage, time: measurementValue.time };
   });
+  const averagedPower = useAverageCurrent({ rawMeasurement: calculatedPowerFromAmpMeter, config });
 
   createEffect(() => reportToMqtt(rawMeasurement()?.value, config, "raw_voltage_mv"));
   createEffect(() => reportToMqtt(averagedMeasurement(), config, "voltage_mv_averaged"));
-  createEffect(() => reportToMqtt(calculatedPowerFromAmpMeter(), config, "calculated_power"));
+  createEffect(() => reportToMqtt(averagedPower(), config, "calculated_power"));
 
   return {
     voltageSagMillivoltsRaw: rawMeasurement,
