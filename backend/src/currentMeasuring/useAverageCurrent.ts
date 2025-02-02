@@ -11,10 +11,10 @@ export function useAverageCurrent({
   const values = new Set<{ value: number; time: number }>();
   let values_start = +new Date();
 
-  return createMemo(prev => {
+  return createMemo<number | undefined>(prev => {
     let returnValue: number | undefined;
     const currentValue = rawMeasurement();
-    if (!currentValue) return; // Unsure if this can happen but just in case
+    if (!currentValue) return prev; // Unsure if this can happen but just in case
     values.add(currentValue);
     const now = +new Date();
     if (now - values_start >= untrack(config).current_measuring.average_over_time_seconds) {
