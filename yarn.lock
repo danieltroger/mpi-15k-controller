@@ -829,10 +829,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@iiot2k/ads1115@npm:^3.0.1":
+"@iiot2k/ads1115@npm:3.0.1":
   version: 3.0.1
   resolution: "@iiot2k/ads1115@npm:3.0.1"
   checksum: 10c0/84165db3fbe821560685643c1479bc51f95d8c912ab17f5be1ccaf2bd85ef5c26cbea76a67bd4bd09c8bfe16757878095da21f60b4b77a88d04eb51e0a53efb9
+  conditions: os=linux & cpu=arm64
+  languageName: node
+  linkType: hard
+
+"@iiot2k/ads1115@patch:@iiot2k/ads1115@npm%3A3.0.1#~/.yarn/patches/@iiot2k-ads1115-npm-3.0.1-9ed29e9684.patch":
+  version: 3.0.1
+  resolution: "@iiot2k/ads1115@patch:@iiot2k/ads1115@npm%3A3.0.1#~/.yarn/patches/@iiot2k-ads1115-npm-3.0.1-9ed29e9684.patch::version=3.0.1&hash=a8f61b"
+  checksum: 10c0/24a30cb6f65e7c9a6bb21273d62d145e191d989117bad8ca065211439eb58aa193ffdf6f705e3c4f910a34450afef9e7852813923841b6b91e8eae906082d32f
   conditions: os=linux & cpu=arm64
   languageName: node
   linkType: hard
@@ -2413,7 +2421,7 @@ __metadata:
   dependencies:
     "@bloomberg/record-tuple-polyfill": "patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch"
     "@depict-ai/utilishared": "npm:^2.4.4"
-    "@iiot2k/ads1115": "npm:^3.0.1"
+    "@iiot2k/ads1115": "patch:@iiot2k/ads1115@npm%3A3.0.1#~/.yarn/patches/@iiot2k-ads1115-npm-3.0.1-9ed29e9684.patch"
     "@swc-node/register": "npm:1.9.0"
     "@swc/core": "npm:^1.4.17"
     "@types/node": "npm:^20.12.7"
