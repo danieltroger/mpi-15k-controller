@@ -3,42 +3,35 @@ import { Accessor, createEffect, createSignal, onCleanup, Setter, untrack } from
 import { error } from "../utilities/logging";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { Config } from "../config";
+import { useAverageCurrent } from "./useAverageCurrent";
 
 const PORT = 1; // i2c-1
 
 export function useCurrentMeasuring(config: Accessor<Config>) {
-  const [voltageSagMillivolts, setVoltageSagMillivolts] = createSignal<number | undefined>(undefined);
-  const [toggleMqttSend, setToggleMqttSend] = createSignal(false);
+  const [rawMeasurement, setRawMeasurement] = createSignal<{ value: number; time: number } | undefined>(undefined); // in millivolts
   let cleanedUp = false;
-
   onCleanup(() => (cleanedUp = true));
-
   makeReading({
-    setValue: setVoltageSagMillivolts,
+    setValue: setRawMeasurement,
     getWasCleanedUp: () => cleanedUp,
     getRate: () => untrack(() => config().current_measuring.rate_constant),
   });
 
-  createEffect(() => {
-    const value = voltageSagMillivolts();
-    if (value == undefined) return;
-    toggleMqttSend();
-    reportToMqtt(value, config);
+  const averagedMeasurement = useAverageCurrent({ rawMeasurement, config });
 
-    // Always send a datapoint at least every 120 seconds so that grafana doesn't create gradients over long time periods when the value has stayed the same for long
-    const grafanaReportTimeout = setTimeout(() => setToggleMqttSend(prev => !prev), 120_000);
-    onCleanup(() => clearTimeout(grafanaReportTimeout));
-  });
+  createEffect(() => reportToMqtt(rawMeasurement()?.value, config, "raw_voltage_mv"));
+  createEffect(() => reportToMqtt(averagedMeasurement(), config, "voltage_mv_averaged"));
 
-  return { voltageSagMillivolts };
+  return { voltageSagMillivoltsRaw: rawMeasurement, voltageSagMillivoltsAveraged: averagedMeasurement };
 }
 
-function reportToMqtt(value: number, config: Accessor<Config>) {
+function reportToMqtt(value: number | undefined, config: Accessor<Config>, influx_name: string) {
+  if (value == undefined) return;
   const { mqttClient } = useFromMqttProvider();
   const client = mqttClient();
   if (!client) return;
   const table = untrack(() => config().current_measuring.table);
-  const influx_entry = `${table} raw_voltage_mv=${value}`;
+  const influx_entry = `${table} ${influx_name}=${value}`;
   if (client.connected) {
     client.publish(table, influx_entry).catch(() => {});
   }
@@ -49,7 +42,7 @@ function makeReading({
   getWasCleanedUp,
   getRate,
 }: {
-  setValue: Setter<number | undefined>;
+  setValue: Setter<{ value: number; time: number } | undefined>;
   getWasCleanedUp: () => boolean;
   getRate: () => number;
 }) {
@@ -57,7 +50,7 @@ function makeReading({
     if (data === undefined) {
       error("Failed reading amperemeter ADC:", adc.error_text());
     } else {
-      setValue(data / 128);
+      setValue({ value: data / 128, time: +new Date() });
     }
     if (!getWasCleanedUp()) {
       if (data === undefined) {
