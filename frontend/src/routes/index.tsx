@@ -64,6 +64,9 @@ export default function Home() {
         Since full: {socSinceFull()}%<br />
         Since empty: {socSinceEmpty()}%<br />
         Voltage sag (battery current measuring): {voltageSagMillivolts()}mv
+        <br />
+        Calc current: {voltageSagMillivolts()! * 5.6}A
+        <br />
       </section>
       <Show when={hasHydrated()}>
         <NoBuyDebug />

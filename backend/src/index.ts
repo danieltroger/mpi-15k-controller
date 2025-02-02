@@ -98,8 +98,9 @@ function main() {
         const temperatures = useTemperatures(config);
         saveTemperatures({ config, temperatures });
 
+        const currentMeasuringEnabled = createMemo(() => config().current_measuring.enabled);
         const currentReturn = createMemo(() => {
-          if (currentMeasuringErrored()) return;
+          if (currentMeasuringErrored() || !currentMeasuringEnabled()) return;
           return catchError(
             () => useCurrentMeasuring(config),
             e => {

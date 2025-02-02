@@ -8,7 +8,6 @@ const PORT = 1; // i2c-1
 
 export function useCurrentMeasuring(config: Accessor<Config>) {
   const [voltageSagMillivolts, setVoltageSagMillivolts] = createSignal<number | undefined>(undefined);
-  const [toggleMqttSend, setToggleMqttSend] = createSignal(false);
   let cleanedUp = false;
 
   onCleanup(() => (cleanedUp = true));
@@ -22,12 +21,7 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
   createEffect(() => {
     const value = voltageSagMillivolts();
     if (value == undefined) return;
-    toggleMqttSend();
     reportToMqtt(value, config);
-
-    // Always send a datapoint at least every 120 seconds so that grafana doesn't create gradients over long time periods when the value has stayed the same for long
-    const grafanaReportTimeout = setTimeout(() => setToggleMqttSend(prev => !prev), 120_000);
-    onCleanup(() => clearTimeout(grafanaReportTimeout));
   });
 
   return { voltageSagMillivolts };
