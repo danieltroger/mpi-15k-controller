@@ -17,7 +17,7 @@ export function useAverageCurrent({
     if (!currentValue) return prev; // Unsure if this can happen but just in case
     values.add(currentValue);
     const now = +new Date();
-    if (now - values_start >= untrack(config).current_measuring.average_over_time_seconds) {
+    if (now - values_start >= untrack(config).current_measuring.average_over_time_ms) {
       const weighted_average = calculate_weighted_average({ values, now });
       if (!isNaN(weighted_average)) {
         // Don't report NaN averages when we got no data for a longer period
@@ -25,7 +25,7 @@ export function useAverageCurrent({
       }
       values_start = now;
     }
-    if (typeof returnValue !== undefined) {
+    if (returnValue !== undefined) {
       return returnValue;
     }
     return prev;
