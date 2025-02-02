@@ -16,7 +16,7 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
   makeReading({
     setValue: setVoltageSagMillivolts,
     getWasCleanedUp: () => cleanedUp,
-    getGain: () => untrack(() => config().current_measuring.gain_constant),
+    getRate: () => untrack(() => config().current_measuring.rate_constant),
   });
 
   createEffect(() => {
@@ -47,19 +47,19 @@ function reportToMqtt(value: number, config: Accessor<Config>) {
 function makeReading({
   setValue,
   getWasCleanedUp,
-  getGain,
+  getRate,
 }: {
   setValue: Setter<number | undefined>;
   getWasCleanedUp: () => boolean;
-  getGain: () => number;
+  getRate: () => number;
 }) {
-  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, getGain(), adc.RATE_8, true, function (data) {
+  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, adc.GAIN_256, getRate(), true, function (data) {
     if (data === undefined) {
       error("Failed reading amperemeter ADC", adc.error_text());
     } else {
       setValue(data / 128);
       if (!getWasCleanedUp()) {
-        makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getGain });
+        makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getRate });
       }
     }
   });
