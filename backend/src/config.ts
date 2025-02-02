@@ -8,6 +8,7 @@ export type Config = {
   current_measuring: {
     table: string;
     rate_constant: number;
+    average_over_time_seconds: number;
     /**
      * Just a flag here for debugging issues with the i2c sensor.
      */
@@ -145,6 +146,7 @@ const default_config: Config = {
     table: "current_values",
     rate_constant: 0,
     enabled: true,
+    average_over_time_seconds: 1,
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
