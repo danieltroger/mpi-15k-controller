@@ -1,9 +1,10 @@
 import adc from "@iiot2k/ads1115";
-import { Accessor, createEffect, createSignal, onCleanup, Setter, untrack } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { error } from "../utilities/logging";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { Config } from "../config";
 import { useAverageCurrent } from "./useAverageCurrent";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 const PORT = 1; // i2c-1
 
@@ -18,11 +19,27 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
   });
 
   const averagedMeasurement = useAverageCurrent({ rawMeasurement, config });
+  const calculatedPowerFromAmpMeter = createMemo(() => {
+    const measurementValue = rawMeasurement();
+    const batteryVoltage = reactiveBatteryVoltage();
+    if (!measurementValue || batteryVoltage == undefined) return;
+    const calculatedCurrent = rawToAmperage(measurementValue.value);
+    return calculatedCurrent * batteryVoltage;
+  });
 
   createEffect(() => reportToMqtt(rawMeasurement()?.value, config, "raw_voltage_mv"));
   createEffect(() => reportToMqtt(averagedMeasurement(), config, "voltage_mv_averaged"));
+  createEffect(() => reportToMqtt(calculatedPowerFromAmpMeter(), config, "calculated_power"));
 
-  return { voltageSagMillivoltsRaw: rawMeasurement, voltageSagMillivoltsAveraged: averagedMeasurement };
+  return {
+    voltageSagMillivoltsRaw: rawMeasurement,
+    voltageSagMillivoltsAveraged: averagedMeasurement,
+    calculatedPowerFromAmpMeter,
+  };
+}
+
+function rawToAmperage(value: number) {
+  return -1 * (value * (value * -0.00692 + 5.99) - 8.37);
 }
 
 function reportToMqtt(value: number | undefined, config: Accessor<Config>, influx_name: string) {

@@ -84,7 +84,10 @@ export default function Home() {
         </span>
         mv
         <br />
-        Calc current: {5.470716163 * (voltageSagMillivoltsAveraged() ?? 0)}A
+        Calc current:{" "}
+        {voltageSagMillivoltsAveraged() == undefined
+          ? "Loading…"
+          : rawToAmperage(voltageSagMillivoltsAveraged()!) + "A"}
         <br />
       </section>
       <Show when={hasHydrated()}>
@@ -147,6 +150,10 @@ function FullOrEmptyIn({
       <br />
     </>
   );
+}
+
+function rawToAmperage(value: number) {
+  return -1 * (value * (value * -0.00692 + 5.99) - 8.37);
 }
 
 const secondsInAMinute = 60;
