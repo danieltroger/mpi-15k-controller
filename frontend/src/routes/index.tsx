@@ -1,7 +1,8 @@
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { Accessor, createEffect, createMemo, createSignal, onMount, Show } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal, getOwner, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
+import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 
 export default function Home() {
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
@@ -17,6 +18,7 @@ export default function Home() {
   const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
   const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
   const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
+  const owner = getOwner()!;
 
   onMount(() => setHasHydrated(true));
 
@@ -69,7 +71,18 @@ export default function Home() {
         <br />
         Raw: {voltageSagMillivoltsRaw()?.value}mv
         <br />
-        Averaged: {voltageSagMillivoltsAveraged()}mv
+        Averaged:{" "}
+        <span
+          title="Click to copy"
+          style="cursor: pointer"
+          onClick={async () => {
+            await navigator.clipboard.writeText(voltageSagMillivoltsAveraged() + "");
+            await showToastWithMessage(owner, () => "Copied " + voltageSagMillivoltsAveraged() + " to clipboard");
+          }}
+        >
+          {voltageSagMillivoltsAveraged()}
+        </span>
+        mv
         <br />
         Calc current: {5.470716163 * (voltageSagMillivoltsAveraged() ?? 0)}A
         <br />
