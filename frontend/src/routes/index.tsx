@@ -13,7 +13,7 @@ export default function Home() {
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
   const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
-  const [voltageSagMillivoltsRaw] = getBackendSyncedSignal<number>("voltageSagMillivoltsRaw");
+  const [voltageSagMillivoltsRaw] = getBackendSyncedSignal<{ value: number; time: number }>("voltageSagMillivoltsRaw");
   const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
   const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
   const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
@@ -67,7 +67,7 @@ export default function Home() {
         <br />
         Voltage sag (battery current measuring):
         <br />
-        Raw: {voltageSagMillivoltsRaw()}mv
+        Raw: {voltageSagMillivoltsRaw()?.value}mv
         <br />
         Averaged: {voltageSagMillivoltsAveraged()}mv
         <br />
