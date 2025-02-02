@@ -53,14 +53,18 @@ function makeReading({
   getWasCleanedUp: () => boolean;
   getRate: () => number;
 }) {
-  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, adc.GAIN_256, getRate(), true, function (data) {
+  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, adc.GAIN_256, getRate(), true, async function (data) {
     if (data === undefined) {
-      error("Failed reading amperemeter ADC", adc.error_text());
+      error("Failed reading amperemeter ADC:", adc.error_text());
     } else {
       setValue(data / 128);
-      if (!getWasCleanedUp()) {
-        makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getRate });
+    }
+    if (!getWasCleanedUp()) {
+      if (data === undefined) {
+        // If failed, wait a bit before making the next reading
+        await new Promise(r => setTimeout(r, 1000));
       }
+      makeReading({ setValue: setValue, getWasCleanedUp: getWasCleanedUp, getRate });
     }
   });
 }
