@@ -71,7 +71,7 @@ export default function Home() {
         <br />
         Averaged: {voltageSagMillivoltsAveraged()}mv
         <br />
-        Calc current: {5.54 * (voltageSagMillivoltsAveraged() ?? 0) + 7.61}A
+        Calc current: {5.470716163 * (voltageSagMillivoltsAveraged() ?? 0)}A
         <br />
       </section>
       <Show when={hasHydrated()}>
