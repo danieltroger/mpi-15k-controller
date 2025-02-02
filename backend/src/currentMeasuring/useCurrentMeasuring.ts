@@ -26,10 +26,11 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
     const calculatedCurrent = rawToAmperage(measurementValue.value);
     return { value: calculatedCurrent * batteryVoltage, time: measurementValue.time };
   });
+  const averagedPower = useAverageCurrent({ rawMeasurement: calculatedPowerFromAmpMeter, config });
 
   createEffect(() => reportToMqtt(rawMeasurement()?.value, config, "raw_voltage_mv"));
   createEffect(() => reportToMqtt(averagedMeasurement(), config, "voltage_mv_averaged"));
-  createEffect(() => reportToMqtt(calculatedPowerFromAmpMeter()?.value, config, "calculated_power"));
+  createEffect(() => reportToMqtt(averagedPower(), config, "calculated_power"));
 
   return {
     voltageSagMillivoltsRaw: rawMeasurement,
