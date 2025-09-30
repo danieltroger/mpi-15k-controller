@@ -2,6 +2,7 @@ import { Accessor, createEffect, createMemo, createSignal, mapArray } from "soli
 import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(
@@ -41,14 +42,21 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     )
   );
 
-  let hitSOCLimit = false;
+  let hitLimit = false;
 
   const exportAmountForSelling = createMemo(() => {
     const soc = averageSOC();
-    if (soc === undefined) return;
+    const voltage = reactiveBatteryVoltage();
+    if (soc === undefined || voltage === undefined) return;
+    
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
     const startSellingAgainAboveSoc = config().scheduled_power_selling.start_selling_again_above_soc;
-    const limitToUse = hitSOCLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
+    const onlySellAboveVoltage = config().scheduled_power_selling.only_sell_above_voltage;
+    const startSellingAgainAboveVoltage = config().scheduled_power_selling.start_selling_again_above_voltage;
+    
+    const socLimitToUse = hitLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
+    const voltageLimitToUse = hitLimit ? startSellingAgainAboveVoltage : onlySellAboveVoltage;
+    
     // take the maximum value of all schedule items
     const values = scheduleOutput().map(schedule => schedule()());
     let result = Math.max(...values);
@@ -56,12 +64,13 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
       result = 0;
     }
 
-    if (soc > limitToUse) {
-      hitSOCLimit = false;
+    // Only sell if we're above BOTH soc and voltage limits
+    if (soc > socLimitToUse && voltage > voltageLimitToUse) {
+      hitLimit = false;
       return result;
     } else if (result) {
-      // Only allow hitting SOC limit while we're feeding in
-      hitSOCLimit = true;
+      // Only allow hitting limit while we're feeding in
+      hitLimit = true;
     }
     return 0;
   });
