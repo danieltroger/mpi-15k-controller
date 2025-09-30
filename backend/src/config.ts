@@ -24,6 +24,8 @@ export type Config = {
     >;
     only_sell_above_soc: number;
     start_selling_again_above_soc: number;
+    start_selling_again_above_voltage: number;
+    only_sell_above_voltage: number;
   };
   scheduled_power_buying: {
     schedule: Record<
@@ -116,6 +118,8 @@ const default_config: Config = {
     },
     only_sell_above_soc: 13,
     start_selling_again_above_soc: 25,
+    only_sell_above_voltage: 49.8,
+    start_selling_again_above_voltage: 52.2,
   },
   scheduled_power_buying: {
     schedule: {
