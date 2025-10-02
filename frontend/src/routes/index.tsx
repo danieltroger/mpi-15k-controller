@@ -69,8 +69,7 @@ export default function Home() {
         Since full: {socSinceFull()}%<br />
         Since empty: {socSinceEmpty()}%<br />
         <br />
-        Voltage sag (battery current measuring):
-        <br />
+        <h4>Battery current measuring</h4>
         Raw: {voltageSagMillivoltsRaw()?.value}mv
         <br />
         Calc current:{" "}
@@ -80,18 +79,7 @@ export default function Home() {
               (config()?.current_measuring?.millivolts_per_ampere as number) +
             "A"}
         <br />
-        Averaged:{" "}
-        <span
-          title="Click to copy"
-          style="cursor: pointer"
-          onClick={async () => {
-            await navigator.clipboard.writeText(voltageSagMillivoltsAveraged() + "");
-            await showToastWithMessage(owner, () => "Copied " + voltageSagMillivoltsAveraged() + " to clipboard");
-          }}
-        >
-          {voltageSagMillivoltsAveraged()}
-        </span>
-        mv
+        Averaged: {voltageSagMillivoltsAveraged()}mv
         <br />
         Calc current averaged:{" "}
         {voltageSagMillivoltsAveraged() == undefined || !config()?.current_measuring
