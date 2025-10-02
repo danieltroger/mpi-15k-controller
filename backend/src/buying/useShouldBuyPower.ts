@@ -1,5 +1,4 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
@@ -10,6 +9,7 @@ import {
   reactiveBatteryVoltage,
 } from "../mqttValues/mqttHelpers";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { Config } from "../config.types";
 
 export function useShouldBuyPower({
   config,

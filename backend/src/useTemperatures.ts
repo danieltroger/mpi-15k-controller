@@ -8,11 +8,11 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import { Config } from "./config";
 import { promises as fs } from "fs";
 import { exec } from "./utilities/exec";
 import { log, warn } from "./utilities/logging";
 import { rand, wait } from "@depict-ai/utilishared/latest";
+import { Config } from "./config.types";
 
 export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
 

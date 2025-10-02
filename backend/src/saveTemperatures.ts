@@ -1,5 +1,4 @@
 import { Accessor, createComputed, createMemo, For, Resource, untrack } from "solid-js";
-import { Config } from "./config";
 import { promises as fs } from "fs";
 import path from "path";
 import process from "process";
@@ -7,6 +6,7 @@ import { useTemperatures } from "./useTemperatures";
 import { error, log } from "./utilities/logging";
 import MQTT from "async-mqtt";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
+import { Config } from "./config.types";
 
 export function saveTemperatures({
   temperatures,
