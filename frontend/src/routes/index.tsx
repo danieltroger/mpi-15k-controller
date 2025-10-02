@@ -3,6 +3,7 @@ import { Accessor, createEffect, createMemo, createSignal, getOwner, onMount, Sh
 import { A } from "@solidjs/router";
 import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
+import { Config } from "../../../backend/src/config.types";
 
 export default function Home() {
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
@@ -18,6 +19,7 @@ export default function Home() {
   const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
   const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
   const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
+  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
   const owner = getOwner()!;
 
   onMount(() => setHasHydrated(true));
@@ -71,6 +73,13 @@ export default function Home() {
         <br />
         Raw: {voltageSagMillivoltsRaw()?.value}mv
         <br />
+        Calc current:{" "}
+        {voltageSagMillivoltsRaw()?.value == undefined || !config()?.current_measuring
+          ? "Loading…"
+          : (voltageSagMillivoltsRaw()?.value! - (config()?.current_measuring?.zero_current_millivolts as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere as number) +
+            "A"}
+        <br />
         Averaged:{" "}
         <span
           title="Click to copy"
@@ -84,10 +93,12 @@ export default function Home() {
         </span>
         mv
         <br />
-        Calc current:{" "}
-        {voltageSagMillivoltsAveraged() == undefined
+        Calc current averaged:{" "}
+        {voltageSagMillivoltsAveraged() == undefined || !config()?.current_measuring
           ? "Loading…"
-          : rawToAmperage(voltageSagMillivoltsAveraged()!) + "A"}
+          : (voltageSagMillivoltsAveraged()! - (config()?.current_measuring?.zero_current_millivolts as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere as number) +
+            "A"}
         <br />
       </section>
       <Show when={hasHydrated()}>
@@ -150,10 +161,6 @@ function FullOrEmptyIn({
       <br />
     </>
   );
-}
-
-function rawToAmperage(value: number) {
-  return -1 * (value * (value * -0.00692 + 5.99) - 8.37);
 }
 
 const secondsInAMinute = 60;

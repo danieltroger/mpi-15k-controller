@@ -1,5 +1,6 @@
 import { Accessor, createMemo, untrack } from "solid-js";
-import { Config } from "../config";
+
+import { Config } from "../config.types";
 
 export function useAverageCurrent({
   rawMeasurement,

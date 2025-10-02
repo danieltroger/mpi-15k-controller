@@ -1,8 +1,8 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { Config } from "../config";
 import { log } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
+import { Config } from "../config.types";
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(
@@ -48,15 +48,15 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     const soc = averageSOC();
     const voltage = reactiveBatteryVoltage();
     if (soc === undefined || voltage === undefined) return;
-    
+
     const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
     const startSellingAgainAboveSoc = config().scheduled_power_selling.start_selling_again_above_soc;
     const onlySellAboveVoltage = config().scheduled_power_selling.only_sell_above_voltage;
     const startSellingAgainAboveVoltage = config().scheduled_power_selling.start_selling_again_above_voltage;
-    
+
     const socLimitToUse = hitLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
     const voltageLimitToUse = hitLimit ? startSellingAgainAboveVoltage : onlySellAboveVoltage;
-    
+
     // take the maximum value of all schedule items
     const values = scheduleOutput().map(schedule => schedule()());
     let result = Math.max(...values);

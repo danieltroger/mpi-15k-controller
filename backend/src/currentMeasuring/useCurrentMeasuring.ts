@@ -2,9 +2,9 @@ import adc from "@iiot2k/ads1115";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { error } from "../utilities/logging";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config";
 import { useAverageCurrent } from "./useAverageCurrent";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
+import { Config } from "../config.types";
 
 const PORT = 1; // i2c-1
 
