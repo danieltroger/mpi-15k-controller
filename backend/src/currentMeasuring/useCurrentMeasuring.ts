@@ -18,12 +18,15 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
     getRate: () => untrack(() => config().current_measuring.rate_constant),
   });
 
+  const zeroCurrentMillivolts = createMemo(() => config().current_measuring.zero_current_millivolts);
+  const milliVoltsPerAmpere = createMemo(() => config().current_measuring.millivolts_per_ampere);
+
   const averagedMeasurement = useAverageCurrent({ rawMeasurement, config });
   const calculatedPowerFromAmpMeter = createMemo(() => {
     const measurementValue = rawMeasurement();
     const batteryVoltage = reactiveBatteryVoltage();
     if (!measurementValue || batteryVoltage == undefined) return;
-    const calculatedCurrent = rawToAmperage(measurementValue.value);
+    const calculatedCurrent = (measurementValue.value - zeroCurrentMillivolts()) / milliVoltsPerAmpere();
     return calculatedCurrent * batteryVoltage;
   });
 
@@ -36,10 +39,6 @@ export function useCurrentMeasuring(config: Accessor<Config>) {
     voltageSagMillivoltsAveraged: averagedMeasurement,
     calculatedPowerFromAmpMeter,
   };
-}
-
-function rawToAmperage(value: number) {
-  return -1 * (value * (value * -0.00692 + 5.99) - 8.37);
 }
 
 function reportToMqtt(value: number | undefined, config: Accessor<Config>, influx_name: string) {

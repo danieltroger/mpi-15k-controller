@@ -10,6 +10,11 @@ export type Config = {
     rate_constant: number;
     average_over_time_ms: number;
     /**
+     * What voltage the hall effect sensor outputs at 0A
+     */
+    zero_current_millivolts: number;
+    millivolts_per_ampere: number;
+    /**
      * Just a flag here for debugging issues with the i2c sensor.
      */
     enabled: boolean;
@@ -151,6 +156,8 @@ const default_config: Config = {
     rate_constant: 0,
     enabled: true,
     average_over_time_ms: 1000,
+    millivolts_per_ampere: 2.5,
+    zero_current_millivolts: 2500,
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
