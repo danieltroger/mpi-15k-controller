@@ -63,11 +63,14 @@ function makeReading({
   getWasCleanedUp: () => boolean;
   getRate: () => number;
 }) {
-  adc.read(PORT, adc.ADR_48, adc.MUX_I0_I1, adc.GAIN_256, getRate(), true, async function (data) {
+  adc.read(PORT, adc.ADR_48, adc.MUX_I0_GND, adc.GAIN_4096, getRate(), true, async function (data) {
     if (data === undefined) {
       error("Failed reading amperemeter ADC:", adc.error_text());
     } else {
-      setValue({ value: data / 128, time: +new Date() });
+      // The conversion formula from raw data to millivolts is:
+      // mV = raw_value × (full_scale_range_mV / 32768)
+      // Example calculation:  mV = raw_value × (4096 / 32768) = raw_value / 8 ✓
+      setValue({ value: data / 8, time: +new Date() });
     }
     if (!getWasCleanedUp()) {
       if (data === undefined) {
