@@ -82,22 +82,6 @@ function main() {
           what: feedWhenNoSolarDead,
           when: +new Date(),
         });
-        const {
-          currentPower,
-          totalLastEmpty,
-          totalLastFull,
-          energyRemovedSinceFull,
-          energyAddedSinceEmpty,
-          socSinceEmpty,
-          socSinceFull,
-          assumedParasiticConsumption,
-          assumedCapacity,
-          averageSOC,
-        } = useBatteryValues(configResourceValue);
-
-        const temperatures = useTemperatures(config);
-        saveTemperatures({ config, temperatures });
-
         const currentMeasuringEnabled = createMemo(() => config().current_measuring.enabled);
         const currentReturn = createMemo(() => {
           if (currentMeasuringErrored() || !currentMeasuringEnabled()) return;
@@ -110,6 +94,21 @@ function main() {
             }
           );
         });
+        const currentPower = createMemo(() => currentReturn()?.calculatedPowerFromAmpMeter?.());
+        const {
+          totalLastEmpty,
+          totalLastFull,
+          energyRemovedSinceFull,
+          energyAddedSinceEmpty,
+          socSinceEmpty,
+          socSinceFull,
+          assumedParasiticConsumption,
+          assumedCapacity,
+          averageSOC,
+        } = useBatteryValues(configResourceValue, currentPower);
+
+        const temperatures = useTemperatures(config);
+        saveTemperatures({ config, temperatures });
 
         const isChargingOuterScope = createMemo(() => {
           if (!hasCredentials()) {
