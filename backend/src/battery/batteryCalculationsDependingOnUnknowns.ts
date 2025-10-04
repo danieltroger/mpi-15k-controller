@@ -41,12 +41,14 @@ export function batteryCalculationsDependingOnUnknowns({
   const socSinceFull = createMemo(() => {
     const removedSinceFull = energyRemovedSinceFull();
     if (removedSinceFull === undefined) return undefined;
-    return 100 - (removedSinceFull / assumedCapacity()) * 100;
+    const result = 100 - (removedSinceFull / assumedCapacity()) * 100;
+    return Math.round(result * 1000) / 1000;
   });
   const socSinceEmpty = createMemo(() => {
     const addedSinceEmpty = energyAddedSinceEmpty();
     if (addedSinceEmpty === undefined) return undefined;
-    return (addedSinceEmpty / assumedCapacity()) * 100;
+    const result = (addedSinceEmpty / assumedCapacity()) * 100;
+    return Math.round(result * 1000) / 1000;
   });
 
   return {
