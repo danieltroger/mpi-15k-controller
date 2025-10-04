@@ -77,24 +77,20 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     () => [influxClient(), requestStartingAt()] as const,
     async ([db, startingAt]) => {
       if (!db || !startingAt) return;
-      log("Requesting historic battery values from database");
-      const values = await queryVoltageAndCurrentBetweenTimes(db, startingAt, +new Date());
-      log("Got historic battery values from database");
+      log("Requesting historic battery power from database");
+      const values = await queryCalculatedPowerBetweenTimes(db, startingAt, +new Date());
+      log("Got historic battery power from database");
 
-      const voltages = values.filter(value => value.battery_voltage !== null);
-      const currents = values.filter(value => value.battery_current !== null);
       const output: { time: number; value: number }[] = [];
 
-      for (let index = 0; index < voltages.length; index++) {
-        const voltage = voltages[index];
-        const { battery_current } = currents[index] || {};
-        const { battery_voltage, time } = voltage;
-        if (battery_voltage == null || battery_current == null) continue;
+      for (const item of values) {
+        const { calculated_power, time } = item;
+        if (calculated_power == null) continue;
         const finalTime = Math.round(time.getNanoTime() / 1000 / 1000);
 
         output.push({
           time: finalTime,
-          value: (battery_voltage / 10) * (battery_current / 10),
+          value: calculated_power,
         });
       }
 
@@ -111,11 +107,10 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
   };
 }
 
-async function queryVoltageAndCurrentBetweenTimes(db: Influx.InfluxDB, start: number, end: number) {
+async function queryCalculatedPowerBetweenTimes(db: Influx.InfluxDB, start: number, end: number) {
   const twentyFourHours = 1000 * 60 * 60 * 24;
   const results: IResults<{
-    battery_voltage: number | null;
-    battery_current: number | null;
+    calculated_power: number | null;
     time: { getNanoTime: () => number };
   }>[] = [];
   let localStart = start + 1;
@@ -124,7 +119,7 @@ async function queryVoltageAndCurrentBetweenTimes(db: Influx.InfluxDB, start: nu
   while (localStart < end) {
     results.push(
       await db.query(
-        `SELECT battery_voltage, battery_current FROM "mpp-solar" WHERE time >= ${localStart - 1}ms AND time <= ${localEnd}ms fill(null)`
+        `SELECT calculated_power FROM "current_values" WHERE time >= ${localStart - 1}ms AND time <= ${localEnd}ms fill(null)`
       )
     );
     localStart = localEnd;

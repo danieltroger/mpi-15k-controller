@@ -1,4 +1,4 @@
-import { Accessor, createMemo, createMemo as solidCreateMemo } from "solid-js";
+import { Accessor, createMemo } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 
