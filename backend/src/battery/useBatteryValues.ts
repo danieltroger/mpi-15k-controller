@@ -87,7 +87,6 @@ export function useBatteryValues(
   });
 
   return {
-    currentPower,
     totalLastEmpty,
     totalLastFull,
     energyRemovedSinceFull,
