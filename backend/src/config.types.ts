@@ -9,6 +9,11 @@ export type Config = {
     zero_current_millivolts: number;
     millivolts_per_ampere: number;
     /**
+     * For the second sensor
+     */
+    zero_current_millivolts2: number;
+    millivolts_per_ampere2: number;
+    /**
      * Just a flag here for debugging issues with the i2c sensor.
      */
     enabled: boolean;
