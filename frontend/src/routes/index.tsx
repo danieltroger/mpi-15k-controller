@@ -93,6 +93,7 @@ export default function Home() {
         <br />
         <hr />
         <b>Sensor 2 (on negative pole)</b>
+        <br />
         Raw: {voltageSagMillivoltsRaw2()?.value}mv
         <br />
         Calc current:{" "}
