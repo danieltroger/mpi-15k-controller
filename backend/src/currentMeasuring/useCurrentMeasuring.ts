@@ -19,8 +19,12 @@ export function useCurrentMeasuring(config: Accessor<Config>, sensor2: boolean) 
     sensor2,
   });
 
-  const zeroCurrentMillivolts = createMemo(() => config().current_measuring.zero_current_millivolts);
-  const milliVoltsPerAmpere = createMemo(() => config().current_measuring.millivolts_per_ampere);
+  const zeroCurrentMillivolts = createMemo(
+    () => config().current_measuring[`zero_current_millivolts${sensor2 ? "2" : ""}`]
+  );
+  const milliVoltsPerAmpere = createMemo(
+    () => config().current_measuring[`millivolts_per_ampere${sensor2 ? "2" : ""}`]
+  );
 
   const averagedMeasurement = useAverageCurrent({ rawMeasurement, config });
   const calculatedPowerFromAmpMeter = createMemo(() => {

@@ -99,8 +99,8 @@ export default function Home() {
         Calc current:{" "}
         {voltageSagMillivoltsRaw2()?.value == undefined || !config()?.current_measuring
           ? "Loading…"
-          : (voltageSagMillivoltsRaw2()?.value! - (config()?.current_measuring?.zero_current_millivolts as number)) /
-              (config()?.current_measuring?.millivolts_per_ampere as number) +
+          : (voltageSagMillivoltsRaw2()?.value! - (config()?.current_measuring?.zero_current_millivolts2 as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere2 as number) +
             "A"}
         <br />
         Averaged: {voltageSagMillivoltsAveraged2()}mv
@@ -108,8 +108,8 @@ export default function Home() {
         Calc current averaged:{" "}
         {voltageSagMillivoltsAveraged2() == undefined || !config()?.current_measuring
           ? "Loading…"
-          : (voltageSagMillivoltsAveraged2()! - (config()?.current_measuring?.zero_current_millivolts as number)) /
-              (config()?.current_measuring?.millivolts_per_ampere as number) +
+          : (voltageSagMillivoltsAveraged2()! - (config()?.current_measuring?.zero_current_millivolts2 as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere2 as number) +
             "A"}
         <br />
       </section>

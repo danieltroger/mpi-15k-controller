@@ -47,6 +47,8 @@ const default_config: Config = {
     average_over_time_ms: 1000,
     millivolts_per_ampere: 2.5,
     zero_current_millivolts: 2500,
+    zero_current_millivolts2: 2500,
+    millivolts_per_ampere2: 2.5,
   },
   float_charging_voltage: 53.5,
   full_battery_voltage: 58.4,
