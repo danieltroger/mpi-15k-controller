@@ -86,7 +86,11 @@ function main() {
         const currentReturn = createMemo(() => {
           if (currentMeasuringErrored() || !currentMeasuringEnabled()) return;
           return catchError(
-            () => useCurrentMeasuring(config),
+            () => {
+              const sensor1 = useCurrentMeasuring(config, false);
+              const sensor2 = useCurrentMeasuring(config, true);
+              return { sensor1, sensor2 };
+            },
             e => {
               setCurrentMeasuringErrored(true);
               error("Current measuring errored", e, "restarting in 60s");
@@ -94,7 +98,7 @@ function main() {
             }
           );
         });
-        const currentPower = createMemo(() => currentReturn()?.calculatedPowerFromAmpMeter?.());
+        const currentPower = createMemo(() => currentReturn()?.sensor1.calculatedPowerFromAmpMeter?.());
         const {
           totalLastEmpty,
           totalLastFull,
@@ -183,8 +187,10 @@ function main() {
               totalLastEmpty,
               currentBatteryPower: currentPower,
               energyRemovedSinceFull,
-              voltageSagMillivoltsRaw: () => currentReturn()?.voltageSagMillivoltsRaw(),
-              voltageSagMillivoltsAveraged: () => currentReturn()?.voltageSagMillivoltsAveraged(),
+              voltageSagMillivoltsRaw: () => currentReturn()?.sensor1.voltageSagMillivoltsRaw(),
+              voltageSagMillivoltsAveraged: () => currentReturn()?.sensor1.voltageSagMillivoltsAveraged(),
+              voltageSagMillivoltsRaw2: () => currentReturn()?.sensor2.voltageSagMillivoltsRaw(),
+              voltageSagMillivoltsAveraged2: () => currentReturn()?.sensor2.voltageSagMillivoltsAveraged(),
               socSinceEmpty,
               socSinceFull,
               assumedCapacity,
