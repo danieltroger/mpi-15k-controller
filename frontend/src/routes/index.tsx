@@ -16,6 +16,10 @@ export default function Home() {
   const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
   const [voltageSagMillivoltsRaw] = getBackendSyncedSignal<{ value: number; time: number }>("voltageSagMillivoltsRaw");
   const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
+  const [voltageSagMillivoltsRaw2] = getBackendSyncedSignal<{ value: number; time: number }>(
+    "voltageSagMillivoltsRaw2"
+  );
+  const [voltageSagMillivoltsAveraged2] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged2");
   const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
   const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
   const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
@@ -84,6 +88,26 @@ export default function Home() {
         {voltageSagMillivoltsAveraged() == undefined || !config()?.current_measuring
           ? "Loading…"
           : (voltageSagMillivoltsAveraged()! - (config()?.current_measuring?.zero_current_millivolts as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere as number) +
+            "A"}
+        <br />
+        <hr />
+        <b>Sensor 2 (on negative pole)</b>
+        Raw: {voltageSagMillivoltsRaw2()?.value}mv
+        <br />
+        Calc current:{" "}
+        {voltageSagMillivoltsRaw2()?.value == undefined || !config()?.current_measuring
+          ? "Loading…"
+          : (voltageSagMillivoltsRaw2()?.value! - (config()?.current_measuring?.zero_current_millivolts as number)) /
+              (config()?.current_measuring?.millivolts_per_ampere as number) +
+            "A"}
+        <br />
+        Averaged: {voltageSagMillivoltsAveraged2()}mv
+        <br />
+        Calc current averaged:{" "}
+        {voltageSagMillivoltsAveraged2() == undefined || !config()?.current_measuring
+          ? "Loading…"
+          : (voltageSagMillivoltsAveraged2()! - (config()?.current_measuring?.zero_current_millivolts as number)) /
               (config()?.current_measuring?.millivolts_per_ampere as number) +
             "A"}
         <br />
