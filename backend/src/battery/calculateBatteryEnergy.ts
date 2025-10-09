@@ -1,4 +1,4 @@
-import { Accessor, createEffect, createMemo, createMemo as solidCreateMemo, createSignal } from "solid-js";
+import { Accessor, createEffect, createMemo, createSignal } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { useNow } from "../utilities/useNow";
 
