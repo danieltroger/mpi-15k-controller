@@ -55,8 +55,7 @@ export default function LiveData() {
           <tr>
             <td>Solar array 1</td>
             <td>
-              {(solar_input_voltage_1()?.value as number) / 10 + ""}v /{" "}
-              {(solar_input_current_1()?.value as number) / 100 + ""}a
+              {solar_input_voltage_1()?.value}v / {solar_input_current_1()?.value}a
             </td>
             <td>
               {solar_input_voltage_1()?.time && new Date(solar_input_voltage_1()!.time).toLocaleString()} /{" "}
@@ -66,8 +65,7 @@ export default function LiveData() {
           <tr>
             <td>Solar array 2</td>
             <td>
-              {(solar_input_voltage_2()?.value as number) / 10 + ""}v /{" "}
-              {(solar_input_current_2()?.value as number) / 100 + ""}a
+              {solar_input_voltage_2()?.value}v / {solar_input_current_2()?.value}a
             </td>
             <td>
               {solar_input_voltage_2()?.time && new Date(solar_input_voltage_2()!.time).toLocaleString()} /{" "}
@@ -81,12 +79,12 @@ export default function LiveData() {
           </tr>
           <tr>
             <td>Battery voltage</td>
-            <td>{(battery_voltage()?.value && (battery_voltage()?.value as number) / 10) + ""}v</td>
+            <td>{battery_voltage()?.value}v</td>
             <td>{battery_voltage()?.time && new Date(battery_voltage()!.time).toLocaleString()}</td>
           </tr>
           <tr>
             <td>Battery current</td>
-            <td>{(battery_current()?.value && (battery_current()?.value as number) / 10) + ""}a</td>
+            <td>{battery_current()?.value}a</td>
             <td>{battery_current()?.time && new Date(battery_current()!.time).toLocaleString()}</td>
           </tr>
           <tr>
@@ -125,15 +123,15 @@ export default function LiveData() {
             <td>
               R:{" "}
               {Math.round(
-                ((ac_input_active_power_r()?.value as number) / ((ac_input_voltage_r()?.value as number) / 10)) * 10
+                ((ac_input_active_power_r()?.value as number) / (ac_input_voltage_r()?.value as number)) * 10
               ) / 10}
               A, S:{" "}
               {Math.round(
-                ((ac_input_active_power_s()?.value as number) / ((ac_input_voltage_s()?.value as number) / 10)) * 10
+                ((ac_input_active_power_s()?.value as number) / (ac_input_voltage_s()?.value as number)) * 10
               ) / 10}
               A, T:{" "}
               {Math.round(
-                ((ac_input_active_power_t()?.value as number) / ((ac_input_voltage_t()?.value as number) / 10)) * 10
+                ((ac_input_active_power_t()?.value as number) / (ac_input_voltage_t()?.value as number)) * 10
               ) / 10}
               A
             </td>
@@ -142,8 +140,8 @@ export default function LiveData() {
           <tr>
             <td>Ac input voltage</td>
             <td>
-              R: {(ac_input_voltage_r()?.value as number) / 10}v, S: {(ac_input_voltage_s()?.value as number) / 10}v, T:{" "}
-              {(ac_input_voltage_t()?.value as number) / 10}v
+              R: {ac_input_voltage_r()?.value as number}v, S: {ac_input_voltage_s()?.value as number}v, T:{" "}
+              {ac_input_voltage_t()?.value as number}v
             </td>
             <td>{ac_input_voltage_r()?.time && new Date(ac_input_voltage_r()!.time).toLocaleString()}</td>
           </tr>
