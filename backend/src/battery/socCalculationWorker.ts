@@ -1,7 +1,6 @@
 import { parentPort } from "worker_threads";
 import { SocWorkerData, WorkerResponse } from "./socCalculationWorker.types";
 import { socCalculationWork } from "./socCalculationWork";
-import { log } from "../utilities/logging";
 
 // Listen for messages from the main thread
 parentPort!.on("message", (data: SocWorkerData) => {
