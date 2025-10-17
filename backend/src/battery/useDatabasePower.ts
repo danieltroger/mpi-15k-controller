@@ -30,7 +30,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     date.setHours(0, 0, 0, 0);
     return +date;
   });
-  const fullWhenAccessor = createMemo(() => config().full_battery_voltage * 10);
+  const fullWhenAccessor = createMemo(() => config().full_battery_voltage);
 
   const [batteryWasLastFullAt] = createResource(
     () => [influxClient(), fullWhenAccessor()] as const,
@@ -48,7 +48,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       }
     }
   );
-  const emptyAtAccessor = createMemo(() => config().soc_calculations.battery_empty_at * 10);
+  const emptyAtAccessor = createMemo(() => config().soc_calculations.battery_empty_at);
   const [batteryWasLastEmptyAt] = createResource(
     () => [influxClient(), emptyAtAccessor()] as const,
     async ([db, emptyAt]) => {
