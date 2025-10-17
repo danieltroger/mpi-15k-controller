@@ -63,7 +63,7 @@ export async function makeRequestWithAuth<T>(
 
     const response = await fetch(urlObject, {
       headers: {
-        "User-Agent": "SolarPower/1.9.1 (iPad; iOS 17.4; Scale/2.00)",
+        "User-Agent": "SolarPower/2.2.0 (iPad; iOS 26.0; Scale/2.00)",
         "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
         "Accept": "*/*",
       },
@@ -123,7 +123,7 @@ async function loginToShinemonitor(configSignal: Awaited<ReturnType<typeof get_c
 
   const response = await fetch(urlObject, {
     headers: {
-      "User-Agent": "SolarPower/1.9.1 (iPad; iOS 17.4; Scale/2.00)",
+      "User-Agent": "SolarPower/2.2.0 (iPad; iOS 26.0; Scale/2.00)",
       "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
       "Accept": "*/*",
     },
