@@ -42,16 +42,8 @@ export function feedWhenNoSolar({
     if (powerR == undefined && powerS == undefined && powerT == undefined) return undefined;
     return (powerR || 0) + (powerS || 0) + (powerT || 0);
   };
-  const string1Voltage = createMemo(() => {
-    const voltage1 = mqttValues["solar_input_voltage_1"]?.value as number | undefined;
-    if (voltage1 == undefined) return undefined;
-    return voltage1 / 10;
-  });
-  const string2Voltage = createMemo(() => {
-    const voltage2 = mqttValues["solar_input_voltage_2"]?.value as number | undefined;
-    if (voltage2 == undefined) return undefined;
-    return voltage2 / 10;
-  });
+  const string1Voltage = createMemo(() => mqttValues["solar_input_voltage_1"]?.value);
+  const string2Voltage = createMemo(() => mqttValues["solar_input_voltage_2"]?.value);
   const availablePowerThatWouldGoIntoTheGridByItself = createMemo(() => {
     const solar = useTotalSolarPower();
     const acOutput = acOutputPower();
