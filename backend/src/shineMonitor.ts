@@ -25,7 +25,12 @@ export type SetVoltageResponse = {
 
 let requestBeingMade: Promise<void> | undefined;
 
-const shineUrl = "https://web.dessmonitor.com/public/";
+const shineUrl = "https://ios.shinemonitor.com/public/";
+export const clientInfo = {
+  "_app_id_": "wifiapp.volfw.solarpower",
+  "_app_version_": "1.9.1",
+  "_app_client_": "ios",
+} as const;
 
 export async function makeRequestWithAuth<T>(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
@@ -44,12 +49,13 @@ export async function makeRequestWithAuth<T>(
       dat: { secret, token },
     } = auth;
     const now = +new Date();
-    const requestPart = { token, action, source: "1", ...initialRequest };
+    const requestPart = { action, source: "1", ...initialRequest };
     const asQueryString = new URLSearchParams(requestPart) + "";
-    const sign = sha1(now + secret + "&" + asQueryString);
+    const sign = sha1(now + secret + token + "&" + asQueryString);
     const actualParams = new URLSearchParams({
       sign: sign,
       salt: now + "",
+      token: token,
       ...requestPart,
     });
     const urlObject = new URL(shineUrl);
@@ -107,6 +113,7 @@ async function loginToShinemonitor(configSignal: Awaited<ReturnType<typeof get_c
   const concatenated = now + hashedPassword + "&" + asQueryStrings;
   const hashedConcatenated = sha1(concatenated);
   const finalQuery = {
+    ...clientInfo,
     sign: hashedConcatenated,
     salt: now + "",
     ...request,
