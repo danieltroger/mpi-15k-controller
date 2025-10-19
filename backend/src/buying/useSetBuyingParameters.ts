@@ -11,7 +11,7 @@ export function useSetBuyingParameters({
   chargingAmperageForBuying: Accessor<number | undefined>;
   assumedParasiticConsumption: Accessor<number>;
 }) {
-  const { $usbValues, setCommandQueue, triggerGettingUsbValues } = useUsbInverterConfiguration();
+  const { $usbValues, setCommandQueue } = useUsbInverterConfiguration();
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
   const currentlyBuying = createMemo(() => $usbValues.ac_charge_battery !== "disabled");
 
@@ -21,7 +21,7 @@ export function useSetBuyingParameters({
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
-          newQueue.add({ command: "EDB1", onSucceeded: triggerGettingUsbValues });
+          newQueue.add({ command: "EDB1", refreshAfterSend: true });
           return newQueue;
         });
       }
@@ -30,7 +30,7 @@ export function useSetBuyingParameters({
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
-          newQueue.add({ command: "EDB0", onSucceeded: triggerGettingUsbValues });
+          newQueue.add({ command: "EDB0", refreshAfterSend: true });
           return newQueue;
         });
       }
@@ -46,6 +46,7 @@ export function useSetBuyingParameters({
       const newQueue = new Set([...prev].filter(item => !item.command.startsWith("MUCHGC")));
       newQueue.add({
         command: `MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`,
+        refreshAfterSend: false,
       });
       return newQueue;
     });

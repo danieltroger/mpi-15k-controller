@@ -2,7 +2,7 @@ import { Accessor, createContext, createSignal, JSX, untrack, useContext } from 
 import { Config } from "../config/config.types";
 import { CommandQueue, UsbConfiguration } from "./usb.types";
 import { useGetUsbValues } from "./useGetUsbValues";
-import { useHandleUsbQueue } from "./useHandleUsbQueue";
+import { useProcessUsbQueue } from "./useProcessUsbQueue";
 
 const UsbInverterConfigurationContext = createContext<UsbConfiguration>();
 
@@ -17,7 +17,7 @@ export function UsbInverterConfigurationProvider(props: { children: JSX.Element;
   return UsbInverterConfigurationContext.Provider({
     value: { commandQueue, setCommandQueue, $usbValues, triggerGettingUsbValues },
     get children() {
-      useHandleUsbQueue(untrack(() => props.config));
+      useProcessUsbQueue(untrack(() => props.config));
       return props.children;
     },
   });

@@ -2,7 +2,7 @@ import { Accessor, createEffect, createMemo, onCleanup, Setter, untrack } from "
 import { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types";
 import { Config } from "../config/config.types";
 import { createStore } from "solid-js/store";
-import { debugLog, warnLog } from "../utilities/logging";
+import { warnLog } from "../utilities/logging";
 
 const commands = new Set(["GPMP", "HECS"] as const);
 
@@ -59,6 +59,7 @@ export function useGetUsbValues({
             }
           }
         },
+        refreshAfterSend: false,
       } satisfies CommandQueueItem;
       setCommandQueue(prev => {
         const newCommandQueue = new Set(prev);

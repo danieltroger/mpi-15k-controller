@@ -33,6 +33,7 @@ type USBCommands =
 
 export type CommandQueueItem = USBCommands & {
   onSucceeded?: (result: { stdout: string; stderr: string }) => void;
+  refreshAfterSend: boolean;
 };
 
 export type CommandQueue = Set<CommandQueueItem>;
