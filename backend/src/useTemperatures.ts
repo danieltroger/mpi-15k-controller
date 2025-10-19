@@ -10,7 +10,7 @@ import {
 } from "solid-js";
 import { promises as fs } from "fs";
 import { exec } from "./utilities/exec";
-import { log, warn } from "./utilities/logging";
+import { logLog, warnLog } from "./utilities/logging";
 import { rand, wait } from "@depict-ai/utilishared/latest";
 import { Config } from "./config.types";
 
@@ -22,7 +22,7 @@ export function useTemperatures(get_config: Accessor<Config>) {
     if (!(await hasSensorFolder())) {
       const { stderr, stdout } = await exec("sudo dtoverlay w1-gpio gpiopin=4 pullup=0");
       if (stdout || stderr) {
-        log("Enabling thermometers returned", { stdout, stderr });
+        logLog("Enabling thermometers returned", { stdout, stderr });
       }
     }
     // Only start reading thermometers once we have enabled them
@@ -60,7 +60,7 @@ function read_thermometer({
 
     onCleanup(() => (gotCleanedUp = true));
 
-    log("Starting reading of thermometer", thermometer_device_id, untrack(label));
+    logLog("Starting reading of thermometer", thermometer_device_id, untrack(label));
     while (!gotCleanedUp) {
       const fails = untrack(get_fails);
       if (fails > 0) {
@@ -73,24 +73,24 @@ function read_thermometer({
         set_value(value);
         set_fails(0);
       } catch (e) {
-        log(`Failed reading thermometer ${thermometer_device_id} (${untrack(label)}):`, e);
+        logLog(`Failed reading thermometer ${thermometer_device_id} (${untrack(label)}):`, e);
         set_fails(prev => prev + 1);
       }
     }
-    log("Stopping reading of thermometer", thermometer_device_id, untrack(label));
+    logLog("Stopping reading of thermometer", thermometer_device_id, untrack(label));
   });
 
   createComputed(async () => {
     const fails = get_fails();
     if (fails < 100) return;
-    warn(
+    warnLog(
       `Over 100 fails (${fails}) for thermometer ${thermometer_device_id} (${untrack(
         label
       )}), please implement a way to restart thermometers`
     );
-    log("Waiting 60s before resetting, for now");
+    logLog("Waiting 60s before resetting, for now");
     await wait(rand(50_000, 80_000));
-    log("Resetting thermometer");
+    logLog("Resetting thermometer");
     set_fails(0);
   });
 

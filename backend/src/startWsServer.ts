@@ -1,5 +1,5 @@
 import { Server, WebSocket, WebSocketServer } from "ws";
-import { error, log, warn } from "./utilities/logging";
+import { errorLog, logLog, warnLog } from "./utilities/logging";
 import { IncomingMessage } from "http";
 import { catchify, wait } from "@depict-ai/utilishared/latest";
 import { getOwner, onCleanup, runWithOwner } from "solid-js";
@@ -21,7 +21,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
     wss.on(
       "error",
       catchify(async (e: Error) => {
-        error("WS server had an error", e, "restarting it in 5s");
+        errorLog("WS server had an error", e, "restarting it in 5s");
         wss.close();
         await wait(5000);
         start_server();
@@ -35,7 +35,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
         let last_movement = +new Date();
         ws.on("close", () => (last_movement = 0));
         ws.on("error", m => {
-          log("Connection had error, killing it", m);
+          logLog("Connection had error, killing it", m);
           last_movement = 0;
         });
         ws.on("pong", () => (last_movement = +new Date()));
@@ -44,7 +44,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
           catchify(async data => {
             const decoded = JSON.parse(data.toString());
             if (!decoded.id) {
-              warn("Cannot handle message", decoded, data, "because it doesn't have an id");
+              warnLog("Cannot handle message", decoded, data, "because it doesn't have an id");
               return;
             }
             ws.send(
@@ -68,7 +68,7 @@ export async function startWsServer<T extends { id: string; [key: string]: any }
       })
     );
 
-    log("Started websocket server");
+    logLog("Started websocket server");
   };
 
   start_server();

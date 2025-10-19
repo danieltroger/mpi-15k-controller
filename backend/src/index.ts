@@ -8,7 +8,7 @@ import {
   getOwner,
   onCleanup,
 } from "solid-js";
-import { error } from "./utilities/logging";
+import { errorLog } from "./utilities/logging";
 import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
 import { get_config_object } from "./config";
 import { wsMessaging } from "./wsMessaging";
@@ -38,7 +38,7 @@ while (true) {
           });
         },
         e => {
-          error("Main crashed, restarting in 10s", e);
+          errorLog("Main crashed, restarting in 10s", e);
           dispose();
           r();
         }
@@ -100,7 +100,7 @@ function main() {
                 },
                 e => {
                   setCurrentMeasuringErrored(true);
-                  error("Current measuring errored", e, "restarting in 60s");
+                  errorLog("Current measuring errored", e, "restarting in 60s");
                   setTimeout(() => setCurrentMeasuringErrored(false), 60_000);
                 }
               );
@@ -123,11 +123,11 @@ function main() {
 
             const isChargingOuterScope = createMemo(() => {
               if (!hasCredentials()) {
-                return error(
+                return errorLog(
                   "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
                 );
               } else if (!hasInverterDetails()) {
-                return error(
+                return errorLog(
                   "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
                 );
               }
@@ -147,7 +147,7 @@ function main() {
                     }),
                   e => {
                     setPrematureWorkaroundErrored(true);
-                    error("Premature float bug workaround errored", e, "restarting in 60s");
+                    errorLog("Premature float bug workaround errored", e, "restarting in 60s");
                     setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
                   }
                 );
@@ -177,7 +177,7 @@ function main() {
                   },
                   e => {
                     setFeedWhenNoSolarErrored(true);
-                    error("Feed when no solar errored", e, "restarting in 60s");
+                    errorLog("Feed when no solar errored", e, "restarting in 60s");
                     setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
                   }
                 );
@@ -218,7 +218,7 @@ function main() {
                 () => elpatronSwitching(config),
                 e => {
                   setElpatronSwitchingErrored(true);
-                  error("Elpatron switching errored", e, "restarting in 60s");
+                  errorLog("Elpatron switching errored", e, "restarting in 60s");
                   setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
                 }
               );

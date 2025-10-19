@@ -1,6 +1,6 @@
 import { get_config_object } from "../config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { error, log } from "../utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
 import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
@@ -75,7 +75,7 @@ export function feedWhenNoSolar({
     // If we should feed in power or charge from AC, ignore throttling and just do it
     const exportAmount = exportAmountForSelling();
     if (exportAmount && importAmount) {
-      error(
+      errorLog(
         "Both import and export amount are set, this should not happen",
         exportAmount,
         importAmount,
@@ -273,12 +273,12 @@ export function feedWhenNoSolar({
   createEffect(
     () =>
       currentShineMaxFeedInPower() &&
-      log("Got confirmed from shinemonitor that the current max feed in power is", currentShineMaxFeedInPower())
+      logLog("Got confirmed from shinemonitor that the current max feed in power is", currentShineMaxFeedInPower())
   );
   createEffect(
     () =>
       currentBatteryToUtilityWhenNoSolar() &&
-      log(
+      logLog(
         'Got confirmed from shinemonitor, "Allow battery to feed-in to the Grid when PV is unavailable" is set to',
         currentBatteryToUtilityWhenNoSolar()
       )
@@ -286,7 +286,7 @@ export function feedWhenNoSolar({
   createEffect(
     () =>
       currentBatteryToUtilityWhenSolar() &&
-      log(
+      logLog(
         'Got confirmed from shinemonitor, "Allow battery to feed-in to the Grid when PV is available" is set to',
         currentBatteryToUtilityWhenSolar()
       )
@@ -299,6 +299,6 @@ function debugLog(message: string) {
   const localeString = date.toLocaleString("sv-SE", options);
 
   appendFile("/tmp/feedWhenNoSolar-debug.txt", localeString + " " + message + "\n", "utf8").catch(e =>
-    error("Failed to log", message, "to feed when no solar debug", e)
+    errorLog("Failed to log", message, "to feed when no solar debug", e)
   );
 }

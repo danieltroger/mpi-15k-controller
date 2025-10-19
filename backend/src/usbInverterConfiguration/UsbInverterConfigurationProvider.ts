@@ -1,39 +1,6 @@
 import { Accessor, createContext, createMemo, createSignal, JSX, Setter, useContext } from "solid-js";
 import { Config } from "../config.types";
-
-type USBCommands =
-  // Only added the ones I currently need, see jblance mpp-solar documentation for more
-  /**
-   * Enable/disable AC charge battery
-   */
-  | { command: "EDB"; value: boolean }
-  /**
-   * Enable/disable battery discharge to feed power to utility when solar input normal
-   */
-  | { command: "EDF"; value: boolean }
-  /**
-   * Enable/disable battery discharge to feed power to utility when solar input loss
-   */
-  | { command: "EDG"; value: boolean }
-  /**
-   * Set max power of feeding grid
-   */
-  | { command: "GPMP0"; value: number }
-  /**
-   * Query the maximum output power for feeding grid -- queries Query the maximum output power for feeding grid
-   */
-  | { command: "GPMP" }
-  /**
-   * Query energy control status -- queries the device energy distribution
-   */
-  | { command: "HECS" };
-
-type CommandQueue = (USBCommands & { onResult: (result: string) => void })[];
-
-type UsbConfiguration = {
-  commandQueue: Accessor<CommandQueue>;
-  setCommandQueue: Setter<CommandQueue>;
-};
+import { CommandQueue, UsbConfiguration } from "./usb.types";
 
 const UsbInverterConfigurationContext = createContext<UsbConfiguration>();
 
@@ -56,4 +23,18 @@ export function useUsbInverterConfiguration() {
     throw new Error("useUsbInverterConfiguration must be used within a UsbInverterConfigurationProvider");
   }
   return contextValue;
+}
+
+function useGetUsbValues({}: { commandQueue: Accessor<CommandQueue>; setCommandQueue: Setter<CommandQueue> }) {}
+
+async function sendUsbCommands(commands: CommandQueue) {
+  try {
+    debugLog("beginning setting charging current to", targetDeciAmperes, "deci amperes");
+    const { stdout, stderr } = await exec(
+      `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
+    );
+    debugLog("Set wanted charging current", { stdout, stderr });
+  } catch (e) {
+    error("Setting wanted charging current failed", e);
+  }
 }
