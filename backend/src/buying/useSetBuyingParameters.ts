@@ -1,61 +1,58 @@
 import { Accessor, createEffect, createMemo } from "solid-js";
 import { get_config_object } from "../config/config";
 import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage";
+import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider";
 
 export function useSetBuyingParameters({
-  configSignal,
   stillFeedingIn,
   chargingAmperageForBuying,
   assumedParasiticConsumption,
 }: {
   stillFeedingIn: Accessor<boolean>;
-  configSignal: Awaited<ReturnType<typeof get_config_object>>;
   chargingAmperageForBuying: Accessor<number | undefined>;
   assumedParasiticConsumption: Accessor<number>;
 }) {
+  const { $usbValues, setCommandQueue, triggerGettingUsbValues } = useUsbInverterConfiguration();
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
-  const currentlyBuying = createMemo(() => currentChargeSourceValue() !== "PV Only");
+  const currentlyBuying = createMemo(() => $usbValues.ac_charge_battery !== "disabled");
 
   createEffect(() => {
     if (shouldBuy()) {
-      setWantedChargeSourceValue("49");
+      if ($usbValues.ac_charge_battery !== "enabled") {
+        setCommandQueue(prev => {
+          // Remove any not yet executed commands regarding what we want to charge from
+          const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
+          newQueue.add({ command: "EDB1", onSucceeded: triggerGettingUsbValues });
+          return newQueue;
+        });
+      }
     } else if (!chargingAmperageForBuying()) {
-      setWantedChargeSourceValue("48");
+      if ($usbValues.ac_charge_battery !== "disabled") {
+        setCommandQueue(prev => {
+          // Remove any not yet executed commands regarding what we want to charge from
+          const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
+          newQueue.add({ command: "EDB0", onSucceeded: triggerGettingUsbValues });
+          return newQueue;
+        });
+      }
     }
   });
 
   createEffect(() => {
-    const wantedAmperage = chargingAmperageForBuying();
-    if (shouldBuy()) {
-      setWantedAcChargingCurrent(wantedAmperage!.toFixed(0));
-    } else {
-      // When not buying, set to 10A in case the inverter glitches and charges from the grid even though disabled
-      setWantedAcChargingCurrent("10");
-    }
+    // When not buying, set to 10A in case the inverter glitches and charges from the grid even though disabled
+    const wantedAmperes = shouldBuy() ? chargingAmperageForBuying() ?? 10 : 10;
+    const targetDeciAmperes = Math.round(wantedAmperes * 10);
+    setCommandQueue(prev => {
+      // Remove any not yet executed commands regarding AC charging amperage
+      const newQueue = new Set([...prev].filter(item => !item.command.startsWith("MUCHGC")));
+      newQueue.add({
+        command: `MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`,
+      });
+      return newQueue;
+    });
   });
 
   useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying, assumedParasiticConsumption);
 
   return { currentlyBuying };
 }
-
-/* Field description for charge source:
-       {
-        "id": "cts_ac_charge_battery_cmds",
-        "name": "Charge source",
-        "item": [
-          {
-            "key": "48",
-            "val": "PV Only"
-          },
-          {
-            "key": "49",
-            "val": "PV and Grid"
-          },
-          {
-            "key": "50",
-            "val": "No charging"
-          }
-        ]
-      }
-    */

@@ -50,7 +50,8 @@ async function sendUsbCommands() {
     debugLog("Sending USB command", queueItem!);
     try {
       const { stdout, stderr } = await exec(`mpp-solar -p /dev/hidraw0 -P PI17  -c ${queueItem!.command}`);
-      queueItem!.onSucceeded({ stdout, stderr });
+      queueItem!.onSucceeded?.({ stdout, stderr });
+      debugLog("Succeded running USB command", queueItem!, { stdout, stderr });
     } catch (e) {
       errorLog("Failed to send USB command", queueItem!, e);
     }
