@@ -17,7 +17,7 @@ export function useSetBuyingParameters({
 
   createEffect(() => {
     if (shouldBuy()) {
-      if ($usbValues.ac_charge_battery !== "enabled") {
+      if ($usbValues.ac_charge_battery === "disabled") {
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
@@ -26,7 +26,7 @@ export function useSetBuyingParameters({
         });
       }
     } else if (!chargingAmperageForBuying()) {
-      if ($usbValues.ac_charge_battery !== "disabled") {
+      if ($usbValues.ac_charge_battery === "enabled") {
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
