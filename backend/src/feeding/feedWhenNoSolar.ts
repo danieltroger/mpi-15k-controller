@@ -1,6 +1,5 @@
 import { get_config_object } from "../config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { useShinemonitorParameter } from "../useShinemonitorParameter";
 import { error, log } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 import { catchify } from "@depict-ai/utilishared/latest";
@@ -184,26 +183,6 @@ export function feedWhenNoSolar({
     // Little lie so this function can fall-through in case we get in an unexpected value
     return wanted as "Disable";
   };
-
-  const { setWantedValue: setWantedMaxFeedInPower, currentValue: currentShineMaxFeedInPower } =
-    useShinemonitorParameter<string>({
-      parameter: "gcp_set_max_feed_in_power",
-      configSignal,
-      wantedToCurrentTransformerForDiffing: wanted => parseFloat(wanted).toFixed(1),
-    });
-
-  const { setWantedValue: setWantedBatteryToUtilityWhenNoSolar, currentValue: currentBatteryToUtilityWhenNoSolar } =
-    useShinemonitorParameter<"Enable" | "Disable", "48" | "49">({
-      parameter: "cts_utility_when_solar_input_loss",
-      configSignal,
-      wantedToCurrentTransformerForDiffing,
-    });
-  const { setWantedValue: setWantedBatteryToUtilityWhenSolar, currentValue: currentBatteryToUtilityWhenSolar } =
-    useShinemonitorParameter<"Enable" | "Disable", "48" | "49">({
-      parameter: "cts_utility_when_solar_input_normal",
-      configSignal,
-      wantedToCurrentTransformerForDiffing,
-    });
 
   const feedWhenForceFeedingAmount: Accessor<number> = createMemo(() => {
     const { feed_amount_watts } = config().feed_from_battery_when_no_solar;

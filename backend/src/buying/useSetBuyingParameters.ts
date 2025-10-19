@@ -1,5 +1,4 @@
 import { Accessor, createEffect, createMemo } from "solid-js";
-import { useShinemonitorParameter } from "../useShinemonitorParameter";
 import { get_config_object } from "../config";
 import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage";
 
@@ -14,27 +13,6 @@ export function useSetBuyingParameters({
   chargingAmperageForBuying: Accessor<number | undefined>;
   assumedParasiticConsumption: Accessor<number>;
 }) {
-  const { setWantedValue: setWantedAcChargingCurrent, currentValue: currentAcChargingCurrent } =
-    useShinemonitorParameter<string>({
-      parameter: "bat_set_max_ac_charging_current",
-      configSignal,
-      wantedToCurrentTransformerForDiffing: wanted => parseFloat(wanted).toFixed(1),
-    });
-
-  const { setWantedValue: setWantedChargeSourceValue, currentValue: currentChargeSourceValue } =
-    useShinemonitorParameter<"PV Only" | "PV and Grid", "48" | "49">({
-      parameter: "cts_ac_charge_battery_cmds",
-      configSignal,
-      wantedToCurrentTransformerForDiffing: (wanted: string) => {
-        if (wanted === "48") {
-          return "PV Only" as const;
-        } else if (wanted === "49") {
-          return "PV and Grid" as const;
-        }
-        // Little lie so this function can fall-through in case we get in an unexpected value
-        return wanted as "PV Only";
-      },
-    });
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
   const currentlyBuying = createMemo(() => currentChargeSourceValue() !== "PV Only");
 
