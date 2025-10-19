@@ -235,10 +235,16 @@ export function feedWhenNoSolar({
     if (wantFeedIntoGrid == undefined) return;
     const commandsToSend: ("EDF" | "EDG")[] = [];
     const xAbled = wantFeedIntoGrid ? "enabled" : "disabled";
-    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== xAbled) {
+    if (
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss &&
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== xAbled
+    ) {
       commandsToSend.push("EDG");
     }
-    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== xAbled) {
+    if (
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal &&
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== xAbled
+    ) {
       commandsToSend.push("EDF");
     }
     if (!commandsToSend.length) return;
