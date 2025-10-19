@@ -53,7 +53,6 @@ async function sendUsbCommands() {
       queueItem!.onSucceeded({ stdout, stderr });
     } catch (e) {
       errorLog("Failed to send USB command", queueItem!, e);
-      queueItem!.onFailed(e);
     }
   }
 
