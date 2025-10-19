@@ -43,6 +43,7 @@ async function sendUsbCommands() {
       for (const item of newQueue) {
         newQueue.delete(item);
         queueItem = item;
+        return newQueue;
       }
       return newQueue;
     });
