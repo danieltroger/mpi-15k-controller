@@ -72,7 +72,7 @@ export function useGetUsbValues({
 
   createEffect(() => {
     const interval = setInterval(triggerGettingUsbValues, pollValuesIntervalSeconds() * 1000);
-    onCleanup(() => clearTimeout(interval));
+    onCleanup(() => clearInterval(interval));
   });
 
   return { $usbValues, triggerGettingUsbValues };
