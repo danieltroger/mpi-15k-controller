@@ -10,7 +10,7 @@ import {
 } from "solid-js";
 import { errorLog } from "./utilities/logging";
 import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
-import { get_config_object } from "./config";
+import { get_config_object } from "./config/config";
 import { wsMessaging } from "./websocketBackend/wsMessaging";
 import { wait } from "@depict-ai/utilishared/latest";
 import { useTemperatures } from "./temperatureMeasuring/useTemperatures";

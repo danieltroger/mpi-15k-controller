@@ -1,4 +1,4 @@
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";

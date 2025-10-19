@@ -2,7 +2,7 @@ import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { Accessor, createMemo, createSignal, getOwner, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { CurrentBatteryPowerBroadcast, MqttValue } from "../../../backend/src/sharedTypes";
-import { Config } from "../../../backend/src/config.types";
+import { Config } from "../../../backend/src/config/config.types";
 
 export default function Home() {
   const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");

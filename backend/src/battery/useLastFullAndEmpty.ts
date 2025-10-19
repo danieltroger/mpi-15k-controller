@@ -1,4 +1,4 @@
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { createMemo } from "solid-js";
 import { reactiveBatteryCurrent, reactiveBatteryVoltage, reactiveBatteryVoltageTime } from "../mqttValues/mqttHelpers";
 

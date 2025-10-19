@@ -1,5 +1,5 @@
 import Influx, { IResults } from "influx";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { createMemo, createResource } from "solid-js";
 import { errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";

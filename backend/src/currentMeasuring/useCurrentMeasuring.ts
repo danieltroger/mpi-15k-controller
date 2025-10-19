@@ -4,7 +4,7 @@ import { errorLog } from "../utilities/logging";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { useAverageCurrent } from "./useAverageCurrent";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 const PORT = 1; // i2c-1
 

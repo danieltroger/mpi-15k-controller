@@ -2,7 +2,7 @@ import { promises as fs_promises } from "fs";
 import { batch, createEffect, createSignal, Owner, runWithOwner, Signal, untrack } from "solid-js";
 import path from "path";
 import process from "process";
-import { errorLog, logLog } from "./utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import { Config } from "./config.types";
 
 const default_config: Config = {

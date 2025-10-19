@@ -1,5 +1,5 @@
 import { Accessor, createEffect, createMemo } from "solid-js";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage";
 
 export function useSetBuyingParameters({

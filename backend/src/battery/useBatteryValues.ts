@@ -1,7 +1,7 @@
 import { useLastFullAndEmpty } from "./useLastFullAndEmpty";
 import { useDatabasePower } from "./useDatabasePower";
 import { Accessor, catchError, createEffect, createMemo, createSignal } from "solid-js";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
 import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters";
 import { reportSOCToMqtt } from "./reportSOCToMqtt";

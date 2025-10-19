@@ -1,5 +1,5 @@
 import { Accessor, createEffect, createMemo, createResource, onCleanup, untrack } from "solid-js";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { errorLog, logLog } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
