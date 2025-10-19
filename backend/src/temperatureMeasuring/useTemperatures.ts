@@ -9,10 +9,10 @@ import {
   untrack,
 } from "solid-js";
 import { promises as fs } from "fs";
-import { exec } from "./utilities/exec";
-import { logLog, warnLog } from "./utilities/logging";
+import { exec } from "../utilities/exec";
+import { logLog, warnLog } from "../utilities/logging";
 import { rand, wait } from "@depict-ai/utilishared/latest";
-import { Config } from "./config.types";
+import { Config } from "../config.types";
 
 export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
 
