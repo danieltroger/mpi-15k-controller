@@ -1,6 +1,8 @@
 import { Accessor, createContext, createMemo, createSignal, JSX, Setter, useContext } from "solid-js";
 import { Config } from "../config.types";
 import { CommandQueue, UsbConfiguration } from "./usb.types";
+import { debugLog, errorLog } from "../utilities/logging";
+import { exec } from "../utilities/exec";
 
 const UsbInverterConfigurationContext = createContext<UsbConfiguration>();
 
@@ -25,16 +27,28 @@ export function useUsbInverterConfiguration() {
   return contextValue;
 }
 
-function useGetUsbValues({}: { commandQueue: Accessor<CommandQueue>; setCommandQueue: Setter<CommandQueue> }) {}
+function useGetUsbValues({
+  commandQueue,
+  setCommandQueue,
+}: {
+  commandQueue: Accessor<CommandQueue>;
+  setCommandQueue: Setter<CommandQueue>;
+}) {}
 
-async function sendUsbCommands(commands: CommandQueue) {
-  try {
-    debugLog("beginning setting charging current to", targetDeciAmperes, "deci amperes");
-    const { stdout, stderr } = await exec(
-      `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
-    );
-    debugLog("Set wanted charging current", { stdout, stderr });
-  } catch (e) {
-    error("Setting wanted charging current failed", e);
-  }
+async function sendUsbCommands({
+  commandQueue,
+  setCommandQueue,
+}: {
+  commandQueue: Accessor<CommandQueue>;
+  setCommandQueue: Setter<CommandQueue>;
+}) {
+  debugLog("Turning off MQTT value reading daemon");
+  const { stdout: disableStdout, stderr: disableStderr } = await exec("systemctl --user stop mpp-solar");
+  debugLog("Turned off MQTT value reading daemon", { disableStdout, disableStderr });
+
+  debugLog("beginning setting charging current to", targetDeciAmperes, "deci amperes");
+  const { stdout, stderr } = await exec(
+    `mpp-solar -p /dev/hidraw0 -P PI17  -c MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`
+  );
+  debugLog("Set wanted charging current", { stdout, stderr });
 }

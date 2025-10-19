@@ -1,5 +1,5 @@
 import { Server, WebSocket, WebSocketServer } from "ws";
-import { errorLog, logLog, warnLog } from "./utilities/logging";
+import { errorLog, logLog, warnLog } from "../utilities/logging";
 import { IncomingMessage } from "http";
 import { catchify, wait } from "@depict-ai/utilishared/latest";
 import { getOwner, onCleanup, runWithOwner } from "solid-js";

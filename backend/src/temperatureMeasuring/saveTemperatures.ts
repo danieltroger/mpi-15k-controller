@@ -3,10 +3,10 @@ import { promises as fs } from "fs";
 import path from "path";
 import process from "process";
 import { useTemperatures } from "./useTemperatures";
-import { errorLog, logLog } from "./utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import MQTT from "async-mqtt";
-import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
-import { Config } from "./config.types";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { Config } from "../config.types";
 
 export function saveTemperatures({
   temperatures,
