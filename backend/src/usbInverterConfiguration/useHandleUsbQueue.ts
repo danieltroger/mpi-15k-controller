@@ -31,7 +31,21 @@ export function useHandleUsbQueue(config: Accessor<Config>) {
 async function sendUsbCommands() {
   const { commandQueue, setCommandQueue } = useUsbInverterConfiguration();
   debugLog("Turning off MQTT value reading daemon");
-  const { stdout: disableStdout, stderr: disableStderr } = await exec("systemctl --user stop mpp-solar");
+  
+  // Get the user's runtime directory and UID for systemctl --user to work
+  if (!process.getuid) {
+    throw new Error("process.getuid is not available - this system may not support systemctl --user");
+  }
+  const uid = process.getuid();
+  const xdgRuntimeDir = `/run/user/${uid}`;
+  const dbusSessionBusAddress = `unix:path=${xdgRuntimeDir}/bus`;
+  const env = {
+    ...process.env,
+    XDG_RUNTIME_DIR: xdgRuntimeDir,
+    DBUS_SESSION_BUS_ADDRESS: dbusSessionBusAddress,
+  };
+  
+  const { stdout: disableStdout, stderr: disableStderr } = await exec("systemctl --user stop mpp-solar", { env });
   debugLog("Turned off MQTT value reading daemon", { disableStdout, disableStderr });
 
   // Allow things to be added to the queue while we're processing it
@@ -59,6 +73,6 @@ async function sendUsbCommands() {
   }
 
   debugLog("Turning on MQTT value reading daemon");
-  const { stdout: enableStdout, stderr: enableStderr } = await exec("systemctl --user start mpp-solar");
+  const { stdout: enableStdout, stderr: enableStderr } = await exec("systemctl --user start mpp-solar", { env });
   debugLog("Turned on MQTT value reading daemon", { enableStdout, enableStderr });
 }
