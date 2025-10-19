@@ -34,7 +34,6 @@ type USBCommands =
 
 export type CommandQueueItem = USBCommands & {
   onSucceeded: (result: { stdout: string; stderr: string }) => void;
-  onFailed: (error: Error | unknown) => void;
 };
 
 export type CommandQueue = Set<CommandQueueItem>;
@@ -50,7 +49,7 @@ export type UsbConfiguration = {
 };
 
 export type UsbValues = Partial<{
-  maximum_feeding_grid_power: number;
+  maximum_feeding_grid_power: string;
   solar_energy_distribution_priority: string;
   solar_charge_battery: "enabled" | "disabled";
   ac_charge_battery: "enabled" | "disabled";
