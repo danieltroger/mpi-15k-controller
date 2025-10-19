@@ -6,6 +6,7 @@ import { error, log } from "./utilities/logging";
 import { Config } from "./config.types";
 
 const default_config: Config = {
+  usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
     schedule: {
       "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", power_watts: 1500 },

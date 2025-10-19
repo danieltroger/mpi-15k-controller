@@ -1,4 +1,11 @@
 export type Config = {
+  usb_parameter_setting: {
+    min_seconds_between_commands: number;
+    /**
+     * We'll check all values after setting them, but apart from that we also poll sometimes.
+     */
+    poll_values_interval_seconds: number;
+  };
   current_measuring: {
     table: string;
     rate_constant: number;
