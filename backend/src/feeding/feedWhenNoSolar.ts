@@ -35,7 +35,7 @@ export function feedWhenNoSolar({
   let lastChange = 0;
   const { mqttValues } = useFromMqttProvider();
 
-  const { $usbValues } = useUsbInverterConfiguration();
+  const { $usbValues, triggerGettingUsbValues, setCommandQueue } = useUsbInverterConfiguration();
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value;
     const powerS = mqttValues?.["ac_output_active_power_s"]?.value;
@@ -176,15 +176,6 @@ export function feedWhenNoSolar({
     );
   });
   const [debouncedShouldEnableFeeding, setDebouncedShouldEnableFeeding] = createSignal(untrack(shouldEnableFeeding));
-  const wantedToCurrentTransformerForDiffing = (wanted: string) => {
-    if (wanted === "48") {
-      return "Disable" as const;
-    } else if (wanted === "49") {
-      return "Enable" as const;
-    }
-    // Little lie so this function can fall-through in case we get in an unexpected value
-    return wanted as "Disable";
-  };
 
   const feedWhenForceFeedingAmount: Accessor<number> = createMemo(() => {
     const { feed_amount_watts } = config().feed_from_battery_when_no_solar;
@@ -197,14 +188,15 @@ export function feedWhenNoSolar({
     }
     return feed_amount_watts;
   });
+  const stillFeedingIn = createMemo(
+    () =>
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== "disabled" ||
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== "disabled"
+  );
   const { currentlyBuying } = useSetBuyingParameters({
     chargingAmperageForBuying,
     assumedParasiticConsumption,
-    stillFeedingIn: createMemo(
-      () =>
-        $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== "disabled" ||
-        $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== "disabled"
-    ),
+    stillFeedingIn,
   });
 
   debugLog(`feedWhenNoSolar started`);
@@ -230,7 +222,7 @@ export function feedWhenNoSolar({
         ]
       }
        */
-      const currentlySetTo = currentShineMaxFeedInPower();
+      const currentlySetTo = $usbValues.maximum_feeding_grid_power;
       if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount() && !currentlyBuying()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't. And that we're not still buying/AC Charging.
         setWantedBatteryToUtilityWhenNoSolar("49");
@@ -265,12 +257,20 @@ export function feedWhenNoSolar({
     if (shouldFeed == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
-      if (currentBatteryToUtilityWhenSolar() !== "Disable" || currentBatteryToUtilityWhenNoSolar() !== "Disable") {
+      if (stillFeedingIn()) {
         return;
       }
     }
     const target = shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar;
-    setWantedMaxFeedInPower(target.toFixed(0));
+    setCommandQueue(prev => {
+      // Remove any not yet executed commands regarding AC charging amperage
+      const newQueue = new Set([...prev].filter(item => !item.command.startsWith("GPMP0")));
+      newQueue.add({
+        command: `GPMP0${(Math.round(target) + "").padStart(5, "0")}`,
+        onSucceeded: triggerGettingUsbValues,
+      });
+      return newQueue;
+    });
   });
 
   createEffect(
