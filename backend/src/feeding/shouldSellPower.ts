@@ -1,5 +1,5 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { log } from "../utilities/logging";
+import { logLog } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 import { Config } from "../config.types";
@@ -75,7 +75,9 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
     return 0;
   });
 
-  createEffect(() => log("Feed in due to scheduled power selling wants to feed in", exportAmountForSelling(), "watts"));
+  createEffect(() =>
+    logLog("Feed in due to scheduled power selling wants to feed in", exportAmountForSelling(), "watts")
+  );
 
   return { exportAmountForSelling };
 }

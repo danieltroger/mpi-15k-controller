@@ -1,6 +1,6 @@
 import adc from "@iiot2k/ads1115";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { error } from "../utilities/logging";
+import { errorLog } from "../utilities/logging";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { useAverageCurrent } from "./useAverageCurrent";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
@@ -79,7 +79,7 @@ function makeReading({
     true,
     async function (data) {
       if (data === undefined) {
-        error("Failed reading amperemeter ADC:", adc.error_text());
+        errorLog("Failed reading amperemeter ADC:", adc.error_text());
       } else {
         // The conversion formula from raw data to millivolts is:
         // mV = raw_value × (full_scale_range_mV / 32768)

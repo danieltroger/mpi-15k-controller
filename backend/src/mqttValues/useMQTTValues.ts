@@ -1,6 +1,6 @@
 import MQTT from "async-mqtt";
 import { Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
-import { log, warn } from "../utilities/logging";
+import { logLog, warnLog } from "../utilities/logging";
 import { createStore } from "solid-js/store";
 import { RawMQTTValues, validateMessage } from "./rawValuesSchema";
 
@@ -26,12 +26,12 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
     const clientValue = client();
     if (!clientValue) return;
     let receivedFirstValue = false;
-    log("We have MQTT client");
+    logLog("We have MQTT client");
     clientValue.on("error", e => {
-      log("MQTT error, re-starting connection in 2s", e);
+      logLog("MQTT error, re-starting connection in 2s", e);
       setTimeout(() => setReconnectToggle(t => (t === 1 ? 2 : 1)), 2000);
     });
-    clientValue.on("connect", e => log("MQTT connected", e));
+    clientValue.on("connect", e => logLog("MQTT connected", e));
     clientValue.on("message", (topic, message) =>
       runWithOwner(owner, () => {
         if (topic == "mpp-solar") {
@@ -41,7 +41,7 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
           let parsed = value;
           if (!receivedFirstValue) {
             receivedFirstValue = true;
-            log("Got first value for connection", key, value);
+            logLog("Got first value for connection", key, value);
           }
 
           try {
@@ -50,7 +50,7 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
           try {
             validateMessage(key as keyof RawMQTTValues, parsed);
           } catch (e) {
-            warn("Validation for MQTT message failed", e);
+            warnLog("Validation for MQTT message failed", e);
           }
           setValues(key as keyof RawMQTTValues, {
             value: parsed as RawMQTTValues[keyof RawMQTTValues],
@@ -60,7 +60,7 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
       })
     );
   });
-  createEffect(() => subscription() && log("We have MQTT subscription", subscription()));
+  createEffect(() => subscription() && logLog("We have MQTT subscription", subscription()));
 
   return { mqttValues: values, mqttClient: client };
 }

@@ -1,5 +1,5 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { log } from "../utilities/logging";
+import { logLog } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
@@ -105,7 +105,11 @@ export function useShouldBuyPower({
   });
 
   createEffect(() =>
-    log("AC Charging due to scheduled power buying wants to AC charge with", chargingAmperageForBuying(), "ampere(s)")
+    logLog(
+      "AC Charging due to scheduled power buying wants to AC charge with",
+      chargingAmperageForBuying(),
+      "ampere(s)"
+    )
   );
 
   useLogGridAmperageEvaluation({ maxBatteryChargingAmperage, chargingAmperageForBuying });
@@ -133,7 +137,7 @@ export function useLogGridAmperageEvaluation({
       const influx_entry = `${table} max_battery_charging_amperage=${value}`;
       if (client.connected) {
         client.publish(table, influx_entry).catch(e => {
-          log("Couldn't publish message", influx_entry, e);
+          logLog("Couldn't publish message", influx_entry, e);
         });
       }
     });
@@ -144,7 +148,7 @@ export function useLogGridAmperageEvaluation({
       const influx_entry = `${table} charging_amperage_for_buying=${value}`;
       if (client.connected) {
         client.publish(table, influx_entry).catch(e => {
-          log("Couldn't publish message", influx_entry, e);
+          logLog("Couldn't publish message", influx_entry, e);
         });
       }
     });
