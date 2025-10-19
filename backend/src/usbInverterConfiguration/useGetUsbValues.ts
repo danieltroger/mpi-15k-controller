@@ -68,6 +68,8 @@ export function useGetUsbValues({
     }
   };
 
+  triggerGettingUsbValues();
+
   createEffect(() => debugLog("USB values", JSON.stringify($usbValues, null, 2)));
 
   createEffect(() => {
