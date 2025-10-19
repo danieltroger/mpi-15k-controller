@@ -83,9 +83,9 @@ async function report_value({
   }
   const handle = await file_handle;
   if (!handle) return;
-  const buf = Buffer.alloc(database_import_file_header.length);
+  const buf = new Uint8Array(database_import_file_header.length);
   await handle.read(buf, 0, database_import_file_header.length, 0);
-  const current_header_of_file = String(buf);
+  const current_header_of_file = new TextDecoder().decode(buf);
   if (current_header_of_file !== database_import_file_header) {
     await handle.write(database_import_file_header);
   }
