@@ -205,6 +205,7 @@ export function feedWhenNoSolar({
   createEffect(() => {
     const shouldEnable = debouncedShouldEnableFeeding();
     if (shouldEnable == undefined) return;
+    let wantFeedIntoGrid: undefined | boolean;
     if (shouldEnable) {
       /* Example field description:
        {
@@ -225,12 +226,32 @@ export function feedWhenNoSolar({
       const currentlySetTo = $usbValues.maximum_feeding_grid_power;
       if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount() && !currentlyBuying()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't. And that we're not still buying/AC Charging.
-        setWantedBatteryToUtilityWhenNoSolar("49");
-        setWantedBatteryToUtilityWhenSolar("49");
+        wantFeedIntoGrid = true;
       }
     } else {
-      setWantedBatteryToUtilityWhenNoSolar("48");
-      setWantedBatteryToUtilityWhenSolar("48");
+      wantFeedIntoGrid = false;
+    }
+
+    if (wantFeedIntoGrid == undefined) return;
+    const commandsToSend: ("EDF" | "EDG")[] = [];
+    const xAbled = wantFeedIntoGrid ? "enabled" : "disabled";
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== xAbled) {
+      commandsToSend.push("EDG");
+    }
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== xAbled) {
+      commandsToSend.push("EDF");
+    }
+    if (!commandsToSend.length) return;
+    for (const command of commandsToSend) {
+      setCommandQueue(prev => {
+        // Remove any not yet executed commands regarding the parameter
+        const newQueue = new Set([...prev].filter(item => !item.command.startsWith(command)));
+        newQueue.add({
+          command: `${command}${+wantFeedIntoGrid ? 1 : 0}`,
+          onSucceeded: triggerGettingUsbValues,
+        });
+        return newQueue;
+      });
     }
   });
 
