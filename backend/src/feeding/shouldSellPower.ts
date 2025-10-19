@@ -2,7 +2,7 @@ import { Accessor, createEffect, createMemo, createSignal, mapArray } from "soli
 import { logLog } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(

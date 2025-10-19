@@ -6,7 +6,7 @@ import { useTemperatures } from "./useTemperatures";
 import { errorLog, logLog } from "../utilities/logging";
 import MQTT from "async-mqtt";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 export function saveTemperatures({
   temperatures,

@@ -4,7 +4,7 @@ import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFut
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 export function useShouldBuyPower({
   config,

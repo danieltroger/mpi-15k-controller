@@ -1,5 +1,5 @@
 import { Accessor, createContext, createMemo, createSignal, JSX, Setter, useContext } from "solid-js";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 import { CommandQueue, UsbConfiguration } from "./usb.types";
 import { debugLog, errorLog } from "../utilities/logging";
 import { exec } from "../utilities/exec";

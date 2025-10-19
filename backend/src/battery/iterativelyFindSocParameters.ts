@@ -1,5 +1,5 @@
 import { Accessor, createEffect, createMemo, createSignal, getOwner, onCleanup, runWithOwner, untrack } from "solid-js";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { SocWorkerData, WorkerResponse, WorkerResult } from "./socCalculationWorker.types";
 import { errorLog, logLog } from "../utilities/logging";
 import { Worker } from "worker_threads";
