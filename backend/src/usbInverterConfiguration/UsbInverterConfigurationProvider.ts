@@ -1,22 +1,40 @@
-import { Accessor, createContext, createMemo, createSignal, JSX, Setter, useContext } from "solid-js";
+import {
+  Accessor,
+  createContext,
+  createEffect,
+  createMemo,
+  createSignal,
+  JSX,
+  Setter,
+  untrack,
+  useContext,
+} from "solid-js";
 import { Config } from "../config/config.types";
 import { CommandQueue, UsbConfiguration } from "./usb.types";
-import { debugLog, errorLog } from "../utilities/logging";
+import { debugLog } from "../utilities/logging";
 import { exec } from "../utilities/exec";
+import { useGetUsbValues } from "./useGetUsbValues";
 
 const UsbInverterConfigurationContext = createContext<UsbConfiguration>();
 
 export function UsbInverterConfigurationProvider(props: { children: JSX.Element; config: Accessor<Config> }) {
-  const minSecondsBetweenCommands = createMemo(() => props.config().usb_parameter_setting.min_seconds_between_commands);
-  const pollValuesIntervalSeconds = createMemo(() => props.config().usb_parameter_setting.poll_values_interval_seconds);
-
   const [commandQueue, setCommandQueue] = createSignal<CommandQueue>([]);
+  const usbValues = useGetUsbValues({ commandQueue, setCommandQueue, config: untrack(() => props.config) });
+
   return UsbInverterConfigurationContext.Provider({
     value: { commandQueue, setCommandQueue },
     get children() {
+      useHandleUsbQueue(untrack(() => props.config));
       return props.children;
     },
   });
+}
+
+function useHandleUsbQueue(config: Accessor<Config>) {
+  const { commandQueue, setCommandQueue } = useUsbInverterConfiguration();
+  const minSecondsBetweenCommands = createMemo(() => config().usb_parameter_setting.min_seconds_between_commands);
+
+  createEffect(() => {});
 }
 
 export function useUsbInverterConfiguration() {
@@ -26,14 +44,6 @@ export function useUsbInverterConfiguration() {
   }
   return contextValue;
 }
-
-function useGetUsbValues({
-  commandQueue,
-  setCommandQueue,
-}: {
-  commandQueue: Accessor<CommandQueue>;
-  setCommandQueue: Setter<CommandQueue>;
-}) {}
 
 async function sendUsbCommands({
   commandQueue,
