@@ -2,7 +2,7 @@ import { Accessor, createEffect, createMemo, onCleanup, Setter } from "solid-js"
 import { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types";
 import { Config } from "../config/config.types";
 import { createStore } from "solid-js/store";
-import { warnLog } from "../utilities/logging";
+import { debugLog, warnLog } from "../utilities/logging";
 
 const commands = new Set(["GPMP", "HECS"] as const);
 
@@ -67,6 +67,8 @@ export function useGetUsbValues({
       });
     }
   };
+
+  createEffect(() => debugLog("USB values", JSON.stringify($usbValues, null, 2)));
 
   createEffect(() => {
     const interval = setInterval(triggerGettingUsbValues, pollValuesIntervalSeconds() * 1000);
