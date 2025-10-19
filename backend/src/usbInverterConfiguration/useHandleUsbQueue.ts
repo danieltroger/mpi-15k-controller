@@ -7,18 +7,18 @@ import { useUsbInverterConfiguration } from "./UsbInverterConfigurationProvider"
 
 export function useHandleUsbQueue(config: Accessor<Config>) {
   const { commandQueue } = useUsbInverterConfiguration();
-  const [blockChecking, setBlockChecking] = createSignal(false);
+  const [blockProcessQueue, setBlockProcessQueue] = createSignal(false);
   const hasQueueItem = createMemo(() => !!commandQueue().size);
 
   createEffect(() => {
-    if (!hasQueueItem() || blockChecking()) return;
+    if (!hasQueueItem() || blockProcessQueue()) return;
     createResource(async () => {
       try {
+        setBlockProcessQueue(true);
         // Intentionally don't depend on any specific queue item in here and do other stuff to handle the case of commands being added to the queue while we're already processing the queue (and handling them directly)
         await sendUsbCommands();
-        setBlockChecking(true);
         setTimeout(
-          () => setBlockChecking(false),
+          () => setBlockProcessQueue(false),
           untrack(() => config().usb_parameter_setting.min_seconds_between_commands) * 1000
         );
       } catch (e) {
