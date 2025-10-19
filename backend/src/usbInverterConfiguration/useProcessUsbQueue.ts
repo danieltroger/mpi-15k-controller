@@ -5,7 +5,7 @@ import { CommandQueueItem } from "./usb.types";
 import { Config } from "../config/config.types";
 import { useUsbInverterConfiguration } from "./UsbInverterConfigurationProvider";
 
-export function useHandleUsbQueue(config: Accessor<Config>) {
+export function useProcessUsbQueue(config: Accessor<Config>) {
   const { commandQueue } = useUsbInverterConfiguration();
   const [blockProcessQueue, setBlockProcessQueue] = createSignal(false);
   const hasQueueItem = createMemo(() => !!commandQueue().size);
@@ -29,7 +29,7 @@ export function useHandleUsbQueue(config: Accessor<Config>) {
 }
 
 async function sendUsbCommands() {
-  const { commandQueue, setCommandQueue } = useUsbInverterConfiguration();
+  const { commandQueue, setCommandQueue, triggerGettingUsbValues } = useUsbInverterConfiguration();
   debugLog("Turning off MQTT value reading daemon");
 
   // Get the user's runtime directory and UID for systemctl --user to work
@@ -68,6 +68,12 @@ async function sendUsbCommands() {
         `/home/ubuntu/mpp-solar/.venv/bin/mpp-solar -p /dev/hidraw0 -P PI17  -c ${queueItem!.command}`
       );
       queueItem!.onSucceeded?.({ stdout, stderr });
+      if (queueItem!.refreshAfterSend) {
+        triggerGettingUsbValues();
+        // Sometimes the inverter will still return the old value even though it accepted a write, so check again in 10seconds
+        setTimeout(triggerGettingUsbValues, 10_000);
+      }
+
       debugLog("Succeded running USB command", queueItem!, { stdout, stderr });
     } catch (e) {
       errorLog("Failed to send USB command", queueItem!, e);
