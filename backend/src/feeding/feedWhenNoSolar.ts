@@ -207,22 +207,6 @@ export function feedWhenNoSolar({
     if (shouldEnable == undefined) return;
     let wantFeedIntoGrid: undefined | boolean;
     if (shouldEnable) {
-      /* Example field description:
-       {
-        "id": "cts_utility_when_solar_input_loss",
-        "name": "Allow battery to feed-in to the Grid when PV is unavailable",
-        "item": [
-          {
-            "key": "48",
-            "val": "Disable"
-          },
-          {
-            "key": "49",
-            "val": "Enable"
-          }
-        ]
-      }
-       */
       const currentlySetTo = $usbValues.maximum_feeding_grid_power;
       if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount() && !currentlyBuying()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't. And that we're not still buying/AC Charging.
@@ -288,16 +272,18 @@ export function feedWhenNoSolar({
         return;
       }
     }
-    const target = shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar;
-    setCommandQueue(prev => {
-      // Remove any not yet executed commands regarding AC charging amperage
-      const newQueue = new Set([...prev].filter(item => !item.command.startsWith("GPMP0")));
-      newQueue.add({
-        command: `GPMP0${(Math.round(target) + "").padStart(5, "0")}`,
-        onSucceeded: triggerGettingUsbValues,
+    const target = Math.round(shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar);
+    if ($usbValues.maximum_feeding_grid_power && target !== parseFloat($usbValues.maximum_feeding_grid_power)) {
+      setCommandQueue(prev => {
+        // Remove any not yet executed commands regarding AC charging amperage
+        const newQueue = new Set([...prev].filter(item => !item.command.startsWith("GPMP0")));
+        newQueue.add({
+          command: `GPMP0${(target + "").padStart(5, "0")}`,
+          onSucceeded: triggerGettingUsbValues,
+        });
+        return newQueue;
       });
-      return newQueue;
-    });
+    }
   });
 
   createEffect(
