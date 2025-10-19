@@ -3,7 +3,6 @@ import { get_config_object } from "../config";
 import { error, log } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { reactiveBatteryCurrent, reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
