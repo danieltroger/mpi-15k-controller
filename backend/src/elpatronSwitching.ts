@@ -4,7 +4,7 @@ import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest"
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers";
-import { Config } from "./config.types";
+import { Config } from "./config/config.types";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;

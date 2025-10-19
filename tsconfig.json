@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "composite": true,
     "module": "ESNext",
-    "noImplicitAny": true
+    "noImplicitAny": true,
+    "strict": true
   },
   "include": [
     "./backend/src/**/*.ts"

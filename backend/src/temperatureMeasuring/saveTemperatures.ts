@@ -3,10 +3,10 @@ import { promises as fs } from "fs";
 import path from "path";
 import process from "process";
 import { useTemperatures } from "./useTemperatures";
-import { error, log } from "./utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import MQTT from "async-mqtt";
-import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
-import { Config } from "./config.types";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { Config } from "../config/config.types";
 
 export function saveTemperatures({
   temperatures,
@@ -17,10 +17,10 @@ export function saveTemperatures({
 }) {
   // Write weighted average of temperatures every ~3s to a file to import into influx once MacMini is running again with Grafana and stuff
   const local_storage_file_name = path.dirname(process.argv[1]) + "/../for_influx.txt";
-  log("Using", local_storage_file_name, "as local log for temperatures");
+  logLog("Using", local_storage_file_name, "as local log for temperatures");
   const file_handle = fs
     .open(local_storage_file_name, "a+")
-    .catch(e => error("Couldn't open local temperature log file", e));
+    .catch(e => errorLog("Couldn't open local temperature log file", e));
 
   const keys = createMemo(() => Object.keys(temperatures()));
   For({
@@ -42,7 +42,7 @@ export function saveTemperatures({
           mqttClient,
           table: untrack(config).temperature_saving.table,
           database: untrack(config).temperature_saving.database,
-        }).catch(e => error("Couldn't write averaged temperature value to log/mqtt", e));
+        }).catch(e => errorLog("Couldn't write averaged temperature value to log/mqtt", e));
       });
 
       return undefined;
@@ -83,9 +83,9 @@ async function report_value({
   }
   const handle = await file_handle;
   if (!handle) return;
-  const buf = Buffer.alloc(database_import_file_header.length);
+  const buf = new Uint8Array(database_import_file_header.length);
   await handle.read(buf, 0, database_import_file_header.length, 0);
-  const current_header_of_file = String(buf);
+  const current_header_of_file = new TextDecoder().decode(buf);
   if (current_header_of_file !== database_import_file_header) {
     await handle.write(database_import_file_header);
   }

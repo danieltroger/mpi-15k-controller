@@ -1,6 +1,6 @@
 import { Accessor, createEffect, createSignal } from "solid-js";
 import { useMQTTValues } from "../mqttValues/useMQTTValues";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 /**
  * When ac output power suddenly rises, the inverter will pull power from the grid even though it shouldn't. Increment the amount that we feed into the grid already to counteract the inverters own consumption from the grid by even more to ensure the peak is covered by energy from the battery instead.
