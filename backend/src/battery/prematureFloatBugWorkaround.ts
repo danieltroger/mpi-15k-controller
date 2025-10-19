@@ -1,9 +1,8 @@
 import { Accessor, createEffect, createMemo, createResource, onCleanup, untrack } from "solid-js";
-import { get_config_object } from "../config";
-import { error, log } from "../utilities/logging";
+import { get_config_object } from "../config/config";
+import { errorLog, logLog } from "../utilities/logging";
 import { deparallelize_no_drop } from "@depict-ai/utilishared/latest";
 import { GetVoltageResponse, makeRequestWithAuth, SetVoltageResponse } from "../shineMonitor";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { reactiveBatteryCurrent, reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 
 const lastVoltageSet: { float?: number; bulk?: number } = {};
@@ -58,7 +57,7 @@ export function prematureFloatBugWorkaround({
     const shouldChargeDueToDischarged = removedSinceFull >= start_bulk_charge_after_wh_discharged;
     if (shouldChargeDueToDischarged) {
       if (prev !== full_battery_voltage) {
-        log(
+        logLog(
           "Discharged",
           removedSinceFull,
           "wh since full, which is more than",
@@ -69,7 +68,7 @@ export function prematureFloatBugWorkaround({
       return full_battery_voltage;
     }
     if (prev !== float_charging_voltage) {
-      log(
+      logLog(
         "Discharged",
         removedSinceFull,
         "wh since full, which is less than",
@@ -82,13 +81,13 @@ export function prematureFloatBugWorkaround({
 
   onCleanup(() => clearInterval(refetchInterval));
 
-  createEffect(() => log("We now want the voltage to be set to", wantVoltagesToBeSetTo()));
+  createEffect(() => logLog("We now want the voltage to be set to", wantVoltagesToBeSetTo()));
 
   createEffect(() =>
-    log("Got confirmed: configured float voltage from shinemonitor", localStateOfConfiguredVoltageFloat())
+    logLog("Got confirmed: configured float voltage from shinemonitor", localStateOfConfiguredVoltageFloat())
   );
   createEffect(() =>
-    log("Got confirmed: configured bulk voltage from shinemonitor", localStateOfConfiguredVoltageBulk())
+    logLog("Got confirmed: configured bulk voltage from shinemonitor", localStateOfConfiguredVoltageBulk())
   );
 
   createEffect(() => {
@@ -103,7 +102,7 @@ export function prematureFloatBugWorkaround({
     ) {
       return;
     }
-    log(
+    logLog(
       "Queueing request to set float voltage to",
       wantsVoltage,
       ". We think the inverter is configured to",
@@ -129,7 +128,7 @@ export function prematureFloatBugWorkaround({
       (floatConfigured && wantsVoltage < floatConfigured) // Disallow setting bulk voltage lower than float voltage (inverter will reject)
     )
       return;
-    log(
+    logLog(
       "Queueing request to set bulk voltage to",
       wantsVoltage,
       ". We think the inverter is configured to",
@@ -162,7 +161,7 @@ async function setVoltageWithThrottlingAndRefetch(
   const setAgo = now - (lastVoltageSet[type] ?? 0);
   if (setAgo < setMaxEvery) {
     const waitFor = setMaxEvery - setAgo;
-    log("Waiting with setting voltag to", targetVoltage, "for", waitFor, "ms, because it was set very recently");
+    logLog("Waiting with setting voltag to", targetVoltage, "for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
   await setConfiguredVoltageInShinemonitor(configSignal, type, targetVoltage);
@@ -186,7 +185,7 @@ async function getConfiguredVoltageFromShinemonitor(
     "source": "1",
   });
   if (result.err || result.dat.id !== `bat_charging_${type}_voltage_read`) {
-    error("Failed to get voltage from shinemonitor", result);
+    errorLog("Failed to get voltage from shinemonitor", result);
     throw new Error("Failed to get voltage from shinemonitor (" + type + ")");
   }
   return parseFloat(result.dat.val);
@@ -211,8 +210,8 @@ async function setConfiguredVoltageInShinemonitor(
     "ctrlDevice"
   );
   if (result.err) {
-    error("Failed to set voltage in shinemonitor", result, type, voltage);
+    errorLog("Failed to set voltage in shinemonitor", result, type, voltage);
     return;
   }
-  log("Successfully set voltage in shinemonitor to", voltage, type, result);
+  logLog("Successfully set voltage in shinemonitor to", voltage, type, result);
 }

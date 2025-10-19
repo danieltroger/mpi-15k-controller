@@ -2,10 +2,11 @@ import { promises as fs_promises } from "fs";
 import { batch, createEffect, createSignal, Owner, runWithOwner, Signal, untrack } from "solid-js";
 import path from "path";
 import process from "process";
-import { error, log } from "./utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import { Config } from "./config.types";
 
 const default_config: Config = {
+  usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
     schedule: {
       "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", power_watts: 1500 },
@@ -80,12 +81,12 @@ const default_config: Config = {
 };
 
 export async function get_config_object(owner: Owner) {
-  log("Getting config object");
+  logLog("Getting config object");
   let config_writing_debounce: ReturnType<typeof setTimeout> | undefined;
   let current_config_file_value: string | undefined;
 
   const config_file_name = path.dirname(process.argv[1]) + "/../config.json";
-  log("Using", config_file_name, "as config file");
+  logLog("Using", config_file_name, "as config file");
 
   let existing_config: Partial<Config> = {};
   if (!(await fs_promises.access(config_file_name, 0 /* 0 is F_OK */).catch(() => true))) {
@@ -94,7 +95,7 @@ export async function get_config_object(owner: Owner) {
         (current_config_file_value = await fs_promises.readFile(config_file_name, { encoding: "utf-8" }))
       );
     } catch (e) {
-      log("Error parsing config file", e, "ignoring it");
+      logLog("Error parsing config file", e, "ignoring it");
       existing_config = {};
     }
   }
@@ -118,7 +119,7 @@ export async function get_config_object(owner: Owner) {
             ]);
             current_config_file_value = new_config;
           } catch (e) {
-            error("Error writing config", e);
+            errorLog("Error writing config", e);
           }
         }, 300);
       }

@@ -1,7 +1,7 @@
 import { Accessor, createEffect, createMemo, createSignal, getOwner, onCleanup, runWithOwner, untrack } from "solid-js";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { SocWorkerData, WorkerResponse, WorkerResult } from "./socCalculationWorker.types";
-import { error, log } from "../utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
 import { useNow } from "../utilities/useNow";
@@ -39,7 +39,7 @@ export function iterativelyFindSocParameters({
       energyWithoutParasiticSinceFull() !== undefined &&
       energyWithoutParasiticSinceEmpty() !== undefined
   );
-  log("Starting worker for SOC calculations");
+  logLog("Starting worker for SOC calculations");
   const worker = new Worker(new URL("./socCalculationWorker.ts", import.meta.url));
 
   worker.on("message", (message: WorkerResponse) => {
@@ -50,13 +50,13 @@ export function iterativelyFindSocParameters({
     }
   });
   worker.on("error", err => {
-    error(`Worker error:`, err);
+    errorLog(`Worker error:`, err);
     worker.terminate();
     runWithOwner(owner, () => {
       throw new Error("Worker error, see previous log");
     });
   });
-  worker.on("exit", code => error(`Worker stopped with exit code ${code}, which shouldn't happen`));
+  worker.on("exit", code => errorLog(`Worker stopped with exit code ${code}, which shouldn't happen`));
   onCleanup(() => worker.terminate());
 
   // Calculate SOC stuff every 10 minutes
@@ -98,7 +98,7 @@ export function iterativelyFindSocParameters({
       if (result.done) {
         if (results.length) {
           const middleValue = getMiddleValue(results);
-          log("Settling on", middleValue, "after doing SOC calculations");
+          logLog("Settling on", middleValue, "after doing SOC calculations");
           // Have these values in config so they persist over program restarts
           setConfig(prev => ({
             ...prev,
@@ -111,7 +111,7 @@ export function iterativelyFindSocParameters({
             },
           }));
         } else {
-          log("No results from SOC calculations, keeping current values");
+          logLog("No results from SOC calculations, keeping current values");
         }
 
         worker.off("message", messageHandler);
@@ -123,7 +123,7 @@ export function iterativelyFindSocParameters({
         return;
       }
       appendFile(fileForRun, JSON.stringify({ ...result, time: +new Date() }) + "\n", "utf-8").catch(e =>
-        error("Failed to write soc calculation log", e)
+        errorLog("Failed to write soc calculation log", e)
       );
       results.push(result);
     };

@@ -1,15 +1,10 @@
 import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { log } from "../utilities/logging";
+import { logLog } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { calculateChargingAmperage } from "./calculateChargingAmperage";
-import {
-  reactiveAcInputVoltageR,
-  reactiveAcInputVoltageS,
-  reactiveAcInputVoltageT,
-  reactiveBatteryVoltage,
-} from "../mqttValues/mqttHelpers";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config.types";
+import { Config } from "../config/config.types";
 
 export function useShouldBuyPower({
   config,
@@ -89,7 +84,7 @@ export function useShouldBuyPower({
   );
 
   // Charging amperage at the battery (at ~50v)
-  const chargingAmperageForBuyingUnrounded = createMemo(() => {
+  const chargingAmperageForBuyingUnlimited = createMemo(() => {
     const userSpecifiedPower = powerFromSchedule();
     if (!userSpecifiedPower) return userSpecifiedPower;
     const batteryVoltage = reactiveBatteryVoltage();
@@ -103,17 +98,18 @@ export function useShouldBuyPower({
 
   // Round to 10-ampere accuracy for now to avoid running into rate-limiting too much
   const chargingAmperageForBuying = createMemo(() => {
-    const amperage = chargingAmperageForBuyingUnrounded();
+    const amperage = chargingAmperageForBuyingUnlimited();
     if (!amperage) return amperage;
-    // So very low amps can be used just to be "on grid" without really charging
-    if (amperage < 10) return 1;
-    const roundedAmperage = Math.floor(amperage / 10) * 10;
     // Hardcoded because our inverter can AC charge with 300A max
-    return Math.max(Math.min(roundedAmperage, 300), 0);
+    return Math.max(Math.min(amperage, 300), 0);
   });
 
   createEffect(() =>
-    log("AC Charging due to scheduled power buying wants to AC charge with", chargingAmperageForBuying(), "ampere(s)")
+    logLog(
+      "AC Charging due to scheduled power buying wants to AC charge with",
+      chargingAmperageForBuying(),
+      "ampere(s)"
+    )
   );
 
   useLogGridAmperageEvaluation({ maxBatteryChargingAmperage, chargingAmperageForBuying });
@@ -141,7 +137,7 @@ export function useLogGridAmperageEvaluation({
       const influx_entry = `${table} max_battery_charging_amperage=${value}`;
       if (client.connected) {
         client.publish(table, influx_entry).catch(e => {
-          log("Couldn't publish message", influx_entry, e);
+          logLog("Couldn't publish message", influx_entry, e);
         });
       }
     });
@@ -152,7 +148,7 @@ export function useLogGridAmperageEvaluation({
       const influx_entry = `${table} charging_amperage_for_buying=${value}`;
       if (client.connected) {
         client.publish(table, influx_entry).catch(e => {
-          log("Couldn't publish message", influx_entry, e);
+          logLog("Couldn't publish message", influx_entry, e);
         });
       }
     });

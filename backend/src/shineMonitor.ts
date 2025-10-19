@@ -1,8 +1,8 @@
-import { get_config_object } from "./config";
+import { get_config_object } from "./config/config";
 import { untrack } from "solid-js";
 import { sha1 } from "./utilities/sha1";
-import { log } from "./utilities/logging";
-import { Config } from "./config.types";
+import { logLog } from "./utilities/logging";
+import { Config } from "./config/config.types";
 
 export type GetVoltageResponse = {
   err: number;
@@ -94,7 +94,7 @@ async function getValidAuth(configSignal: Awaited<ReturnType<typeof get_config_o
 }
 
 async function loginToShinemonitor(configSignal: Awaited<ReturnType<typeof get_config_object>>) {
-  log("Logging in to shinemonitor");
+  logLog("Logging in to shinemonitor");
   const [config, setConfig] = configSignal;
   const now = +new Date();
   const hashedPassword = sha1(untrack(config).shinemonitor_password!);
@@ -129,11 +129,11 @@ async function loginToShinemonitor(configSignal: Awaited<ReturnType<typeof get_c
   const json = (await response.json()) as NonNullable<Config["savedAuth_do_not_edit"]>["authApiReturn"];
 
   if (json.err !== 0 || !json.dat) {
-    log("Decoded", json);
+    logLog("Decoded", json);
     throw new Error("Failed to login to shinemonitor, error code: " + json.err + " desc: " + json.desc);
   }
 
-  log("Login to shinemonitor succeeded");
+  logLog("Login to shinemonitor succeeded");
   setConfig(prev => ({ ...prev, savedAuth_do_not_edit: { createdAt: now, authApiReturn: json } }));
 
   return json;

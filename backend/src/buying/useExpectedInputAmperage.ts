@@ -7,7 +7,7 @@ import {
   reactiveBatteryVoltage,
 } from "../mqttValues/mqttHelpers";
 import { createStore, reconcile } from "solid-js/store";
-import { log } from "../utilities/logging";
+import { logLog } from "../utilities/logging";
 import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
 
 /**
@@ -116,7 +116,7 @@ export function useLogExpectedVsActualChargingAmperage(
           const influx_entry = `${table} calculated_${key}=${value}`;
           if (client.connected) {
             client.publish(table, influx_entry).catch(e => {
-              log("Couldn't publish message", influx_entry, e);
+              logLog("Couldn't publish message", influx_entry, e);
             });
           }
         });

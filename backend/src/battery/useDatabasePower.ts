@@ -1,7 +1,7 @@
 import Influx, { IResults } from "influx";
-import { get_config_object } from "../config";
+import { get_config_object } from "../config/config";
 import { createMemo, createResource } from "solid-js";
-import { error, log } from "../utilities/logging";
+import { errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
@@ -11,7 +11,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
   const password = createMemo(() => config()?.influxdb?.password);
   const influxClient = createMemo(() => {
     if (!host() || !database() || !username() || !password()) {
-      error(
+      errorLog(
         "No influxdb config found (or incomplete), please configure influxdb.host, influxdb.database, influxdb.username and influxdb.password in config.json"
       );
       return;
@@ -36,14 +36,14 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     () => [influxClient(), fullWhenAccessor()] as const,
     async ([db, fullWhen]) => {
       if (!db) return;
-      log("Getting last full time from database");
+      logLog("Getting last full time from database");
       const [response] = await db.query(
         `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= ${fullWhen}`
       );
       let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
       if (!isNaN(timeOfLastFull)) {
         const when = Math.round(timeOfLastFull / 1000 / 1000);
-        log("Got from database that battery was last full at ", new Date(when).toISOString());
+        logLog("Got from database that battery was last full at ", new Date(when).toISOString());
         return when;
       }
     }
@@ -59,7 +59,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       let timeOfLastEmpty = (response as any)?.time?.getNanoTime?.();
       if (!isNaN(timeOfLastEmpty)) {
         const when = Math.round(timeOfLastEmpty / 1000 / 1000);
-        log("Got from database that battery was last empty at ", new Date(when).toISOString());
+        logLog("Got from database that battery was last empty at ", new Date(when).toISOString());
         return when;
       }
     }
@@ -77,9 +77,9 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     () => [influxClient(), requestStartingAt()] as const,
     async ([db, startingAt]) => {
       if (!db || !startingAt) return;
-      log("Requesting historic battery power from database");
+      logLog("Requesting historic battery power from database");
       const values = await queryCalculatedPowerBetweenTimes(db, startingAt, +new Date());
-      log("Got historic battery power from database");
+      logLog("Got historic battery power from database");
 
       const output: { time: number; value: number }[] = [];
 
