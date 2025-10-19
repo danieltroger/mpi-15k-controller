@@ -54,7 +54,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     async ([db, emptyAt]) => {
       if (!db) return;
       const [response] = await db.query(
-        `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" <= ${emptyAt} AND "battery_voltage" > 0`
+        `SELECT last("battery_voltage") FROM "mpp-solar" WHERE ("battery_voltage" <= ${emptyAt} OR "battery_voltage" = ${emptyAt * 10}) AND "battery_voltage" > 0`
       );
       let timeOfLastEmpty = (response as any)?.time?.getNanoTime?.();
       if (!isNaN(timeOfLastEmpty)) {
