@@ -67,7 +67,7 @@ function main() {
         const hasCredentials = createMemo(() => !!(config().shinemonitor_password && config().shinemonitor_user));
         const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
         const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
-        const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
+        const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(true);
         const [currentMeasuringErrored, setCurrentMeasuringErrored] = createSignal(false);
         const [elpatronSwitchingErrored, setElpatronSwitchingErrored] = createSignal(false);
         const feedWhenNoSolarDead = "feedWhenNoSolar is dead";
