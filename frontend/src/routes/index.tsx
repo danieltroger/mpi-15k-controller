@@ -92,7 +92,7 @@ export default function Home() {
             "A"}
         <br />
         <hr />
-        <b>Sensor 2 (on negative pole)</b>
+        <b>Sensor 2 (on positive pole)</b>
         <br />
         Raw: {voltageSagMillivoltsRaw2()?.value}mv
         <br />
