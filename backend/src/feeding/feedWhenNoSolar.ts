@@ -9,6 +9,7 @@ import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
+import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -34,6 +35,7 @@ export function feedWhenNoSolar({
   let lastChange = 0;
   const { mqttValues } = useFromMqttProvider();
 
+  const { $usbValues } = useUsbInverterConfiguration();
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value;
     const powerS = mqttValues?.["ac_output_active_power_s"]?.value;
@@ -198,9 +200,10 @@ export function feedWhenNoSolar({
   const { currentlyBuying } = useSetBuyingParameters({
     chargingAmperageForBuying,
     assumedParasiticConsumption,
-    configSignal,
     stillFeedingIn: createMemo(
-      () => currentBatteryToUtilityWhenSolar() !== "Disable" || currentBatteryToUtilityWhenNoSolar() !== "Disable"
+      () =>
+        $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== "disabled" ||
+        $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== "disabled"
     ),
   });
 
@@ -272,23 +275,24 @@ export function feedWhenNoSolar({
 
   createEffect(
     () =>
-      currentShineMaxFeedInPower() &&
-      logLog("Got confirmed from shinemonitor that the current max feed in power is", currentShineMaxFeedInPower())
+      $usbValues.maximum_feeding_grid_power &&
+      logLog("Got confirmed from inverter that the current max feed in power is", $usbValues.maximum_feeding_grid_power)
   );
+
   createEffect(
     () =>
-      currentBatteryToUtilityWhenNoSolar() &&
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss &&
       logLog(
-        'Got confirmed from shinemonitor, "Allow battery to feed-in to the Grid when PV is unavailable" is set to',
-        currentBatteryToUtilityWhenNoSolar()
+        'Got confirmed from inverter, "Allow battery to feed-in to the Grid when PV is unavailable" is set to',
+        $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss
       )
   );
   createEffect(
     () =>
-      currentBatteryToUtilityWhenSolar() &&
+      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal &&
       logLog(
-        'Got confirmed from shinemonitor, "Allow battery to feed-in to the Grid when PV is available" is set to',
-        currentBatteryToUtilityWhenSolar()
+        'Got confirmed from inverter, "Allow battery to feed-in to the Grid when PV is available" is set to',
+        $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal
       )
   );
 }

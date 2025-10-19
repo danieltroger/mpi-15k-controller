@@ -17,12 +17,11 @@ type USBCommands =
   /**
    * Set max power of feeding grid -- examples: GPMP0nnnnn (n: 0~9, unit: W, 0-15000W for 15KW converter)
    */
-  | { command: `GPMP0${number}` }
+  | { command: `GPMP0${string}` }
   /**
    * Set maximum charge current from AC -- examples: MUCHGC0600 (Current in mA xxxx)
-   * MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}
    */
-  | { command: `MUCHGC${number}` }
+  | { command: `MUCHGC${string}` }
   /**
    * Query the maximum output power for feeding grid -- queries Query the maximum output power for feeding grid
    */
@@ -33,7 +32,7 @@ type USBCommands =
   | { command: "HECS" };
 
 export type CommandQueueItem = USBCommands & {
-  onSucceeded: (result: { stdout: string; stderr: string }) => void;
+  onSucceeded?: (result: { stdout: string; stderr: string }) => void;
 };
 
 export type CommandQueue = Set<CommandQueueItem>;
