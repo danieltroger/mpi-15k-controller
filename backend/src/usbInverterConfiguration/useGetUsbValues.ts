@@ -70,8 +70,6 @@ export function useGetUsbValues({
 
   triggerGettingUsbValues();
 
-  createEffect(() => debugLog("USB values", JSON.stringify($usbValues, null, 2)));
-
   createEffect(() => {
     const interval = setInterval(triggerGettingUsbValues, pollValuesIntervalSeconds() * 1000);
     onCleanup(() => clearInterval(interval));
