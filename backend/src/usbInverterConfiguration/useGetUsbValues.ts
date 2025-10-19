@@ -1,4 +1,4 @@
-import { Accessor, createEffect, createMemo, onCleanup, Setter } from "solid-js";
+import { Accessor, createEffect, createMemo, onCleanup, Setter, untrack } from "solid-js";
 import { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types";
 import { Config } from "../config/config.types";
 import { createStore } from "solid-js/store";
@@ -34,7 +34,7 @@ export function useGetUsbValues({
   const pollValuesIntervalSeconds = createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds);
 
   const triggerGettingUsbValues = () => {
-    const existingCommandsInQueue = new Set([...commandQueue()].map(command => command.command));
+    const existingCommandsInQueue = new Set([...untrack(commandQueue)].map(command => command.command));
     const commandsToRun = commands.difference(existingCommandsInQueue);
     for (const command of commandsToRun) {
       const commandQueueItem = {
