@@ -51,6 +51,7 @@ export const rawMQTTValuesSchema = z.object({
   external_battery_temperature: z.number(),
   setting_change_bit: z.enum(["No setting change", "Settings changed - please refresh"]),
   validity_check: z.enum(["Error: CRC error P17"]),
+  error: z.string(),
 });
 
 // 2. Infer the TS type from this schema
