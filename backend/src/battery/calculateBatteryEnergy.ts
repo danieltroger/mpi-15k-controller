@@ -1,6 +1,7 @@
-import { Accessor, createEffect, createMemo, createSignal } from "solid-js";
+import { Accessor, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { useDatabasePower } from "./useDatabasePower";
 import { useNow } from "../utilities/useNow";
+import { debugLog } from "../utilities/logging";
 
 export function calculateBatteryEnergy({
   from,
@@ -19,23 +20,32 @@ export function calculateBatteryEnergy({
   invertValues: boolean;
 }) {
   // Calculate from database values how much energy was charged and discharged before the application start
-  const databaseEnergy = createMemo(() => {
-    const fromValue = from();
-    const allDbValues = databasePowerValues();
-    if (!fromValue || !allDbValues?.length) return; // Wait for data
-    let databaseEnergy = 0;
-    for (let i = 0; i < allDbValues.length; i++) {
-      const power = allDbValues[i];
-      if (power.time < fromValue) continue;
-      const nextPower = allDbValues[i + 1];
-      if (!nextPower) break;
-      const powerValue = power.value;
-      const timeDiff = nextPower.time - power.time;
-      const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-      databaseEnergy += energy * (invertValues ? -1 : 1);
+  const [databaseEnergy] = createResource(
+    () => ({ fromValue: from(), allDbValues: databasePowerValues() }),
+    async ({ fromValue, allDbValues }) => {
+      let start = performance.now();
+      if (!fromValue || !allDbValues?.length) return; // Wait for data
+      let databaseEnergy = 0;
+      for (let i = 0; i < allDbValues.length; i++) {
+        if (performance.now() - start > 1000) {
+          debugLog(
+            "Took more than 1 second to calculate battery energy from database values. Taking a pause and yielding to the event loop"
+          );
+          await new Promise(r => setTimeout(r, 1000));
+          start = performance.now();
+        }
+        const power = allDbValues[i];
+        if (power.time < fromValue) continue;
+        const nextPower = allDbValues[i + 1];
+        if (!nextPower) break;
+        const powerValue = power.value;
+        const timeDiff = nextPower.time - power.time;
+        const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
+        databaseEnergy += energy * (invertValues ? -1 : 1);
+      }
+      return databaseEnergy;
     }
-    return databaseEnergy;
-  });
+  );
 
   const [sumEnergyToggle, setSumEnergyToggle] = createSignal(false);
 

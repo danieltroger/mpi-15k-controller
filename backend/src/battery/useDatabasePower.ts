@@ -1,7 +1,7 @@
 import Influx, { IResults } from "influx";
 import { get_config_object } from "../config/config";
 import { createMemo, createResource } from "solid-js";
-import { errorLog, logLog } from "../utilities/logging";
+import { debugLog, errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
@@ -81,9 +81,17 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       const values = await queryCalculatedPowerBetweenTimes(db, startingAt, +new Date());
       logLog("Got historic battery power from database");
 
+      let start = performance.now();
       const output: { time: number; value: number }[] = [];
 
       for (const item of values) {
+        if (performance.now() - start > 1000) {
+          debugLog(
+            "Busy more than one second looping over historic power values. Taking a pause and yielding to the event loop"
+          );
+          await new Promise(r => setTimeout(r, 1000));
+          start = performance.now();
+        }
         const { calculated_power, time } = item;
         if (calculated_power == null) continue;
         const finalTime = Math.round(time.getNanoTime() / 1000 / 1000);
