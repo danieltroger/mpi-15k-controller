@@ -55,9 +55,20 @@ export function feedWhenNoSolar({
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const incrementForAntiPeak = useOutputPowerSuddenlyRose(acOutputPower, config, mqttValues);
   // If we are between having reached nearly 58.4v the first time, and the charge process having completed due to no current flowing
-  const batteryIsNearlyFull = createMemo<boolean | undefined>(
-    prev => reactiveBatteryVoltage()! >= config().full_battery_voltage || (isCharging() === false ? false : prev)
-  );
+  const batteryIsNearlyFull = createMemo<boolean | undefined>(prev => {
+    if (reactiveBatteryVoltage()! >= config().full_battery_voltage) {
+      return true;
+    }
+    if (isCharging() === false) {
+      return false;
+    }
+    // Ideally this would be a time based mechanism: If the battery was suuuuper close to be full (reached full battery voltage) but charging ended before the charging current was below stop_charging_below_current
+    // We don't want to be perpetually "nearly full" until the next full charge - reset nearly full once we reach the float charging voltage again (simpler than time-based)
+    if (reactiveBatteryVoltage()! <= config().float_charging_voltage) {
+      return false;
+    }
+    return prev;
+  });
 
   const shouldEnableFeeding = createMemo<boolean | undefined>(prev => {
     const doWithReason = (what: boolean | undefined, reason: string) => {
