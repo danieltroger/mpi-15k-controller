@@ -1,11 +1,11 @@
 import { Accessor, createEffect, createMemo, createResource, createSignal } from "solid-js";
-import { useDatabasePower } from "./useDatabasePower";
+import { InfluxClientAccessor, queryEnergyIntegral } from "./useDatabasePower";
 import { useNow } from "../utilities/useNow";
-import { debugLog } from "../utilities/logging";
+import { logLog } from "../utilities/logging";
 
 export function calculateBatteryEnergy({
   from,
-  databasePowerValues,
+  influxClient,
   currentPower,
   subtractFromPower,
   invertValues,
@@ -14,36 +14,26 @@ export function calculateBatteryEnergy({
    * Unix timestamp in milliseconds
    */
   from: Accessor<number | undefined>;
+  influxClient: InfluxClientAccessor;
   currentPower: Accessor<{ value: number; time: number } | undefined>;
-  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
   subtractFromPower: Accessor<number>;
   invertValues: boolean;
 }) {
   // Calculate from database values how much energy was charged and discharged before the application start
+  // Uses InfluxDB's integral() function to compute this in a single query instead of fetching millions of rows
   const [databaseEnergy] = createResource(
-    () => ({ fromValue: from(), allDbValues: databasePowerValues() }),
-    async ({ fromValue, allDbValues }) => {
-      let start = performance.now();
-      if (!fromValue || !allDbValues?.length) return; // Wait for data
-      let databaseEnergy = 0;
-      for (let i = 0; i < allDbValues.length; i++) {
-        if (performance.now() - start > 1000) {
-          debugLog(
-            "Took more than 1 second to calculate battery energy from database values. Taking a pause and yielding to the event loop"
-          );
-          await new Promise(r => setTimeout(r, 1000));
-          start = performance.now();
-        }
-        const power = allDbValues[i];
-        if (power.time < fromValue) continue;
-        const nextPower = allDbValues[i + 1];
-        if (!nextPower) break;
-        const powerValue = power.value;
-        const timeDiff = nextPower.time - power.time;
-        const energy = (powerValue * timeDiff) / 1000 / 60 / 60;
-        databaseEnergy += energy * (invertValues ? -1 : 1);
-      }
-      return databaseEnergy;
+    () => ({ fromValue: from(), db: influxClient() }),
+    async ({ fromValue, db }) => {
+      if (!fromValue || !db) return; // Wait for data
+      logLog(
+        `Querying database energy integral since ${invertValues ? "last full" : "last empty"}:`,
+        new Date(fromValue).toISOString()
+      );
+      const energy = await queryEnergyIntegral(db, fromValue);
+      if (energy === undefined) return undefined;
+      // Apply inversion: when invertValues is true, we're measuring energy removed (discharged)
+      // so positive power (charging) should subtract, and negative power (discharging) should add
+      return energy * (invertValues ? -1 : 1);
     }
   );
 
