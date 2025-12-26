@@ -57,6 +57,7 @@ export type Config = {
     password: string;
   };
   soc_calculations: {
+    recalculate_parameters_interval_seconds: number;
     battery_empty_at: number;
     capacity_per_cell_from_wh: number;
     capacity_per_cell_to_wh: number;

@@ -29,6 +29,7 @@ const default_config: Config = {
     min_solar_input: 6000,
   },
   soc_calculations: {
+    recalculate_parameters_interval_seconds: 1800,
     battery_empty_at: 46,
     capacity_per_cell_from_wh: 18,
     capacity_per_cell_to_wh: 20,
