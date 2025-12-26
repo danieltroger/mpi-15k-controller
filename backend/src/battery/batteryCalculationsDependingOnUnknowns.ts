@@ -1,38 +1,40 @@
 import { Accessor, createMemo } from "solid-js";
-import { useDatabasePower } from "./useDatabasePower";
+import { InfluxClientAccessor } from "./useDatabasePower";
 import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
 
 export function batteryCalculationsDependingOnUnknowns({
   currentPower,
-  databasePowerValues,
+  influxClient,
   totalLastFull,
   totalLastEmpty,
   subtractFromPower,
   assumedCapacity,
 }: {
   currentPower: Accessor<{ value: number; time: number } | undefined>;
-  databasePowerValues: ReturnType<typeof useDatabasePower>["databasePowerValues"];
+  influxClient: InfluxClientAccessor;
   totalLastEmpty: Accessor<number | undefined>;
   totalLastFull: Accessor<number | undefined>;
   subtractFromPower: Accessor<number>;
   assumedCapacity: Accessor<number>;
 }) {
+  // Query integral from lastEmpty to now - energy added since empty
   const { energy: energyAddedSinceEmpty, energyWithoutParasitic: energyWithoutParasiticSinceEmpty } =
     calculateBatteryEnergy({
       currentPower,
-      databasePowerValues,
+      influxClient,
       from: totalLastEmpty,
       subtractFromPower,
       invertValues: false,
     });
 
-  // Due to inversion should show
+  // Query integral from lastFull to now - energy removed since full
+  // Due to inversion should show:
   // 1000wh = 1000wh were discharged
   // -100wh = 100wh were charged
   const { energy: energyRemovedSinceFull, energyWithoutParasitic: energyWithoutParasiticSinceFull } =
     calculateBatteryEnergy({
       currentPower,
-      databasePowerValues,
+      influxClient,
       from: totalLastFull,
       subtractFromPower,
       invertValues: true,

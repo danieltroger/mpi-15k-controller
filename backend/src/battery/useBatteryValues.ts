@@ -14,7 +14,7 @@ export function useBatteryValues(
   const [config] = configSignal;
   const { lastBatterySeenFullSinceProgramStart, lastBatterySeenEmptySinceProgramStart } =
     useLastFullAndEmpty(configSignal);
-  const { databasePowerValues, batteryWasLastFullAtAccordingToDatabase, batteryWasLastEmptyAtAccordingToDatabase } =
+  const { influxClient, batteryWasLastFullAtAccordingToDatabase, batteryWasLastEmptyAtAccordingToDatabase } =
     useDatabasePower(configSignal);
 
   const [totalLastFull, totalLastEmpty] = [
@@ -41,7 +41,7 @@ export function useBatteryValues(
     energyWithoutParasiticSinceEmpty,
     energyWithoutParasiticSinceFull,
   } = batteryCalculationsDependingOnUnknowns({
-    databasePowerValues,
+    influxClient,
     totalLastFull,
     totalLastEmpty,
     subtractFromPower: assumedParasiticConsumption,

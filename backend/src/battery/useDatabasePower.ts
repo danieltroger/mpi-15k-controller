@@ -1,8 +1,7 @@
-import Influx, { IResults } from "influx";
+import Influx from "influx";
 import { get_config_object } from "../config/config";
-import { createMemo, createResource } from "solid-js";
-import { debugLog, errorLog, logLog } from "../utilities/logging";
-import { useNow } from "../utilities/useNow";
+import { Accessor, createMemo, createResource } from "solid-js";
+import { errorLog, logLog } from "../utilities/logging";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const host = createMemo(() => config()?.influxdb?.host);
@@ -24,12 +23,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       "password": password(),
     });
   });
-  const lastTimeItWasMidnight = createMemo(() => {
-    const currentTime = useNow();
-    const date = new Date(currentTime);
-    date.setHours(0, 0, 0, 0);
-    return +date;
-  });
+
   const fullWhenAccessor = createMemo(() => config().full_battery_voltage);
 
   const [batteryWasLastFullAt] = createResource(
@@ -40,8 +34,8 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       const [response] = await db.query(
         `SELECT last("battery_voltage") FROM "mpp-solar" WHERE "battery_voltage" >= ${fullWhen}`
       );
-      let timeOfLastFull = (response as any)?.time?.getNanoTime?.();
-      if (!isNaN(timeOfLastFull)) {
+      let timeOfLastFull = (response as { time?: { getNanoTime: () => number } })?.time?.getNanoTime?.();
+      if (timeOfLastFull !== undefined && !isNaN(timeOfLastFull)) {
         const when = Math.round(timeOfLastFull / 1000 / 1000);
         logLog("Got from database that battery was last full at ", new Date(when).toISOString());
         return when;
@@ -56,8 +50,8 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
       const [response] = await db.query(
         `SELECT last("battery_voltage") FROM "mpp-solar" WHERE ("battery_voltage" <= ${emptyAt} OR "battery_voltage" = ${emptyAt * 10}) AND "battery_voltage" > 0`
       );
-      let timeOfLastEmpty = (response as any)?.time?.getNanoTime?.();
-      if (!isNaN(timeOfLastEmpty)) {
+      let timeOfLastEmpty = (response as { time?: { getNanoTime: () => number } })?.time?.getNanoTime?.();
+      if (timeOfLastEmpty !== undefined && !isNaN(timeOfLastEmpty)) {
         const when = Math.round(timeOfLastEmpty / 1000 / 1000);
         logLog("Got from database that battery was last empty at ", new Date(when).toISOString());
         return when;
@@ -65,77 +59,36 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
     }
   );
 
-  const requestStartingAt = createMemo(() => {
-    if (batteryWasLastFullAt.loading || batteryWasLastEmptyAt.loading) return; // Wait for it to load before making any decision
-    const lastFull = batteryWasLastFullAt();
-    const lastEmpty = batteryWasLastEmptyAt();
-    const previousMidnight = lastTimeItWasMidnight();
-    return Math.min(previousMidnight, lastFull || Infinity, lastEmpty || Infinity);
-  });
-
-  const [powerValues] = createResource(
-    () => [influxClient(), requestStartingAt()] as const,
-    async ([db, startingAt]) => {
-      if (!db || !startingAt) return;
-      logLog("Requesting historic battery power from database");
-      const values = await queryCalculatedPowerBetweenTimes(db, startingAt, +new Date());
-      logLog("Got historic battery power from database");
-
-      let start = performance.now();
-      const output: { time: number; value: number }[] = [];
-
-      for (const item of values) {
-        if (performance.now() - start > 1000) {
-          debugLog(
-            "Busy more than one second looping over historic power values. Taking a pause and yielding to the event loop"
-          );
-          await new Promise(r => setTimeout(r, 1000));
-          start = performance.now();
-        }
-        const { calculated_power, time } = item;
-        if (calculated_power == null) continue;
-        const finalTime = Math.round(time.getNanoTime() / 1000 / 1000);
-
-        output.push({
-          time: finalTime,
-          value: calculated_power,
-        });
-      }
-
-      // Sort by time
-      output.sort((a, b) => a.time - b.time);
-      return output;
-    }
-  );
-
   return {
     batteryWasLastFullAtAccordingToDatabase: batteryWasLastFullAt,
-    databasePowerValues: powerValues,
     batteryWasLastEmptyAtAccordingToDatabase: batteryWasLastEmptyAt,
+    influxClient,
   };
 }
 
-async function queryCalculatedPowerBetweenTimes(db: Influx.InfluxDB, start: number, end: number) {
-  const twentyFourHours = 1000 * 60 * 60 * 24;
-  const results: IResults<{
-    calculated_power: number | null;
-    time: { getNanoTime: () => number };
-  }>[] = [];
-  let localStart = start + 1;
-  let localEnd = localStart + twentyFourHours + 1;
+/**
+ * Query InfluxDB for the integral of calculated_power from a given start time to now.
+ * Returns energy in watt-hours.
+ */
+export async function queryEnergyIntegral(
+  db: Influx.InfluxDB,
+  fromMs: number
+): Promise<number | undefined> {
+  // integral() with 1h unit directly gives us watt-hours
+  // We query from (fromMs + 1) to avoid including the exact "full" or "empty" moment
+  const query = `SELECT integral("calculated_power", 1h) as energy FROM "current_values" WHERE time >= ${fromMs + 1}ms`;
+  logLog("Querying energy integral from", new Date(fromMs).toISOString());
 
-  while (localStart < end) {
-    results.push(
-      await db.query(
-        `SELECT calculated_power FROM "current_values" WHERE time >= ${localStart - 1}ms AND time <= ${localEnd}ms fill(null)`
-      )
-    );
-    localStart = localEnd;
-    if (localEnd + twentyFourHours > end) {
-      localEnd = end;
-    } else {
-      localEnd += twentyFourHours + 1;
-    }
+  const results = await db.query<{ energy: number | null }>(query);
+  const energy = results[0]?.energy;
+
+  if (energy != null && !isNaN(energy)) {
+    logLog("Got energy integral:", energy, "Wh from", new Date(fromMs).toISOString());
+    return energy;
   }
-  return results.flat();
+
+  logLog("No energy data found from", new Date(fromMs).toISOString());
+  return undefined;
 }
+
+export type InfluxClientAccessor = Accessor<Influx.InfluxDB | undefined>;
