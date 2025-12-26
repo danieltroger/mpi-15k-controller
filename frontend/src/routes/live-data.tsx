@@ -34,7 +34,7 @@ export default function LiveData() {
     const acOutput = ac_output_total_active_power()?.value;
     const acInput = ac_input();
     if (solar == undefined || batteryPower == undefined || acOutput == undefined || acInput == undefined) {
-      return undefined;
+      return;
     }
     return Math.round(solar + batteryPower * -1 + acOutput * -1 + acInput);
   });

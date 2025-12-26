@@ -62,7 +62,7 @@ async function sendUsbCommands() {
       return newQueue;
     });
 
-    debugLog("Sending USB command", queueItem!);
+    debugLog("Sending USB command", queueItem!.command);
     try {
       const { stdout, stderr } = await exec(
         `/home/ubuntu/mpp-solar/.venv/bin/mpp-solar -p /dev/hidraw0 -P PI17  -c ${queueItem!.command}`
@@ -73,8 +73,6 @@ async function sendUsbCommands() {
         // Sometimes the inverter will still return the old value even though it accepted a write, so check again in 10seconds
         setTimeout(triggerGettingUsbValues, 10_000);
       }
-
-      debugLog("Succeded running USB command", queueItem!, { stdout, stderr });
     } catch (e) {
       errorLog("Failed to send USB command", queueItem!, e);
     }
