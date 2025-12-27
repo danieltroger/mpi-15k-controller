@@ -49,7 +49,7 @@ export const rawMQTTValuesSchema = z.object({
   inner_temperature: z.number(),
   component_max_temperature: z.number(),
   external_battery_temperature: z.number(),
-  setting_change_bit: z.enum(["No setting change", "Settings changed - please refresh"]),
+  setting_change_bit: z.enum(["No setting change", "Settings changed - please refresh", "Invalid option: 4"]),
   validity_check: z.enum(["Error: CRC error P17"]),
   error: z.string(),
   unknown_value_in_response_25: z.string(),
