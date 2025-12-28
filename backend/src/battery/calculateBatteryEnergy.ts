@@ -30,7 +30,6 @@ export function calculateBatteryEnergy({
         new Date(fromValue).toISOString()
       );
       const energy = await queryEnergyIntegral(db, fromValue);
-      if (energy === undefined) return undefined;
       // Apply inversion: when invertValues is true, we're measuring energy removed (discharged)
       // so positive power (charging) should subtract, and negative power (discharging) should add
       return energy * (invertValues ? -1 : 1);
