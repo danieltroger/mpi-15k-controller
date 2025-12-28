@@ -85,6 +85,8 @@ export async function queryEnergyIntegral(db: Influx.InfluxDB, fromMs: number): 
   }
 
   logLog("No energy data found from", new Date(fromMs).toISOString());
+  // We don't have any energy data (yet) when the battery just got full - return 0 since that's most likely the right answer
+  return 0;
 }
 
 export type InfluxClientAccessor = Accessor<Influx.InfluxDB | undefined>;
