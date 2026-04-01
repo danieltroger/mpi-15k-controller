@@ -1,0 +1,184 @@
+.buy-sell-page {
+  box-sizing: border-box;
+  max-width: 1280px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 1rem 2rem;
+  overflow-x: clip;
+}
+
+.buy-sell-config {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.buy-sell-config__loading {
+  opacity: 0.85;
+}
+
+.buy-sell-config__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.buy-sell-config__section {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid light-dark(#ccc, #444);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  background: light-dark(#fafafa, #111);
+}
+
+.buy-sell-config__section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.buy-sell-config__hint {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.buy-sell-config__hint--schedule {
+  margin-top: -0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+}
+
+.buy-sell-config__subheading {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.buy-sell-config__grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+
+.buy-sell-config__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.buy-sell-config__input {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid light-dark(#333, #ccc);
+  border-radius: 4px;
+  background: light-dark(white, black);
+  color: light-dark(black, white);
+  font: inherit;
+  max-width: 100%;
+}
+
+.buy-sell-config__table-wrap {
+  max-width: 100%;
+  margin-bottom: 0.75rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.buy-sell-config__table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  table-layout: auto;
+}
+
+.buy-sell-config__table th,
+.buy-sell-config__table td {
+  border: 1px solid light-dark(#ddd, #333);
+  padding: 0.4rem 0.5rem;
+  vertical-align: top;
+  min-width: 0;
+}
+
+.buy-sell-config__td-datetime {
+  min-width: 11.5rem;
+}
+
+.buy-sell-config__th-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.buy-sell-config__schedule-actions {
+  vertical-align: middle;
+}
+
+.buy-sell-config__action-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.buy-sell-config__table th {
+  text-align: left;
+  background: light-dark(#eee, #1a1a1a);
+}
+
+.buy-sell-config__meta {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.92;
+  font-size: 0.85rem;
+}
+
+.buy-sell-config__btn {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid light-dark(black, white);
+}
+
+.buy-sell-config__btn--primary {
+  background: light-dark(#1a5f1a, #3d8c3d);
+  color: light-dark(white, white);
+  border-color: transparent;
+}
+
+.buy-sell-config__btn--secondary {
+  background: light-dark(white, black);
+  color: light-dark(black, white);
+}
+
+.buy-sell-config__btn--small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.buy-sell-config__field-error {
+  display: block;
+  color: light-dark(#a40000, #ff6b6b);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.buy-sell-config__form-error {
+  color: light-dark(#a40000, #ff6b6b);
+  margin: 0;
+}
+
+.buy-sell-config__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
