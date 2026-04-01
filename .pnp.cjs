@@ -1207,6 +1207,29 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["@modular-forms/solid", [\
+      ["npm:0.25.1", {\
+        "packageLocation": "./.yarn/cache/@modular-forms-solid-npm-0.25.1-20c87eb833-3667273dbb.zip/node_modules/@modular-forms/solid/",\
+        "packageDependencies": [\
+          ["@modular-forms/solid", "npm:0.25.1"]\
+        ],\
+        "linkType": "SOFT"\
+      }],\
+      ["virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.25.1", {\
+        "packageLocation": "./.yarn/__virtual__/@modular-forms-solid-virtual-7e8320ad92/0/cache/@modular-forms-solid-npm-0.25.1-20c87eb833-3667273dbb.zip/node_modules/@modular-forms/solid/",\
+        "packageDependencies": [\
+          ["@modular-forms/solid", "virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.25.1"],\
+          ["@types/solid-js", null],\
+          ["solid-js", "npm:1.8.17"],\
+          ["valibot", "virtual:7e8320ad92c3982184ab5a8d5f137103f0a1b0156f87b702ad31d26a40c268c02f5a09a17b07683526ec0894afeade4498f690af57d3b360cdbebeac25e7d303#npm:1.3.1"]\
+        ],\
+        "packagePeers": [\
+          "@types/solid-js",\
+          "solid-js"\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["@mswjs/interceptors", [\
       ["npm:0.27.2", {\
         "packageLocation": "./.yarn/cache/@mswjs-interceptors-npm-0.27.2-461019b31a-7498cf8905.zip/node_modules/@mswjs/interceptors/",\
@@ -4327,6 +4350,7 @@ const RAW_RUNTIME_STATE =
           ["@depict-ai/plp-styling", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20"],\
           ["@depict-ai/ui", "npm:4.8.22"],\
           ["@depict-ai/utilishared", "npm:2.4.7"],\
+          ["@modular-forms/solid", "virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.25.1"],\
           ["@solidjs/meta", "virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.29.3"],\
           ["@solidjs/router", "virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.13.3"],\
           ["@solidjs/start", "npm:1.0.0-rc.0"],\
@@ -4338,7 +4362,8 @@ const RAW_RUNTIME_STATE =
           ["solid-js", "npm:1.8.17"],\
           ["typescript", "patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=5786d5"],\
           ["vinxi", "npm:0.3.11"],\
-          ["vite", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:5.2.11"]\
+          ["vite", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:5.2.11"],\
+          ["zod", "npm:3.24.1"]\
         ],\
         "linkType": "SOFT"\
       }]\
@@ -8030,6 +8055,28 @@ const RAW_RUNTIME_STATE =
         "packageLocation": "./.yarn/cache/util-deprecate-npm-1.0.2-e3fe1a219c-41a5bdd214.zip/node_modules/util-deprecate/",\
         "packageDependencies": [\
           ["util-deprecate", "npm:1.0.2"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["valibot", [\
+      ["npm:1.3.1", {\
+        "packageLocation": "./.yarn/cache/valibot-npm-1.3.1-97ecea86d3-e20a4097fa.zip/node_modules/valibot/",\
+        "packageDependencies": [\
+          ["valibot", "npm:1.3.1"]\
+        ],\
+        "linkType": "SOFT"\
+      }],\
+      ["virtual:7e8320ad92c3982184ab5a8d5f137103f0a1b0156f87b702ad31d26a40c268c02f5a09a17b07683526ec0894afeade4498f690af57d3b360cdbebeac25e7d303#npm:1.3.1", {\
+        "packageLocation": "./.yarn/__virtual__/valibot-virtual-f0a6072ea6/0/cache/valibot-npm-1.3.1-97ecea86d3-e20a4097fa.zip/node_modules/valibot/",\
+        "packageDependencies": [\
+          ["@types/typescript", null],\
+          ["typescript", null],\
+          ["valibot", "virtual:7e8320ad92c3982184ab5a8d5f137103f0a1b0156f87b702ad31d26a40c268c02f5a09a17b07683526ec0894afeade4498f690af57d3b360cdbebeac25e7d303#npm:1.3.1"]\
+        ],\
+        "packagePeers": [\
+          "@types/typescript",\
+          "typescript"\
         ],\
         "linkType": "HARD"\
       }]\
