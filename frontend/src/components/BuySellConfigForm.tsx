@@ -22,6 +22,24 @@ const emptyRow = (): BuySellFormData["buyingRows"][number] => ({
   power: 0,
 });
 
+function duplicateScheduleRow(
+  form: ReturnType<typeof createForm<BuySellFormData>>[0],
+  kind: "buyingRows" | "sellingRows",
+  atIndex: number
+) {
+  const v = getValues(form);
+  const row = v[kind]?.[atIndex];
+  if (!row) return;
+  insert(form, kind, {
+    at: atIndex + 1,
+    value: {
+      start: row.start ?? "",
+      end: row.end ?? "",
+      power: row.power ?? 0,
+    },
+  });
+}
+
 /** Modular Forms does not put `value` on the spread props — inputs must bind `field.value` or they stay empty. */
 function fieldValueForInput(field: { value: unknown }): string | number {
   const v = field.value;
@@ -208,24 +226,25 @@ function BuySellFormInner(props: {
         <FieldArray name="buyingRows">
           {fieldArray => (
             <>
-              <table class="buy-sell-config__table">
-                <thead>
-                  <tr>
-                    <th scope="col">Start (local)</th>
-                    <th scope="col">End (local)</th>
-                    <th scope="col">Charging power (W)</th>
-                    <th scope="col">Duration</th>
-                    <th scope="col">Energy</th>
-                    <th scope="col">
-                      <span class="buy-sell-config__sr-only">Remove</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={fieldArray.items}>
-                    {(_, index) => (
-                      <tr>
-                        <td>
+              <div class="buy-sell-config__table-wrap">
+                <table class="buy-sell-config__table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Start (local)</th>
+                      <th scope="col">End (local)</th>
+                      <th scope="col">Charging power (W)</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">Energy</th>
+                      <th scope="col" class="buy-sell-config__th-actions">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={fieldArray.items}>
+                      {(_, index) => (
+                        <tr>
+                        <td class="buy-sell-config__td-datetime">
                           <Field name={`buyingRows.${index()}.start`} type="string">
                             {(field, p) => (
                               <>
@@ -243,7 +262,7 @@ function BuySellFormInner(props: {
                             )}
                           </Field>
                         </td>
-                        <td>
+                        <td class="buy-sell-config__td-datetime">
                           <Field name={`buyingRows.${index()}.end`} type="string">
                             {(field, p) => (
                               <>
@@ -280,20 +299,30 @@ function BuySellFormInner(props: {
                           </Field>
                         </td>
                         <ScheduleRowMeta form={buySellForm} kind="buyingRows" index={index()} />
-                        <td>
-                          <button
-                            type="button"
-                            class="buy-sell-config__btn buy-sell-config__btn--small"
-                            onClick={() => remove(buySellForm, "buyingRows", { at: index() })}
-                          >
-                            Remove
-                          </button>
+                        <td class="buy-sell-config__schedule-actions">
+                          <div class="buy-sell-config__action-btns">
+                            <button
+                              type="button"
+                              class="buy-sell-config__btn buy-sell-config__btn--small"
+                              onClick={() => duplicateScheduleRow(buySellForm, "buyingRows", index())}
+                            >
+                              Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              class="buy-sell-config__btn buy-sell-config__btn--small"
+                              onClick={() => remove(buySellForm, "buyingRows", { at: index() })}
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )}
                   </For>
                 </tbody>
               </table>
+              </div>
               <button
                 type="button"
                 class="buy-sell-config__btn buy-sell-config__btn--secondary"
@@ -405,24 +434,25 @@ function BuySellFormInner(props: {
         <FieldArray name="sellingRows">
           {fieldArray => (
             <>
-              <table class="buy-sell-config__table">
-                <thead>
-                  <tr>
-                    <th scope="col">Start (local)</th>
-                    <th scope="col">End (local)</th>
-                    <th scope="col">Export (W)</th>
-                    <th scope="col">Duration</th>
-                    <th scope="col">Energy</th>
-                    <th scope="col">
-                      <span class="buy-sell-config__sr-only">Remove</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={fieldArray.items}>
-                    {(_, index) => (
-                      <tr>
-                        <td>
+              <div class="buy-sell-config__table-wrap">
+                <table class="buy-sell-config__table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Start (local)</th>
+                      <th scope="col">End (local)</th>
+                      <th scope="col">Export (W)</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">Energy</th>
+                      <th scope="col" class="buy-sell-config__th-actions">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={fieldArray.items}>
+                      {(_, index) => (
+                        <tr>
+                        <td class="buy-sell-config__td-datetime">
                           <Field name={`sellingRows.${index()}.start`} type="string">
                             {(field, p) => (
                               <>
@@ -440,7 +470,7 @@ function BuySellFormInner(props: {
                             )}
                           </Field>
                         </td>
-                        <td>
+                        <td class="buy-sell-config__td-datetime">
                           <Field name={`sellingRows.${index()}.end`} type="string">
                             {(field, p) => (
                               <>
@@ -477,20 +507,30 @@ function BuySellFormInner(props: {
                           </Field>
                         </td>
                         <ScheduleRowMeta form={buySellForm} kind="sellingRows" index={index()} />
-                        <td>
-                          <button
-                            type="button"
-                            class="buy-sell-config__btn buy-sell-config__btn--small"
-                            onClick={() => remove(buySellForm, "sellingRows", { at: index() })}
-                          >
-                            Remove
-                          </button>
+                        <td class="buy-sell-config__schedule-actions">
+                          <div class="buy-sell-config__action-btns">
+                            <button
+                              type="button"
+                              class="buy-sell-config__btn buy-sell-config__btn--small"
+                              onClick={() => duplicateScheduleRow(buySellForm, "sellingRows", index())}
+                            >
+                              Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              class="buy-sell-config__btn buy-sell-config__btn--small"
+                              onClick={() => remove(buySellForm, "sellingRows", { at: index() })}
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )}
                   </For>
                 </tbody>
               </table>
+              </div>
               <button
                 type="button"
                 class="buy-sell-config__btn buy-sell-config__btn--secondary"
