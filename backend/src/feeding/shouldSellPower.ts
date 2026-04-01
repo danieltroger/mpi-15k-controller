@@ -1,5 +1,5 @@
-import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { logLog } from "../utilities/logging";
+import { Accessor, createEffect, createMemo, createSignal, mapArray, untrack } from "solid-js";
+import { logLog, errorLog } from "../utilities/logging";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
 import { Config } from "../config/config.types";
@@ -17,6 +17,17 @@ export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<n
 
         createEffect(() => {
           const end = memoizedEnd();
+
+          if (end <= startTimestamp) {
+            errorLog(
+              "Scheduled power selling item has end_time before or equal to start_time - skipping (likely a DST timezone issue)",
+              startTime,
+              untrack(scheduleItem)
+            );
+            setWantedOutput(() => () => 0);
+            return;
+          }
+
           const setEndTimeout = () =>
             batchedRunAtFutureTimeWithPriority(() => setWantedOutput(() => () => 0), end, false);
 
