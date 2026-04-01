@@ -12,6 +12,7 @@
     "@depict-ai/plp-styling": "^4.4.20",
     "@depict-ai/ui": "^4.8.22",
     "@depict-ai/utilishared": "^2.4.7",
+    "@modular-forms/solid": "^0.25.1",
     "@solidjs/meta": "^0.29.3",
     "@solidjs/router": "^0.13.2",
     "@solidjs/start": "^1.0.0-rc.0",
@@ -22,7 +23,8 @@
     "solid-js": "^1.8.16",
     "typescript": "^5.9.3",
     "vinxi": "^0.3.11",
-    "vite": "^5.2.10"
+    "vite": "^5.2.10",
+    "zod": "^3.24.1"
   },
   "engines": {
     "node": ">=18"

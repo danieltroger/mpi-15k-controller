@@ -937,6 +937,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@modular-forms/solid@npm:^0.25.1":
+  version: 0.25.1
+  resolution: "@modular-forms/solid@npm:0.25.1"
+  dependencies:
+    valibot: "npm:^1.0.0-beta.6"
+  peerDependencies:
+    solid-js: ^1.3.1
+  checksum: 10c0/3667273dbb49b191ab128890e88c38e0ef150b8267d74e8c421badd4385db761f46493a35f51ee1934a6171bb9edd52476e059e1d2f5bbf893dfb5eb8e663ccc
+  languageName: node
+  linkType: hard
+
 "@mswjs/interceptors@npm:0.27.2":
   version: 0.27.2
   resolution: "@mswjs/interceptors@npm:0.27.2"
@@ -3496,6 +3507,7 @@ __metadata:
     "@depict-ai/plp-styling": "npm:^4.4.20"
     "@depict-ai/ui": "npm:^4.8.22"
     "@depict-ai/utilishared": "npm:^2.4.7"
+    "@modular-forms/solid": "npm:^0.25.1"
     "@solidjs/meta": "npm:^0.29.3"
     "@solidjs/router": "npm:^0.13.2"
     "@solidjs/start": "npm:^1.0.0-rc.0"
@@ -3507,6 +3519,7 @@ __metadata:
     typescript: "npm:^5.9.3"
     vinxi: "npm:^0.3.11"
     vite: "npm:^5.2.10"
+    zod: "npm:^3.24.1"
   languageName: unknown
   linkType: soft
 
@@ -6786,6 +6799,18 @@ __metadata:
   version: 1.0.2
   resolution: "util-deprecate@npm:1.0.2"
   checksum: 10c0/41a5bdd214df2f6c3ecf8622745e4a366c4adced864bc3c833739791aeeeb1838119af7daed4ba36428114b5c67dcda034a79c882e97e43c03e66a4dd7389942
+  languageName: node
+  linkType: hard
+
+"valibot@npm:^1.0.0-beta.6":
+  version: 1.3.1
+  resolution: "valibot@npm:1.3.1"
+  peerDependencies:
+    typescript: ">=5"
+  peerDependenciesMeta:
+    typescript:
+      optional: true
+  checksum: 10c0/e20a4097fa726f57530da1e64558af47ddd2303129c77978fe93c522c66cf4c79540ea3af864523589283ea25e347c3d65b8044fa4913376208dde576b9f6382
   languageName: node
   linkType: hard
 

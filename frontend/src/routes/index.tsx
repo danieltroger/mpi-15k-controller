@@ -41,6 +41,9 @@ export default function Home() {
           <li>
             <A href="/live-data">Live data</A>
           </li>
+          <li>
+            <A href="/buy-sell">Buy / sell power</A>
+          </li>
         </ol>
       </section>
       <section>
