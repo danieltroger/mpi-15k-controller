@@ -38,6 +38,12 @@
   opacity: 0.9;
 }
 
+.buy-sell-config__hint--schedule {
+  margin-top: -0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+}
+
 .buy-sell-config__subheading {
   margin: 1.25rem 0 0.5rem;
   font-size: 1rem;
@@ -83,6 +89,13 @@
 .buy-sell-config__table th {
   text-align: left;
   background: light-dark(#eee, #1a1a1a);
+}
+
+.buy-sell-config__meta {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.92;
+  font-size: 0.85rem;
 }
 
 .buy-sell-config__btn {
