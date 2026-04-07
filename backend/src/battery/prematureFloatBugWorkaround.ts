@@ -90,43 +90,6 @@ export function prematureFloatBugWorkaround({
     logLog("Got confirmed: configured bulk voltage from shinemonitor", localStateOfConfiguredVoltageBulk())
   );
 
-  const trySetVoltages = () => {
-    const wantsVoltage = untrack(wantVoltagesToBeSetTo);
-    const floatVoltage = untrack(localStateOfConfiguredVoltageFloat);
-    const bulkVoltage = untrack(localStateOfConfiguredVoltageBulk);
-    if (!wantsVoltage) return;
-    if (floatVoltage && wantsVoltage !== floatVoltage && !(bulkVoltage && wantsVoltage > bulkVoltage)) {
-      logLog(
-        "Queueing request to set float voltage to",
-        wantsVoltage,
-        ". We think the inverter is configured to",
-        floatVoltage,
-        "right now.",
-        "Current voltage of battery",
-        untrack(reactiveBatteryVoltage),
-        "V, current current of battery",
-        untrack(reactiveBatteryCurrent),
-        "A"
-      );
-      deparallelizedSetChargeVoltageFloat(wantsVoltage);
-    }
-    if (bulkVoltage && wantsVoltage !== bulkVoltage && !(floatVoltage && wantsVoltage < floatVoltage)) {
-      logLog(
-        "Queueing request to set bulk voltage to",
-        wantsVoltage,
-        ". We think the inverter is configured to",
-        bulkVoltage,
-        "right now.",
-        "Current voltage of battery",
-        untrack(reactiveBatteryVoltage),
-        "V, current current of battery",
-        untrack(reactiveBatteryCurrent),
-        "A"
-      );
-      deparallelizedSetChargeVoltageBulk(wantsVoltage);
-    }
-  };
-
   createEffect(() => {
     const wantsVoltage = wantVoltagesToBeSetTo();
     const voltageSetToRn = localStateOfConfiguredVoltageFloat();
@@ -179,17 +142,6 @@ export function prematureFloatBugWorkaround({
     );
     deparallelizedSetChargeVoltageBulk(wantsVoltage);
   });
-
-  // Periodically retry setting voltages in case a previous ShineMonitor request hung or failed silently.
-  // The reactive effects above only fire on state changes, so if a request fails without updating
-  // the confirmed voltage, they won't retry. This interval catches that case.
-  const retryInterval = setInterval(() => {
-    trySetVoltages();
-    // Also refetch to pick up any external changes
-    refetchBulk();
-    refetchFloat();
-  }, 1000 * 60 * 5); // every 5 minutes
-  onCleanup(() => clearInterval(retryInterval));
 
   // Return this as "is charging" for feedWhenNoSolar, we say that we're charging if the actual float voltage equals the full battery voltage
   return createMemo(() => {
