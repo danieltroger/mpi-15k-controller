@@ -62,6 +62,7 @@ export async function makeRequestWithAuth<T>(
         "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
         "Accept": "*/*",
       },
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) {
@@ -121,6 +122,7 @@ async function loginToShinemonitor(configSignal: Awaited<ReturnType<typeof get_c
       "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
       "Accept": "*/*",
     },
+    signal: AbortSignal.timeout(120_000),
   });
   if (!response.ok) {
     throw new Error("Failed to login to shinemonitor, non-200 response: " + response.status);
