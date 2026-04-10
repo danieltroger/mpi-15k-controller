@@ -105,7 +105,7 @@ function main() {
                 }
               );
             });
-            const currentPower = createMemo(() => currentReturn()?.sensor1.calculatedPowerFromAmpMeter?.());
+            const currentPower = createMemo(() => currentReturn()?.sensor2.calculatedPowerFromAmpMeter?.());
             const {
               totalLastEmpty,
               totalLastFull,

@@ -73,7 +73,7 @@ export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_
 export async function queryEnergyIntegral(db: Influx.InfluxDB, fromMs: number) {
   // integral() with 1h unit directly gives us watt-hours
   // We query from (fromMs + 1) to avoid including the exact "full" or "empty" moment
-  const query = `SELECT integral("calculated_power", 1h) as energy FROM "current_values" WHERE time >= ${fromMs + 1}ms`;
+  const query = `SELECT integral("calculated_power_2", 1h) as energy FROM "current_values" WHERE time >= ${fromMs + 1}ms`;
   logLog("Querying energy integral from", new Date(fromMs).toISOString());
 
   const results = await db.query<{ energy: number | null }>(query);
