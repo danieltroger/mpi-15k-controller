@@ -1,7 +1,8 @@
 import { createForm, getValues, insert, remove, setValues, zodForm } from "@modular-forms/solid";
 import type { Accessor } from "solid-js";
-import { createEffect, createMemo, For, Show, untrack } from "solid-js";
+import { createEffect, createMemo, For, Show, getOwner, untrack } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
+import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import {
   configToBuySellFormData,
   formValuesToConfig,
@@ -113,7 +114,9 @@ function BuySellFormInner(props: {
         const c = props.getConfig();
         const next = formValuesToConfig(values, c);
         const ok = await props.setConfig(next);
+        const owner = getOwner()!;
         if (ok) {
+          await showToastWithMessage(owner, () => "Saved!");
           setValues(buySellForm, configToBuySellFormData(next), {
             shouldDirty: false,
             shouldTouched: false,
