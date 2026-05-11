@@ -159,13 +159,14 @@ function BuySellFormInner(props: {
         <div class="buy-sell-config__grid2">
           <label class="buy-sell-config__label">
             Only buy below SOC (%)
-            <Field name="buyOnlyBelowSoc" type="number">
+            <Field name="buyOnlyBelowSoc">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     max={100}
                     step="any"
@@ -179,13 +180,14 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start buying again below SOC (%)
-            <Field name="buyStartAgainBelowSoc" type="number">
+            <Field name="buyStartAgainBelowSoc">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     max={100}
                     step="any"
@@ -199,13 +201,14 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Max grid input (A)
-            <Field name="maxGridInputAmperage" type="number">
+            <Field name="maxGridInputAmperage">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     step="any"
                   />
@@ -281,13 +284,14 @@ function BuySellFormInner(props: {
                           </Field>
                         </td>
                         <td>
-                          <Field name={`buyingRows.${index()}.power`} type="number">
+                          <Field name={`buyingRows.${index()}.power`}>
                             {(field, p) => (
                               <>
                                 <input
                                   {...p}
                                   value={fieldValueForInput(field)}
                                   class="buy-sell-config__input"
+                                  type="number"
                                   min={0}
                                   step="any"
                                 />
@@ -348,13 +352,14 @@ function BuySellFormInner(props: {
         <div class="buy-sell-config__grid2">
           <label class="buy-sell-config__label">
             Only sell above SOC (%)
-            <Field name="sellOnlyAboveSoc" type="number">
+            <Field name="sellOnlyAboveSoc">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     max={100}
                     step="any"
@@ -368,13 +373,14 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start selling again above SOC (%)
-            <Field name="sellStartAgainAboveSoc" type="number">
+            <Field name="sellStartAgainAboveSoc">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     max={100}
                     step="any"
@@ -388,13 +394,14 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Only sell above voltage (V)
-            <Field name="onlySellAboveVoltage" type="number">
+            <Field name="onlySellAboveVoltage">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     step="any"
                   />
@@ -407,13 +414,14 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start selling again above voltage (V)
-            <Field name="startSellingAgainAboveVoltage" type="number">
+            <Field name="startSellingAgainAboveVoltage">
               {(field, p) => (
                 <>
                   <input
                     {...p}
                     value={fieldValueForInput(field)}
                     class="buy-sell-config__input"
+                    type="number"
                     min={0}
                     step="any"
                   />
@@ -489,13 +497,14 @@ function BuySellFormInner(props: {
                           </Field>
                         </td>
                         <td>
-                          <Field name={`sellingRows.${index()}.power`} type="number">
+                          <Field name={`sellingRows.${index()}.power`}>
                             {(field, p) => (
                               <>
                                 <input
                                   {...p}
                                   value={fieldValueForInput(field)}
                                   class="buy-sell-config__input"
+                                  type="number"
                                   min={0}
                                   step="any"
                                 />
