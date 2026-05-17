@@ -9,21 +9,27 @@
     "name": "Derya Y.",
     "email": "iiot2k@gmail.com"
   },
-
   "repository": {
     "type": "git",
     "url": "https://github.com/iiot2k/ads1115"
   },
-
   "main": "ads1115.js",
   "types": "ads1115.d.ts",
-
-  "keywords": ["iot", "iiot2k", "raspberry pi", "rpi", 
-    "ads1115", "adc", "analog to digital converter"
+  "keywords": [
+    "iot",
+    "iiot2k",
+    "raspberry pi",
+    "rpi",
+    "ads1115",
+    "adc",
+    "analog to digital converter"
   ],
-
-  "cpu" : ["arm64"],
-  "os": ["linux"],
+  "cpu": [
+    "arm64"
+  ],
+  "os": [
+    "linux"
+  ],
   "engines": {
     "node": ">=12.0.0"
   }

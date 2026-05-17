@@ -32,9 +32,7 @@ export function datetimeLocalToIso(local: string): string {
   return d.toISOString();
 }
 
-function scheduleToBuyingRows(
-  schedule: Config["scheduled_power_buying"]["schedule"]
-): BuySellScheduleRow[] {
+function scheduleToBuyingRows(schedule: Config["scheduled_power_buying"]["schedule"]): BuySellScheduleRow[] {
   return Object.entries(schedule).map(([start, v]) => ({
     start: isoToDatetimeLocal(start),
     end: isoToDatetimeLocal(v.end_time),
@@ -42,9 +40,7 @@ function scheduleToBuyingRows(
   }));
 }
 
-function scheduleToSellingRows(
-  schedule: Config["scheduled_power_selling"]["schedule"]
-): BuySellScheduleRow[] {
+function scheduleToSellingRows(schedule: Config["scheduled_power_selling"]["schedule"]): BuySellScheduleRow[] {
   return Object.entries(schedule).map(([start, v]) => ({
     start: isoToDatetimeLocal(start),
     end: isoToDatetimeLocal(v.end_time),

@@ -3,17 +3,9 @@ import type { Accessor } from "solid-js";
 import { createEffect, createMemo, For, Show, getOwner, untrack } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
-import {
-  configToBuySellFormData,
-  formValuesToConfig,
-  type BuySellFormData,
-} from "~/helpers/buySellConfigMapping";
+import { configToBuySellFormData, formValuesToConfig, type BuySellFormData } from "~/helpers/buySellConfigMapping";
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
-import {
-  formatDurationLabel,
-  rowDurationHours,
-  rowEnergyKwh,
-} from "~/helpers/scheduleRowDerived";
+import { formatDurationLabel, rowDurationHours, rowEnergyKwh } from "~/helpers/scheduleRowDerived";
 import type { Config } from "../../../backend/src/config/config.types";
 import "./BuySellConfig.scss";
 
@@ -155,8 +147,8 @@ function BuySellFormInner(props: {
       <section class="buy-sell-config__section" aria-labelledby="buy-sell-buying-heading">
         <h2 id="buy-sell-buying-heading">Buying from grid</h2>
         <p class="buy-sell-config__hint">
-          Schedule when to charge from the grid (charging power in watts). Buying only applies when
-          state of charge is below the limits below.
+          Schedule when to charge from the grid (charging power in watts). Buying only applies when state of charge is
+          below the limits below.
         </p>
 
         <div class="buy-sell-config__grid2">
@@ -226,8 +218,8 @@ function BuySellFormInner(props: {
 
         <h3 class="buy-sell-config__subheading">Schedule</h3>
         <p class="buy-sell-config__hint buy-sell-config__hint--schedule">
-          Duration and energy update as you edit. Energy assumes constant charging power for the
-          window: kWh = (watts × hours) / 1000.
+          Duration and energy update as you edit. Energy assumes constant charging power for the window: kWh = (watts ×
+          hours) / 1000.
         </p>
         <FieldArray name="buyingRows">
           {fieldArray => (
@@ -250,85 +242,85 @@ function BuySellFormInner(props: {
                     <For each={fieldArray.items}>
                       {(_, index) => (
                         <tr>
-                        <td class="buy-sell-config__td-datetime">
-                          <Field name={`buyingRows.${index()}.start`} type="string">
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="datetime-local"
-                                  step={60}
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <td class="buy-sell-config__td-datetime">
-                          <Field name={`buyingRows.${index()}.end`} type="string">
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="datetime-local"
-                                  step={60}
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <td>
-                          <Field name={`buyingRows.${index()}.power`}>
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <ScheduleRowMeta form={buySellForm} kind="buyingRows" index={index()} />
-                        <td class="buy-sell-config__schedule-actions">
-                          <div class="buy-sell-config__action-btns">
-                            <button
-                              type="button"
-                              class="buy-sell-config__btn buy-sell-config__btn--small"
-                              onClick={() => duplicateScheduleRow(buySellForm, "buyingRows", index())}
-                            >
-                              Duplicate
-                            </button>
-                            <button
-                              type="button"
-                              class="buy-sell-config__btn buy-sell-config__btn--small"
-                              onClick={() => remove(buySellForm, "buyingRows", { at: index() })}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+                          <td class="buy-sell-config__td-datetime">
+                            <Field name={`buyingRows.${index()}.start`} type="string">
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="datetime-local"
+                                    step={60}
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <td class="buy-sell-config__td-datetime">
+                            <Field name={`buyingRows.${index()}.end`} type="string">
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="datetime-local"
+                                    step={60}
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <td>
+                            <Field name={`buyingRows.${index()}.power`}>
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <ScheduleRowMeta form={buySellForm} kind="buyingRows" index={index()} />
+                          <td class="buy-sell-config__schedule-actions">
+                            <div class="buy-sell-config__action-btns">
+                              <button
+                                type="button"
+                                class="buy-sell-config__btn buy-sell-config__btn--small"
+                                onClick={() => duplicateScheduleRow(buySellForm, "buyingRows", index())}
+                              >
+                                Duplicate
+                              </button>
+                              <button
+                                type="button"
+                                class="buy-sell-config__btn buy-sell-config__btn--small"
+                                onClick={() => remove(buySellForm, "buyingRows", { at: index() })}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
               </div>
               <button
                 type="button"
@@ -348,8 +340,8 @@ function BuySellFormInner(props: {
       <section class="buy-sell-config__section" aria-labelledby="buy-sell-selling-heading">
         <h2 id="buy-sell-selling-heading">Selling to grid</h2>
         <p class="buy-sell-config__hint">
-          Schedule export power (watts). Selling only applies when SOC and battery voltage are above
-          the thresholds below.
+          Schedule export power (watts). Selling only applies when SOC and battery voltage are above the thresholds
+          below.
         </p>
 
         <div class="buy-sell-config__grid2">
@@ -439,8 +431,8 @@ function BuySellFormInner(props: {
 
         <h3 class="buy-sell-config__subheading">Schedule</h3>
         <p class="buy-sell-config__hint buy-sell-config__hint--schedule">
-          Duration and energy update as you edit. Energy assumes constant export power for the
-          window: kWh = (watts × hours) / 1000.
+          Duration and energy update as you edit. Energy assumes constant export power for the window: kWh = (watts ×
+          hours) / 1000.
         </p>
         <FieldArray name="sellingRows">
           {fieldArray => (
@@ -463,85 +455,85 @@ function BuySellFormInner(props: {
                     <For each={fieldArray.items}>
                       {(_, index) => (
                         <tr>
-                        <td class="buy-sell-config__td-datetime">
-                          <Field name={`sellingRows.${index()}.start`} type="string">
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="datetime-local"
-                                  step={60}
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <td class="buy-sell-config__td-datetime">
-                          <Field name={`sellingRows.${index()}.end`} type="string">
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="datetime-local"
-                                  step={60}
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <td>
-                          <Field name={`sellingRows.${index()}.power`}>
-                            {(field, p) => (
-                              <>
-                                <input
-                                  {...p}
-                                  value={fieldValueForInput(field)}
-                                  class="buy-sell-config__input"
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                />
-                                <Show when={field.error}>
-                                  <span class="buy-sell-config__field-error">{field.error}</span>
-                                </Show>
-                              </>
-                            )}
-                          </Field>
-                        </td>
-                        <ScheduleRowMeta form={buySellForm} kind="sellingRows" index={index()} />
-                        <td class="buy-sell-config__schedule-actions">
-                          <div class="buy-sell-config__action-btns">
-                            <button
-                              type="button"
-                              class="buy-sell-config__btn buy-sell-config__btn--small"
-                              onClick={() => duplicateScheduleRow(buySellForm, "sellingRows", index())}
-                            >
-                              Duplicate
-                            </button>
-                            <button
-                              type="button"
-                              class="buy-sell-config__btn buy-sell-config__btn--small"
-                              onClick={() => remove(buySellForm, "sellingRows", { at: index() })}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+                          <td class="buy-sell-config__td-datetime">
+                            <Field name={`sellingRows.${index()}.start`} type="string">
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="datetime-local"
+                                    step={60}
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <td class="buy-sell-config__td-datetime">
+                            <Field name={`sellingRows.${index()}.end`} type="string">
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="datetime-local"
+                                    step={60}
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <td>
+                            <Field name={`sellingRows.${index()}.power`}>
+                              {(field, p) => (
+                                <>
+                                  <input
+                                    {...p}
+                                    value={fieldValueForInput(field)}
+                                    class="buy-sell-config__input"
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                  />
+                                  <Show when={field.error}>
+                                    <span class="buy-sell-config__field-error">{field.error}</span>
+                                  </Show>
+                                </>
+                              )}
+                            </Field>
+                          </td>
+                          <ScheduleRowMeta form={buySellForm} kind="sellingRows" index={index()} />
+                          <td class="buy-sell-config__schedule-actions">
+                            <div class="buy-sell-config__action-btns">
+                              <button
+                                type="button"
+                                class="buy-sell-config__btn buy-sell-config__btn--small"
+                                onClick={() => duplicateScheduleRow(buySellForm, "sellingRows", index())}
+                              >
+                                Duplicate
+                              </button>
+                              <button
+                                type="button"
+                                class="buy-sell-config__btn buy-sell-config__btn--small"
+                                onClick={() => remove(buySellForm, "sellingRows", { at: index() })}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
               </div>
               <button
                 type="button"
@@ -565,14 +557,8 @@ export function BuySellConfigForm() {
   const [config, set_config] = getBackendSyncedSignal<Config>("config", undefined, false);
 
   return (
-    <Show
-      when={config()}
-      fallback={<p class="buy-sell-config__loading">Loading configuration…</p>}
-    >
-      <BuySellFormInner
-        getConfig={config as Accessor<Config>}
-        setConfig={set_config!}
-      />
+    <Show when={config()} fallback={<p class="buy-sell-config__loading">Loading configuration…</p>}>
+      <BuySellFormInner getConfig={config as Accessor<Config>} setConfig={set_config!} />
     </Show>
   );
 }
