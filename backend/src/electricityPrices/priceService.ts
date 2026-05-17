@@ -20,7 +20,7 @@ class ElectricityPriceService {
     }
 
     if (this.isFetching) {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         this.fetchListeners.push(() => resolve(this.cachedPrices!));
       });
     }
@@ -66,7 +66,7 @@ class ElectricityPriceService {
         lastFetched: new Date(),
       };
 
-      this.fetchListeners.forEach((cb) => cb());
+      this.fetchListeners.forEach(cb => cb());
       this.fetchListeners = [];
 
       return this.cachedPrices;
@@ -89,7 +89,7 @@ class ElectricityPriceService {
     const currentHour = now.getHours();
 
     return (
-      prices.find((p) => {
+      prices.find(p => {
         const startTime = new Date(p.time_start);
         return startTime.getHours() === currentHour;
       }) || null
@@ -98,7 +98,7 @@ class ElectricityPriceService {
 
   getPriceForHour(prices: PriceInfo[], hour: number): PriceInfo | null {
     return (
-      prices.find((p) => {
+      prices.find(p => {
         const startTime = new Date(p.time_start);
         return startTime.getHours() === hour;
       }) || null
@@ -109,7 +109,7 @@ class ElectricityPriceService {
     const now = new Date();
     const allPrices = [...prices.today, ...prices.tomorrow];
 
-    return allPrices.filter((p) => {
+    return allPrices.filter(p => {
       const startTime = new Date(p.time_start);
       return startTime > now;
     });
@@ -139,7 +139,7 @@ class ElectricityPriceService {
         return true;
       }
       logLog(`Tomorrow's prices not yet available, waiting... (attempt ${i + 1}/${maxAttempts})`);
-      await new Promise((resolve) => setTimeout(resolve, 5 * 60 * 1000));
+      await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
     }
     return false;
   }

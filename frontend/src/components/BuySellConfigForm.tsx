@@ -231,8 +231,7 @@ function BuySellFormInner(props: {
           <p class="buy-sell-config__hint">
             A new plan has been generated based on current SOC ({proposedSchedule()?.based_on_soc?.toFixed(0)}%)
             {proposedSchedule()?.prices_fetched ? " and electricity prices" : ""}
-            {proposedSchedule()?.weather_fetched ? " and weather forecasts" : ""}.
-            Review and accept or reject.
+            {proposedSchedule()?.weather_fetched ? " and weather forecasts" : ""}. Review and accept or reject.
           </p>
 
           <div class="buy-sell-config__table-wrap">
@@ -248,10 +247,14 @@ function BuySellFormInner(props: {
               </thead>
               <tbody>
                 <For each={proposedSchedule()?.entries || []}>
-                  {(entry) => (
+                  {entry => (
                     <tr>
-                      <td>{new Date(entry.start_time).toLocaleString("sv-SE", { hour: "2-digit", minute: "2-digit" })}</td>
-                      <td class={entry.action === "buy" ? "buy-sell-config__action-buy" : "buy-sell-config__action-sell"}>
+                      <td>
+                        {new Date(entry.start_time).toLocaleString("sv-SE", { hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td
+                        class={entry.action === "buy" ? "buy-sell-config__action-buy" : "buy-sell-config__action-sell"}
+                      >
                         {entry.action === "buy" ? "Buy" : "Sell"}
                       </td>
                       <td>{entry.power_watts} W</td>
@@ -272,11 +275,7 @@ function BuySellFormInner(props: {
             >
               Reject Plan
             </button>
-            <button
-              type="button"
-              class="buy-sell-config__btn buy-sell-config__btn--primary"
-              onClick={handleAcceptPlan}
-            >
+            <button type="button" class="buy-sell-config__btn buy-sell-config__btn--primary" onClick={handleAcceptPlan}>
               Accept Plan
             </button>
           </div>
@@ -299,11 +298,7 @@ function BuySellFormInner(props: {
         >
           Reload from server
         </button>
-        <button
-          type="button"
-          class="buy-sell-config__btn buy-sell-config__btn--secondary"
-          onClick={handleGeneratePlan}
-        >
+        <button type="button" class="buy-sell-config__btn buy-sell-config__btn--secondary" onClick={handleGeneratePlan}>
           Generate Plan
         </button>
         <button type="submit" class="buy-sell-config__btn buy-sell-config__btn--primary">
