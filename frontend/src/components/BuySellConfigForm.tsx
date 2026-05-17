@@ -1,12 +1,12 @@
 import { createForm, getValues, insert, remove, setValues, zodForm } from "@modular-forms/solid";
 import type { Accessor } from "solid-js";
 import { createEffect, createMemo, For, Show, getOwner, untrack } from "solid-js";
-import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
+import { getBackendSyncedSignal, writeSignalValue } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { configToBuySellFormData, formValuesToConfig, type BuySellFormData } from "~/helpers/buySellConfigMapping";
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
 import { formatDurationLabel, rowDurationHours, rowEnergyKwh } from "~/helpers/scheduleRowDerived";
-import type { Config } from "../../../backend/src/config/config.types";
+import type { Config, ProposedScheduleEntry } from "../../../backend/src/config/config.types";
 import "./BuySellConfig.scss";
 
 const emptyRow = (): BuySellFormData["buyingRows"][number] => ({
@@ -99,6 +99,114 @@ function BuySellFormInner(props: {
     });
   });
 
+  const proposedSchedule = createMemo(() => props.getConfig()?.proposed_schedule);
+
+  const hasProposedSchedule = createMemo(() => {
+    const ps = proposedSchedule();
+    return ps && ps.entries && ps.entries.length > 0;
+  });
+
+  const handleGeneratePlan = async () => {
+    const owner = getOwner();
+    if (!owner) return;
+
+    try {
+      await showToastWithMessage(owner, () => "Generating plan...");
+      const c = props.getConfig();
+      const updatedConfig = {
+        ...c,
+        _trigger_plan_generation: Date.now(),
+      };
+      await props.setConfig(updatedConfig);
+      await showToastWithMessage(owner, () => "Plan generated!");
+    } catch (e) {
+      const owner = getOwner();
+      if (owner) {
+        await showToastWithMessage(owner, () => "Failed to generate plan");
+      }
+    }
+  };
+
+  const handleAcceptPlan = async () => {
+    const owner = getOwner();
+    if (!owner) return;
+
+    try {
+      const c = props.getConfig();
+      const ps = c.proposed_schedule;
+      if (!ps || !ps.entries.length) return;
+
+      const newConfig = { ...c };
+      ps.entries.forEach((entry: ProposedScheduleEntry) => {
+        if (entry.action === "buy") {
+          newConfig.scheduled_power_buying = {
+            ...newConfig.scheduled_power_buying,
+            schedule: {
+              ...newConfig.scheduled_power_buying.schedule,
+              [entry.start_time]: {
+                end_time: entry.end_time,
+                charging_power: entry.power_watts,
+              },
+            },
+          };
+        } else if (entry.action === "sell") {
+          newConfig.scheduled_power_selling = {
+            ...newConfig.scheduled_power_selling,
+            schedule: {
+              ...newConfig.scheduled_power_selling.schedule,
+              [entry.start_time]: {
+                end_time: entry.end_time,
+                power_watts: entry.power_watts,
+              },
+            },
+          };
+        }
+      });
+
+      newConfig.proposed_schedule = {
+        entries: [],
+        generated_at: "",
+        based_on_soc: 0,
+        prices_fetched: false,
+        weather_fetched: false,
+      };
+
+      await props.setConfig(newConfig);
+      await showToastWithMessage(owner, () => "Plan accepted!");
+    } catch (e) {
+      const owner = getOwner();
+      if (owner) {
+        await showToastWithMessage(owner, () => "Failed to accept plan");
+      }
+    }
+  };
+
+  const handleRejectPlan = async () => {
+    const owner = getOwner();
+    if (!owner) return;
+
+    try {
+      const c = props.getConfig();
+      const updatedConfig = {
+        ...c,
+        proposed_schedule: {
+          entries: [],
+          generated_at: "",
+          based_on_soc: 0,
+          prices_fetched: false,
+          weather_fetched: false,
+        },
+      };
+      await props.setConfig(updatedConfig);
+      await showToastWithMessage(owner, () => "Plan rejected");
+    } catch (e) {
+      const owner = getOwner();
+      if (owner) {
+        await showToastWithMessage(owner, () => "Failed to reject plan");
+      }
+    }
+  };
+
   return (
     <Form
       class="buy-sell-config"
@@ -117,6 +225,64 @@ function BuySellFormInner(props: {
         }
       }}
     >
+      <Show when={hasProposedSchedule()}>
+        <section class="buy-sell-config__section" aria-labelledby="proposed-plan-heading">
+          <h2 id="proposed-plan-heading">Proposed Power Plan</h2>
+          <p class="buy-sell-config__hint">
+            A new plan has been generated based on current SOC ({proposedSchedule()?.based_on_soc?.toFixed(0)}%)
+            {proposedSchedule()?.prices_fetched ? " and electricity prices" : ""}
+            {proposedSchedule()?.weather_fetched ? " and weather forecasts" : ""}.
+            Review and accept or reject.
+          </p>
+
+          <div class="buy-sell-config__table-wrap">
+            <table class="buy-sell-config__table">
+              <thead>
+                <tr>
+                  <th scope="col">Time</th>
+                  <th scope="col">Action</th>
+                  <th scope="col">Power (W)</th>
+                  <th scope="col">Price (SEK/kWh)</th>
+                  <th scope="col">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={proposedSchedule()?.entries || []}>
+                  {(entry) => (
+                    <tr>
+                      <td>{new Date(entry.start_time).toLocaleString("sv-SE", { hour: "2-digit", minute: "2-digit" })}</td>
+                      <td class={entry.action === "buy" ? "buy-sell-config__action-buy" : "buy-sell-config__action-sell"}>
+                        {entry.action === "buy" ? "Buy" : "Sell"}
+                      </td>
+                      <td>{entry.power_watts} W</td>
+                      <td>{entry.price_sek_per_kwh?.toFixed(2) || "—"}</td>
+                      <td>{entry.reason}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="buy-sell-config__toolbar">
+            <button
+              type="button"
+              class="buy-sell-config__btn buy-sell-config__btn--secondary"
+              onClick={handleRejectPlan}
+            >
+              Reject Plan
+            </button>
+            <button
+              type="button"
+              class="buy-sell-config__btn buy-sell-config__btn--primary"
+              onClick={handleAcceptPlan}
+            >
+              Accept Plan
+            </button>
+          </div>
+        </section>
+      </Show>
+
       <div class="buy-sell-config__toolbar">
         <button
           type="button"
@@ -132,6 +298,13 @@ function BuySellFormInner(props: {
           }}
         >
           Reload from server
+        </button>
+        <button
+          type="button"
+          class="buy-sell-config__btn buy-sell-config__btn--secondary"
+          onClick={handleGeneratePlan}
+        >
+          Generate Plan
         </button>
         <button type="submit" class="buy-sell-config__btn buy-sell-config__btn--primary">
           Save
