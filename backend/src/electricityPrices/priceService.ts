@@ -14,12 +14,12 @@ class ElectricityPriceService {
   private isFetching = false;
   private fetchListeners: (() => void)[] = [];
 
-  async fetchPrices(priceZone: string = "SE3"): Promise<CachedPrices> {
-    if (this.cachedPrices && this.isFresh(this.cachedPrices.lastFetched)) {
+  async fetchPrices(priceZone: string = "SE3", forceRefresh: boolean = false): Promise<CachedPrices> {
+    if (!forceRefresh && this.cachedPrices && this.isFresh(this.cachedPrices.lastFetched)) {
       return this.cachedPrices;
     }
 
-    if (this.isFetching) {
+    if (!forceRefresh && this.isFetching) {
       return new Promise(resolve => {
         this.fetchListeners.push(() => resolve(this.cachedPrices!));
       });
