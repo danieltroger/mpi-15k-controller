@@ -13,17 +13,13 @@ class WeatherService {
   private isFetching = false;
   private fetchListeners: (() => void)[] = [];
 
-  async fetchForecast(
-    latitude: number,
-    longitude: number,
-    forecastDays: number = 2
-  ): Promise<WeatherForecast> {
+  async fetchForecast(latitude: number, longitude: number, forecastDays: number = 2): Promise<WeatherForecast> {
     if (this.cachedForecast && this.isFresh(this.cachedForecast.lastFetched)) {
       return this.cachedForecast;
     }
 
     if (this.isFetching) {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         this.fetchListeners.push(() => resolve(this.cachedForecast!));
       });
     }
@@ -59,7 +55,7 @@ class WeatherService {
         lastFetched: new Date(),
       };
 
-      this.fetchListeners.forEach((cb) => cb());
+      this.fetchListeners.forEach(cb => cb());
       this.fetchListeners = [];
 
       return this.cachedForecast;
@@ -79,7 +75,7 @@ class WeatherService {
 
   getUpcomingHours(forecast: WeatherForecast, hours: number = 48): HourlyWeather[] {
     const now = new Date();
-    return forecast.hourly.filter((h) => {
+    return forecast.hourly.filter(h => {
       const time = new Date(h.time);
       return time > now && time <= new Date(now.getTime() + hours * 60 * 60 * 1000);
     });
@@ -90,12 +86,12 @@ class WeatherService {
     const todayEnd = new Date(now);
     todayEnd.setHours(23, 59, 59, 999);
 
-    const todaysHours = forecast.hourly.filter((h) => {
+    const todaysHours = forecast.hourly.filter(h => {
       const time = new Date(h.time);
       return time >= now && time <= todayEnd;
     });
 
-    return todaysHours.reduce((sum, h) => sum + (h.sunshine_duration / 3600), 0);
+    return todaysHours.reduce((sum, h) => sum + h.sunshine_duration / 3600, 0);
   }
 
   getTomorrowsSunshineHours(forecast: WeatherForecast): number {
@@ -108,12 +104,12 @@ class WeatherService {
     tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
     tomorrowEnd.setHours(23, 59, 59, 999);
 
-    const tomorrowsHours = forecast.hourly.filter((h) => {
+    const tomorrowsHours = forecast.hourly.filter(h => {
       const time = new Date(h.time);
       return time >= tomorrowStart && time <= tomorrowEnd;
     });
 
-    return tomorrowsHours.reduce((sum, h) => sum + (h.sunshine_duration / 3600), 0);
+    return tomorrowsHours.reduce((sum, h) => sum + h.sunshine_duration / 3600, 0);
   }
 
   getEstimatedSolarGeneration(forecast: WeatherForecast, hours: number = 24): number {
@@ -141,7 +137,7 @@ class WeatherService {
       targetTime.setDate(targetTime.getDate() + 1);
     }
 
-    const hourData = forecast.hourly.find((h) => {
+    const hourData = forecast.hourly.find(h => {
       const time = new Date(h.time);
       return time.getHours() === hour && time >= now;
     });
