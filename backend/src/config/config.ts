@@ -6,6 +6,26 @@ import { errorLog, logLog } from "../utilities/logging";
 import { Config } from "./config.types";
 
 const default_config: Config = {
+  electricity_prices: {
+    price_zone: "SE3",
+    plan_generation_time: "13:10",
+    buy_when_price_below_sek: 0.5,
+    sell_when_price_above_sek: 1.5,
+    buy_when_free: true,
+  },
+  weather: {
+    latitude: 40,
+    longitude: 10,
+    min_sunshine_to_store_for_evening: 3,
+    target_evening_soc: 30,
+  },
+  proposed_schedule: {
+    entries: [],
+    generated_at: "",
+    based_on_soc: 0,
+    prices_fetched: false,
+    weather_fetched: false,
+  },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
     schedule: {
