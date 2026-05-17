@@ -31,6 +31,8 @@ import {
   acceptProposedSchedule,
   rejectProposedSchedule,
 } from "./planScheduler/planScheduler";
+import { setPlanGeneratorTrigger } from "./websocketBackend/wsMessaging";
+import { runWithOwner } from "solid-js";
 
 while (true) {
   await new Promise<void>(r => {
@@ -222,6 +224,13 @@ function main() {
                 },
               })
             );
+
+            runWithOwner(owner, () => {
+              setPlanGeneratorTrigger(async () => {
+                await triggerManualPlanGeneration(configResourceValue, averageSOC);
+              });
+            });
+
             createEffect(() => {
               if (elpatronSwitchingErrored()) return;
               catchError(
