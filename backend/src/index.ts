@@ -25,7 +25,12 @@ import { useShouldBuyPower } from "./buying/useShouldBuyPower";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring";
 import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider";
-import { startPlanScheduler, triggerManualPlanGeneration, acceptProposedSchedule, rejectProposedSchedule } from "./planScheduler/planScheduler";
+import {
+  startPlanScheduler,
+  triggerManualPlanGeneration,
+  acceptProposedSchedule,
+  rejectProposedSchedule,
+} from "./planScheduler/planScheduler";
 
 while (true) {
   await new Promise<void>(r => {
@@ -117,7 +122,7 @@ function main() {
               assumedParasiticConsumption,
               assumedCapacity,
               averageSOC,
- } = useBatteryValues(configResourceValue, currentPower);
+            } = useBatteryValues(configResourceValue, currentPower);
 
             createEffect(() => {
               startPlanScheduler(configResourceValue, averageSOC);

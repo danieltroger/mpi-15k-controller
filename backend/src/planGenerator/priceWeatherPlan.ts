@@ -45,9 +45,9 @@ export async function generatePriceWeatherPlan(
   let weather_fetched = false;
 
   const { currentSOC, batteryCapacityWh, maxChargePowerW, maxDischargePowerW } = input;
-  const { buy_when_price_below_sek, sell_when_price_above_sek, buy_when_free } = config.electricity_prices
+  const { buy_when_price_below_sek, sell_when_price_above_sek, buy_when_free } = config.electricity_prices;
 
-  const { min_sunshine_to_store_for_evening, target_evening_soc } = config.weather
+  const { min_sunshine_to_store_for_evening, target_evening_soc } = config.weather;
 
   try {
     prices = await priceService.fetchPrices(config.electricity_prices?.price_zone || "SE3");

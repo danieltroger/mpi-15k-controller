@@ -1,6 +1,10 @@
 import { Accessor, untrack } from "solid-js";
 import { Config } from "../config/config.types";
-import { generatePriceWeatherPlan, mergeProposedEntriesIntoConfig, clearPastScheduleEntries } from "../planGenerator/priceWeatherPlan";
+import {
+  generatePriceWeatherPlan,
+  mergeProposedEntriesIntoConfig,
+  clearPastScheduleEntries,
+} from "../planGenerator/priceWeatherPlan";
 import { priceService } from "../electricityPrices/priceService";
 import { logLog, errorLog } from "../utilities/logging";
 
@@ -28,7 +32,7 @@ async function runPlanGeneration(
       logLog("Tomorrow's prices not yet available, waiting...");
       for (let i = 0; i < 24; i++) {
         await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
-        const retryPrices = await priceService.fetchPrices(currentConfig.electricity_prices?.price_zone );
+        const retryPrices = await priceService.fetchPrices(currentConfig.electricity_prices?.price_zone);
         if (retryPrices.tomorrow.length > 0) {
           break;
         }
