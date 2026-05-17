@@ -1,0 +1,33 @@
+name: Prettier Format
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  prettier:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run Prettier format
+        run: npx prettier --write "**/*.{js,jsx,ts,tsx,json,css,scss,md,yml,yaml}"
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: format with prettier"
+          file_pattern: "**/*.{js,jsx,ts,tsx,json,css,scss,md,yml,yaml}"
