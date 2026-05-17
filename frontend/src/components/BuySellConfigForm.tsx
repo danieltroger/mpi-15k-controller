@@ -1,7 +1,7 @@
 import { createForm, getValues, insert, remove, setValues, zodForm } from "@modular-forms/solid";
 import type { Accessor } from "solid-js";
 import { createEffect, createMemo, For, Show, getOwner, untrack } from "solid-js";
-import { getBackendSyncedSignal, writeSignalValue } from "~/helpers/getBackendSyncedSignal";
+import { getBackendSyncedSignal, sendBackendAction } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { configToBuySellFormData, formValuesToConfig, type BuySellFormData } from "~/helpers/buySellConfigMapping";
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
@@ -112,12 +112,7 @@ function BuySellFormInner(props: {
 
     try {
       await showToastWithMessage(owner, () => "Generating plan...");
-      const c = props.getConfig();
-      const updatedConfig = {
-        ...c,
-        _trigger_plan_generation: Date.now(),
-      };
-      await props.setConfig(updatedConfig);
+      await sendBackendAction("generate_plan", "plan");
       await showToastWithMessage(owner, () => "Plan generated!");
     } catch (e) {
       const owner = getOwner();

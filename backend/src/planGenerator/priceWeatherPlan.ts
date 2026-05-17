@@ -26,12 +26,20 @@ function combineDateAndHour(date: Date, hour: number): Date {
 }
 
 function formatISOWithTimezone(date: Date): string {
-  const offset = date.getTimezoneOffset() / 60;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+
+  const offset = -date.getTimezoneOffset();
   const sign = offset <= 0 ? "+" : "-";
-  const offsetHours = Math.abs(Math.floor(offset));
-  const offsetMinutes = Math.abs(date.getTimezoneOffset() % 60);
-  const tz = `${sign}${String(offsetHours).padStart(2, "0")}:${String(offsetMinutes).padStart(2, "0")}`;
-  return date.toISOString().replace("Z", tz);
+  const offsetHours = String(Math.abs(Math.floor(offset / 60))).padStart(2, "0");
+  const offsetMinutes = String(Math.abs(offset % 60)).padStart(2, "0");
+  const tz = `${sign}${offsetHours}:${offsetMinutes}`;
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.000${tz}`;
 }
 
 export async function generatePriceWeatherPlan(
@@ -75,11 +83,11 @@ export async function generatePriceWeatherPlan(
     errors.push("No price data available");
   }
 
-  const priceMap = new Map<number, PriceInfo>();
+  const priceMap = new Map<string, PriceInfo>();
   allPrices.forEach(p => {
     const startTime = new Date(p.time_start);
-    const hour = startTime.getHours();
-    priceMap.set(hour, p);
+    const key = `${startTime.getFullYear()}-${startTime.getMonth()}-${startTime.getDate()}-${startTime.getHours()}`;
+    priceMap.set(key, p);
   });
 
   for (let dayOffset = 0; dayOffset < 2; dayOffset++) {
@@ -90,12 +98,15 @@ export async function generatePriceWeatherPlan(
       const scheduleTime = combineDateAndHour(targetDate, hour);
       if (scheduleTime <= now) continue;
 
-      const priceInfo = priceMap.get(hour);
+      const priceKey = `${targetDate.getFullYear()}-${targetDate.getMonth()}-${targetDate.getDate()}-${hour}`;
+      const priceInfo = priceMap.get(priceKey);
       const price = priceInfo?.SEK_per_kWh ?? 0;
 
       const hourWeather = weather?.hourly.find(h => {
         const time = new Date(h.time);
-        return time.getHours() === hour && time.getDate() === scheduleTime.getDate();
+        const dateStr = `${time.getFullYear()}-${time.getMonth()}-${time.getDate()}`;
+        const targetDateStr = `${scheduleTime.getFullYear()}-${scheduleTime.getMonth()}-${scheduleTime.getDate()}`;
+        return time.getHours() === hour && dateStr === targetDateStr;
       });
       const sunshineHours = hourWeather ? hourWeather.sunshine_duration / 3600 : 0;
       const solarGenerationkWh = hourWeather ? (hourWeather.shortwave_radiation * 0.18 * 10) / 1000 : 0;
@@ -176,10 +187,9 @@ function estimateSOCAtHour(
   let estimatedSOC = currentSOC;
 
   entries.forEach(entry => {
-    const entryStart = new Date(entry.start_time);
     const entryEnd = new Date(entry.end_time);
 
-    if (entryStart <= targetTime && targetTime < entryEnd) {
+    if (entryEnd <= targetTime) {
       const durationHours = 1;
       const energyWh = entry.power_watts * durationHours;
 

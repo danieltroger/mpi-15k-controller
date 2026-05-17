@@ -3,6 +3,12 @@ import { startWsServer } from "./startWsServer";
 import { useTemperatures } from "../temperatureMeasuring/useTemperatures";
 import { Config } from "../config/config.types";
 
+let planGeneratorTrigger: (() => Promise<void>) | null = null;
+
+export function setPlanGeneratorTrigger(fn: () => Promise<void>) {
+  planGeneratorTrigger = fn;
+}
+
 export async function wsMessaging({
   config_signal: [get_config, set_config],
   owner,
@@ -32,6 +38,14 @@ export async function wsMessaging({
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
     const { command, key, value, id } = msg;
+
+    if (command === "action" && key === "generate_plan") {
+      if (planGeneratorTrigger) {
+        await planGeneratorTrigger();
+        return JSON.stringify({ id, status: "ok", value: "Plan generated" });
+      }
+      return JSON.stringify({ id, status: "not-ok", message: "Plan generator not available" });
+    }
 
     if (command === "read" || command === "write") {
       const specifier = exposed_signals[key as keyof typeof exposed_signals];
