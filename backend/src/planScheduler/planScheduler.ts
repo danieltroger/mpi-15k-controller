@@ -79,8 +79,9 @@ export function startPlanScheduler(
 
   const scheduleNextRun = () => {
     const now = new Date();
-    const targetHour = 13;
-    const targetMinute = 10;
+    const configVal = untrack(config);
+    const timeStr = configVal.electricity_prices?.plan_generation_time || "13:10";
+    const [targetHour, targetMinute] = timeStr.split(":").map(Number);
 
     let nextRun = new Date(now);
     nextRun.setHours(targetHour, targetMinute, 0, 0);
