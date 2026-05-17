@@ -17,7 +17,6 @@
 "use strict";
 
 // Loads driver depends on platform
-if (process.platform === 'linux') {
-    if (process.arch === "arm64")
-        module.exports = require("./ads1115_arm64.node");
+if (process.platform === "linux") {
+  if (process.arch === "arm64") module.exports = require("./ads1115_arm64.node");
 }
