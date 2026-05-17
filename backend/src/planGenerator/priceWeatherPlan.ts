@@ -33,7 +33,7 @@ function formatISOWithTimezone(date: Date): string {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
 
-  const offset = -date.getTimezoneOffset();
+  const offset = date.getTimezoneOffset();
   const sign = offset <= 0 ? "+" : "-";
   const offsetHours = String(Math.abs(Math.floor(offset / 60))).padStart(2, "0");
   const offsetMinutes = String(Math.abs(offset % 60)).padStart(2, "0");
