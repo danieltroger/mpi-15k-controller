@@ -1,3 +1,26 @@
+export type PriceInfo = {
+  time_start: string;
+  time_end: string;
+  SEK_per_kWh: number;
+  EUR_per_kWh: number;
+};
+
+export type HourlyWeather = {
+  time: string;
+  sunshine_duration: number;
+  shortwave_radiation: number;
+  cloud_cover: number;
+};
+
+export type ProposedScheduleEntry = {
+  start_time: string;
+  end_time: string;
+  action: "buy" | "sell";
+  power_watts: number;
+  reason: string;
+  price_sek_per_kwh?: number;
+};
+
 export type Config = {
   usb_parameter_setting: {
     min_seconds_between_commands: number;
@@ -120,5 +143,25 @@ export type Config = {
         uid: number;
       };
     };
+  };
+  electricity_prices: {
+    price_zone: string;
+    plan_generation_time: string;
+    buy_when_price_below_sek: number;
+    sell_when_price_above_sek: number;
+    buy_when_free: boolean;
+  };
+  weather: {
+    latitude: number;
+    longitude: number;
+    min_sunshine_to_store_for_evening: number;
+    target_evening_soc: number;
+  };
+  proposed_schedule?: {
+    entries: ProposedScheduleEntry[];
+    generated_at: string;
+    based_on_soc: number;
+    prices_fetched: boolean;
+    weather_fetched: boolean;
   };
 };
