@@ -32,7 +32,7 @@ async function runPlanGeneration(
       logLog("Tomorrow's prices not yet available, waiting...");
       for (let i = 0; i < 24; i++) {
         await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
-        const retryPrices = await priceService.fetchPrices(currentConfig.electricity_prices?.price_zone);
+        const retryPrices = await priceService.fetchPrices(currentConfig.electricity_prices?.price_zone, true);
         if (retryPrices.tomorrow.length > 0) {
           break;
         }
@@ -116,9 +116,9 @@ export function stopPlanScheduler() {
 export function triggerManualPlanGeneration(
   configSignal: [Accessor<Config>, (value: Config | ((prev: Config) => Config)) => void],
   averageSOC: Accessor<number | undefined>
-) {
+): Promise<void> {
   const [config, setConfig] = configSignal;
-  runPlanGeneration(config, setConfig, averageSOC);
+  return runPlanGeneration(config, setConfig, averageSOC);
 }
 
 export function acceptProposedSchedule(
