@@ -50,12 +50,12 @@ export function error_text(): string;
  * @returns The scaled value (NaN on error)
  */
 export function scale(
-    in_min: number,
-    in_max: number,
-    out_min: number,
-    out_max: number,
-    value: number,
-    clamp?: boolean
+  in_min: number,
+  in_max: number,
+  out_min: number,
+  out_max: number,
+  value: number,
+  clamp?: boolean
 ): number;
 
 /**
@@ -90,11 +90,11 @@ export function scale(
  * ```
  */
 export function read(
-    port: number,
-    adr: number,
-    mux: number,
-    gain: number,
-    rate: number,
-    rawdata: boolean,
-    callback: (data?: number) => void
+  port: number,
+  adr: number,
+  mux: number,
+  gain: number,
+  rate: number,
+  rawdata: boolean,
+  callback: (data?: number) => void
 ): void;

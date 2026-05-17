@@ -26,7 +26,7 @@ export function reactiveBatteryVoltageTime() {
 
 export function reactiveAcInputVoltageR() {
   const { mqttValues } = useFromMqttProvider();
-  return  mqttValues.ac_input_voltage_r?.value;
+  return mqttValues.ac_input_voltage_r?.value;
 }
 
 export function reactiveAcInputVoltageS() {

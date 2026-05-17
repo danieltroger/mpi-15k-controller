@@ -13,7 +13,5 @@
     "noImplicitAny": true,
     "strict": true
   },
-  "include": [
-    "./backend/src/**/*.ts"
-  ]
+  "include": ["./backend/src/**/*.ts"]
 }

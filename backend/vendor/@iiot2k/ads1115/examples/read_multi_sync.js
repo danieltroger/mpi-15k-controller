@@ -9,18 +9,16 @@ const RAWDATA = false;
 
 const adc = require("../ads1115");
 
-var mux_arr = [adc.MUX_I0_GND, adc.MUX_I1_GND, adc.MUX_I2_GND, adc.MUX_I3_GND]; 
+var mux_arr = [adc.MUX_I0_GND, adc.MUX_I1_GND, adc.MUX_I2_GND, adc.MUX_I3_GND];
 
 var data = adc.read_multi_sync(
-        PORT,
-        adc.ADR_48, // address 0x48
-        mux_arr,
-        adc.GAIN_4096, // 4096 mV
-        adc.RATE_128, // 128 SPS
-        RAWDATA, // rawdata ?
-    );
+  PORT,
+  adc.ADR_48, // address 0x48
+  mux_arr,
+  adc.GAIN_4096, // 4096 mV
+  adc.RATE_128, // 128 SPS
+  RAWDATA // rawdata ?
+);
 
-if (data === undefined)
-    console.log(adc.error_text());
-else
-    console.log(data, "mV");
+if (data === undefined) console.log(adc.error_text());
+else console.log(data, "mV");
