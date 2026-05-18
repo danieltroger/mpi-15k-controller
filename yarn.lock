@@ -831,8 +831,8 @@ __metadata:
 
 "@iiot2k/ads1115@file:./vendor/@iiot2k/ads1115::locator=backend-0a1d4c%40workspace%3Abackend":
   version: 3.0.1
-  resolution: "@iiot2k/ads1115@file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=0ceb9c&locator=backend-0a1d4c%40workspace%3Abackend"
-  checksum: 10c0/a292acb0479305cf27da4972cdc63bf81c0ef490e063b728a3735ab8e3f716e5420d38ee9fe603d9cf2f9a735f805556f5d3aeebcc585b371b1b620d5572d439
+  resolution: "@iiot2k/ads1115@file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=6948b9&locator=backend-0a1d4c%40workspace%3Abackend"
+  checksum: 10c0/3a05b7198c670a9ba7ece190304a634fb0f7394fbaf6ca0146a0b97f8a8617fa02f04a3d04281878b3077d617f545e4a0d5dcf13df42e0e5999295a212c15faa
   conditions: os=linux & cpu=arm64
   languageName: node
   linkType: hard
