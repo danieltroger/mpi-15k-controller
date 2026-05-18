@@ -1087,10 +1087,10 @@ const RAW_RUNTIME_STATE =
       }]\
     ]],\
     ["@iiot2k/ads1115", [\
-      ["file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=0509cd&locator=backend-0a1d4c%40workspace%3Abackend", {\
-        "packageLocation": "./.yarn/unplugged/@iiot2k-ads1115-file-ba9601250a/node_modules/@iiot2k/ads1115/",\
+      ["file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=6948b9&locator=backend-0a1d4c%40workspace%3Abackend", {\
+        "packageLocation": "./.yarn/unplugged/@iiot2k-ads1115-file-6e49a8b712/node_modules/@iiot2k/ads1115/",\
         "packageDependencies": [\
-          ["@iiot2k/ads1115", "file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=0509cd&locator=backend-0a1d4c%40workspace%3Abackend"]\
+          ["@iiot2k/ads1115", "file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=6948b9&locator=backend-0a1d4c%40workspace%3Abackend"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -3180,7 +3180,7 @@ const RAW_RUNTIME_STATE =
         "packageDependencies": [\
           ["@bloomberg/record-tuple-polyfill", "patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch::version=0.0.4&hash=7bf1cb"],\
           ["@depict-ai/utilishared", "npm:2.4.7"],\
-          ["@iiot2k/ads1115", "file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=0509cd&locator=backend-0a1d4c%40workspace%3Abackend"],\
+          ["@iiot2k/ads1115", "file:./vendor/@iiot2k/ads1115#./vendor/@iiot2k/ads1115::hash=6948b9&locator=backend-0a1d4c%40workspace%3Abackend"],\
           ["@swc-node/register", "virtual:f49125e9076d65ce30a4dc0070290d25fabf3e8d632aff531c33779e6f245a2d72a35394ea0a333e93696ecff21472977831845a7d7addce0d62f448cd74ade3#npm:1.9.0"],\
           ["@swc/core", "virtual:f49125e9076d65ce30a4dc0070290d25fabf3e8d632aff531c33779e6f245a2d72a35394ea0a333e93696ecff21472977831845a7d7addce0d62f448cd74ade3#npm:1.4.17"],\
           ["@types/node", "npm:20.12.8"],\

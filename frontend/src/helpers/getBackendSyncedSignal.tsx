@@ -5,6 +5,43 @@ import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { isServer } from "solid-js/web";
 
+export async function sendBackendAction(action: string, key: string): Promise<boolean> {
+  const socket = useWebSocket();
+  const owner = getOwner();
+  if (!socket) return false;
+
+  try {
+    const [response] = (await socket.ensure_sent({
+      id: random_string(),
+      command: "action",
+      action,
+      key,
+    })) as [
+      {
+        id: string;
+        status: "ok" | "not-ok";
+        value: any;
+        message?: string;
+      },
+      string,
+    ];
+    if (response.status === "ok") {
+      return true;
+    }
+    console.error(response);
+    if (owner) {
+      await showToastWithMessage(owner, () => `Error: ${response.message}`);
+    }
+    return false;
+  } catch (e) {
+    console.error(e);
+    if (owner) {
+      await showToastWithMessage(owner, () => `Error: ${e}`);
+    }
+    return false;
+  }
+}
+
 export function getBackendSyncedSignal<T, default_value_was_provided extends boolean = false>(
   key: string,
   default_value?: T,
