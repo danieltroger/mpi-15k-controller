@@ -4,9 +4,19 @@ import { useTemperatures } from "../temperatureMeasuring/useTemperatures";
 import { Config } from "../config/config.types";
 
 let planGeneratorTrigger: (() => Promise<void>) | null = null;
+let acceptPlanTrigger: (() => Promise<void>) | null = null;
+let rejectPlanTrigger: (() => Promise<void>) | null = null;
 
 export function setPlanGeneratorTrigger(fn: () => Promise<void>) {
   planGeneratorTrigger = fn;
+}
+
+export function setAcceptPlanTrigger(fn: () => Promise<void>) {
+  acceptPlanTrigger = fn;
+}
+
+export function setRejectPlanTrigger(fn: () => Promise<void>) {
+  rejectPlanTrigger = fn;
 }
 
 export async function wsMessaging({
@@ -37,14 +47,22 @@ export async function wsMessaging({
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
-    const { command, key, value, id } = msg;
+    const { command, key, value, id, action } = msg;
 
-    if (command === "action" && key === "generate_plan") {
-      if (planGeneratorTrigger) {
+    if (command === "action") {
+      if (action === "generate_plan" && planGeneratorTrigger) {
         await planGeneratorTrigger();
         return JSON.stringify({ id, status: "ok", value: "Plan generated" });
       }
-      return JSON.stringify({ id, status: "not-ok", message: "Plan generator not available" });
+      if (action === "accept_plan" && acceptPlanTrigger) {
+        await acceptPlanTrigger();
+        return JSON.stringify({ id, status: "ok", value: "Plan accepted" });
+      }
+      if (action === "reject_plan" && rejectPlanTrigger) {
+        await rejectPlanTrigger();
+        return JSON.stringify({ id, status: "ok", value: "Plan rejected" });
+      }
+      return JSON.stringify({ id, status: "not-ok", message: `Unknown action: ${action}` });
     }
 
     if (command === "read" || command === "write") {

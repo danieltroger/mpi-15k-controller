@@ -19,13 +19,6 @@ const default_config: Config = {
     min_sunshine_to_store_for_evening: 3,
     target_evening_soc: 30,
   },
-  proposed_schedule: {
-    entries: [],
-    generated_at: "",
-    based_on_soc: 0,
-    prices_fetched: false,
-    weather_fetched: false,
-  },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
     schedule: {

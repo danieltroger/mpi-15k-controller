@@ -110,19 +110,22 @@ export async function generatePriceWeatherPlan(
         return time.getHours() === hour && dateStr === targetDateStr;
       });
       const sunshineHours = hourWeather ? hourWeather.sunshine_duration / 3600 : 0;
-      const hourSolarKwh = hourWeather ? (hourWeather.shortwave_radiation * 0.18 * 10) / 1000 : 0;
+      const PANEL_EFFICIENCY = 0.18;
+      const PANEL_AREA_M2 = 10;
+      const hourSolarKwh = hourWeather ? (hourWeather.shortwave_radiation * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000 : 0;
       cumulativeSolarKwh += hourSolarKwh;
 
       const socAtHour = estimateSOCAtHour(currentSOC, batteryCapacityWh, entries, scheduleTime, cumulativeSolarKwh);
 
+      const buyLimitSoc = config.scheduled_power_buying.only_buy_below_soc;
+      const sellLimitSoc = config.scheduled_power_selling.only_sell_above_soc;
       const isCheapPrice = price <= buy_when_price_below_sek;
       const isFreePrice = price <= 0.01 && buy_when_free;
       const isExpensivePrice = price >= sell_when_price_above_sek;
       const isEveningHour = hour >= 17 && hour <= 22;
-      const isMorningHour = hour >= 6 && hour <= 9;
 
       if (isFreePrice || isCheapPrice) {
-        if (socAtHour < target_evening_soc + 20) {
+        if (socAtHour < buyLimitSoc) {
           const startTimeISO = formatISOWithTimezone(scheduleTime);
           const endTimeISO = formatISOWithTimezone(new Date(scheduleTime.getTime() + 60 * 60 * 1000));
 
@@ -139,7 +142,7 @@ export async function generatePriceWeatherPlan(
         }
       }
 
-      if (isExpensivePrice && socAtHour > 20) {
+      if (isExpensivePrice && socAtHour > sellLimitSoc) {
         const isHighSunshineExpected =
           (dayOffset === 0 && todaysSunshineHours >= min_sunshine_to_store_for_evening) ||
           (dayOffset === 1 && tomorrowsSunshineHours >= min_sunshine_to_store_for_evening);
