@@ -110,34 +110,28 @@ function BuySellFormInner(props: {
     const owner = getOwner();
     if (!owner) return;
 
-    try {
-      await showToastWithMessage(owner, () => "Generating plan...");
-      await sendBackendAction("generate_plan", "plan");
+    await showToastWithMessage(owner, () => "Generating plan...");
+    const ok = await sendBackendAction("generate_plan", "plan");
+    if (ok) {
       await showToastWithMessage(owner, () => "Plan generated!");
-    } catch (e) {
-      await showToastWithMessage(owner, () => "Failed to generate plan");
     }
   };
 
   const handleAcceptPlan = async () => {
     const owner = getOwner();
     if (!owner) return;
-    try {
-      await sendBackendAction("accept_plan", "plan");
+    const ok = await sendBackendAction("accept_plan", "plan");
+    if (ok) {
       await showToastWithMessage(owner, () => "Plan accepted!");
-    } catch (e) {
-      await showToastWithMessage(owner, () => "Failed to accept plan");
     }
   };
 
   const handleRejectPlan = async () => {
     const owner = getOwner();
     if (!owner) return;
-    try {
-      await sendBackendAction("reject_plan", "plan");
+    const ok = await sendBackendAction("reject_plan", "plan");
+    if (ok) {
       await showToastWithMessage(owner, () => "Plan rejected");
-    } catch (e) {
-      await showToastWithMessage(owner, () => "Failed to reject plan");
     }
   };
 
