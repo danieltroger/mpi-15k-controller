@@ -21,18 +21,14 @@ const default_config: Config = {
   },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
-    schedule: {
-      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", power_watts: 1500 },
-    },
+    schedule: {},
     only_sell_above_soc: 13,
     start_selling_again_above_soc: 25,
     only_sell_above_voltage: 49.8,
     start_selling_again_above_voltage: 52.2,
   },
   scheduled_power_buying: {
-    schedule: {
-      "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", charging_power: 9000 },
-    },
+    schedule: {},
     only_buy_below_soc: 40,
     start_buying_again_below_soc: 15,
     max_grid_input_amperage: 21,
