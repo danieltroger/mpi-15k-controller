@@ -90,6 +90,7 @@ export async function generatePriceWeatherPlan(
     priceMap.set(key, p);
   });
 
+  let cumulativeSolarKwh = 0;
   for (let dayOffset = 0; dayOffset < 2; dayOffset++) {
     const targetDate = new Date(now);
     targetDate.setDate(targetDate.getDate() + dayOffset);
@@ -109,9 +110,10 @@ export async function generatePriceWeatherPlan(
         return time.getHours() === hour && dateStr === targetDateStr;
       });
       const sunshineHours = hourWeather ? hourWeather.sunshine_duration / 3600 : 0;
-      const solarGenerationkWh = hourWeather ? (hourWeather.shortwave_radiation * 0.18 * 10) / 1000 : 0;
+      const hourSolarKwh = hourWeather ? (hourWeather.shortwave_radiation * 0.18 * 10) / 1000 : 0;
+      cumulativeSolarKwh += hourSolarKwh;
 
-      const socAtHour = estimateSOCAtHour(currentSOC, batteryCapacityWh, entries, scheduleTime, solarGenerationkWh);
+      const socAtHour = estimateSOCAtHour(currentSOC, batteryCapacityWh, entries, scheduleTime, cumulativeSolarKwh);
 
       const isCheapPrice = price <= buy_when_price_below_sek;
       const isFreePrice = price <= 0.01 && buy_when_free;
