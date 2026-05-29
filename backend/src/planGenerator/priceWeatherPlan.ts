@@ -112,7 +112,9 @@ export async function generatePriceWeatherPlan(
       const sunshineHours = hourWeather ? hourWeather.sunshine_duration / 3600 : 0;
       const PANEL_EFFICIENCY = 0.18;
       const PANEL_AREA_M2 = 10;
-      const hourSolarKwh = hourWeather ? (hourWeather.shortwave_radiation * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000 : 0;
+      const hourSolarKwh = hourWeather
+        ? (hourWeather.shortwave_radiation * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000
+        : 0;
       cumulativeSolarKwh += hourSolarKwh;
 
       const socAtHour = estimateSOCAtHour(currentSOC, batteryCapacityWh, entries, scheduleTime, cumulativeSolarKwh);
