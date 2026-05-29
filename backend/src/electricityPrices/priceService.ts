@@ -10,22 +10,24 @@ interface CachedPrices {
 }
 
 class ElectricityPriceService {
-  private cachedPrices: CachedPrices | null = null;
-  private isFetching = false;
+  private caches = new Map<string, CachedPrices>();
+  private fetching = new Set<string>();
   private fetchListeners: (() => void)[] = [];
 
   async fetchPrices(priceZone: string = "SE3", forceRefresh: boolean = false): Promise<CachedPrices> {
-    if (!forceRefresh && this.cachedPrices && this.isFresh(this.cachedPrices.lastFetched)) {
-      return this.cachedPrices;
+    const cache = this.caches.get(priceZone);
+    if (!forceRefresh && cache && this.isFresh(cache.lastFetched)) {
+      return cache;
     }
 
-    if (!forceRefresh && this.isFetching) {
+    if (!forceRefresh && this.fetching.has(priceZone)) {
       return new Promise(resolve => {
-        this.fetchListeners.push(() => resolve(this.cachedPrices!));
+        const existing = () => resolve(this.caches.get(priceZone)!);
+        this.fetchListeners.push(existing);
       });
     }
 
-    this.isFetching = true;
+    this.fetching.add(priceZone);
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -60,21 +62,22 @@ class ElectricityPriceService {
         logLog("Tomorrow's prices not yet available (typical before 13:00)");
       }
 
-      this.cachedPrices = {
+      this.caches.set(priceZone, {
         today,
         tomorrow,
         lastFetched: new Date(),
-      };
+      });
 
+      this.fetching.delete(priceZone);
       this.fetchListeners.forEach(cb => cb());
       this.fetchListeners = [];
 
-      return this.cachedPrices;
+      return this.caches.get(priceZone)!;
     } catch (e) {
       errorLog("Error fetching electricity prices:", e);
       throw e;
     } finally {
-      this.isFetching = false;
+      this.fetching.delete(priceZone);
     }
   }
 
@@ -128,8 +131,8 @@ class ElectricityPriceService {
     return prices.reduce((sum, p) => sum + p.SEK_per_kWh, 0) / prices.length;
   }
 
-  getCachedPrices(): CachedPrices | null {
-    return this.cachedPrices;
+  getCachedPrices(priceZone: string = "SE3"): CachedPrices | null {
+    return this.caches.get(priceZone) || null;
   }
 
   async waitForTomorrowPrices(priceZone: string = "SE3", maxAttempts: number = 24): Promise<boolean> {

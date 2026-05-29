@@ -122,62 +122,8 @@ function BuySellFormInner(props: {
   const handleAcceptPlan = async () => {
     const owner = getOwner();
     if (!owner) return;
-
     try {
-      const c = props.getConfig();
-      const ps = c.proposed_schedule;
-      if (!ps || !ps.entries.length) return;
-
-      const nowISO = new Date().toISOString();
-
-      const buyingSchedule = c.scheduled_power_buying.schedule;
-      const sellingSchedule = c.scheduled_power_selling.schedule;
-
-      const filteredBuying: typeof buyingSchedule = {};
-      const filteredSelling: typeof sellingSchedule = {};
-
-      Object.entries(buyingSchedule).forEach(([key, value]) => {
-        if (value.end_time > nowISO) filteredBuying[key] = value;
-      });
-      Object.entries(sellingSchedule).forEach(([key, value]) => {
-        if (value.end_time > nowISO) filteredSelling[key] = value;
-      });
-
-      const newConfig = {
-        ...c,
-        scheduled_power_buying: {
-          ...c.scheduled_power_buying,
-          schedule: { ...filteredBuying },
-        },
-        scheduled_power_selling: {
-          ...c.scheduled_power_selling,
-          schedule: { ...filteredSelling },
-        },
-      };
-
-      ps.entries.forEach((entry: ProposedScheduleEntry) => {
-        if (entry.action === "buy") {
-          newConfig.scheduled_power_buying.schedule[entry.start_time] = {
-            end_time: entry.end_time,
-            charging_power: entry.power_watts,
-          };
-        } else if (entry.action === "sell") {
-          newConfig.scheduled_power_selling.schedule[entry.start_time] = {
-            end_time: entry.end_time,
-            power_watts: entry.power_watts,
-          };
-        }
-      });
-
-      newConfig.proposed_schedule = {
-        entries: [],
-        generated_at: "",
-        based_on_soc: 0,
-        prices_fetched: false,
-        weather_fetched: false,
-      };
-
-      await props.setConfig(newConfig);
+      await sendBackendAction("accept_plan", "plan");
       await showToastWithMessage(owner, () => "Plan accepted!");
     } catch (e) {
       await showToastWithMessage(owner, () => "Failed to accept plan");
@@ -187,20 +133,8 @@ function BuySellFormInner(props: {
   const handleRejectPlan = async () => {
     const owner = getOwner();
     if (!owner) return;
-
     try {
-      const c = props.getConfig();
-      const updatedConfig = {
-        ...c,
-        proposed_schedule: {
-          entries: [],
-          generated_at: "",
-          based_on_soc: 0,
-          prices_fetched: false,
-          weather_fetched: false,
-        },
-      };
-      await props.setConfig(updatedConfig);
+      await sendBackendAction("reject_plan", "plan");
       await showToastWithMessage(owner, () => "Plan rejected");
     } catch (e) {
       await showToastWithMessage(owner, () => "Failed to reject plan");

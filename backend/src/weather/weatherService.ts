@@ -115,13 +115,12 @@ class WeatherService {
   getEstimatedSolarGeneration(forecast: WeatherForecast, hours: number = 24): number {
     const upcomingHours = this.getUpcomingHours(forecast, hours);
 
-    const WATTS_PER_WATT_PER_sqm = 0.18;
-    const PANEL_SIZE_KW = 10;
+    const PANEL_EFFICIENCY = 0.18;
+    const PANEL_AREA_M2 = 10;
 
     const totalWh = upcomingHours.reduce((sum, h) => {
       const radiationW = h.shortwave_radiation;
-      const hoursFraction = 1;
-      const generatedWh = (radiationW * WATTS_PER_WATT_PER_sqm * PANEL_SIZE_KW * hoursFraction) / 1000;
+      const generatedWh = (radiationW * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000;
       return sum + generatedWh;
     }, 0);
 
@@ -144,10 +143,10 @@ class WeatherService {
 
     if (!hourData) return null;
 
-    const WATTS_PER_WATT_PER_sqm = 0.18;
-    const PANEL_SIZE_KW = 10;
+    const PANEL_EFFICIENCY = 0.18;
+    const PANEL_AREA_M2 = 10;
     const radiationW = hourData.shortwave_radiation;
-    return (radiationW * WATTS_PER_WATT_PER_sqm * PANEL_SIZE_KW) / 1000;
+    return (radiationW * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000;
   }
 
   getCachedForecast(): WeatherForecast | null {

@@ -31,7 +31,7 @@ import {
   acceptProposedSchedule,
   rejectProposedSchedule,
 } from "./planScheduler/planScheduler";
-import { setPlanGeneratorTrigger } from "./websocketBackend/wsMessaging";
+import { setPlanGeneratorTrigger, setAcceptPlanTrigger, setRejectPlanTrigger } from "./websocketBackend/wsMessaging";
 import { runWithOwner } from "solid-js";
 
 while (true) {
@@ -126,8 +126,18 @@ function main() {
               averageSOC,
             } = useBatteryValues(configResourceValue, currentPower);
 
-            createEffect(() => {
-              startPlanScheduler(configResourceValue, averageSOC);
+            startPlanScheduler(configResourceValue, averageSOC);
+
+            runWithOwner(owner, () => {
+              setPlanGeneratorTrigger(async () => {
+                await triggerManualPlanGeneration(configResourceValue, averageSOC);
+              });
+              setAcceptPlanTrigger(async () => {
+                acceptProposedSchedule(configResourceValue);
+              });
+              setRejectPlanTrigger(async () => {
+                rejectProposedSchedule(configResourceValue);
+              });
             });
 
             const temperatures = useTemperatures(config);
@@ -224,12 +234,6 @@ function main() {
                 },
               })
             );
-
-            runWithOwner(owner, () => {
-              setPlanGeneratorTrigger(async () => {
-                await triggerManualPlanGeneration(configResourceValue, averageSOC);
-              });
-            });
 
             createEffect(() => {
               if (elpatronSwitchingErrored()) return;
