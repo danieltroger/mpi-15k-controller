@@ -178,7 +178,12 @@ function BuySellFormInner(props: {
                   {entry => (
                     <tr>
                       <td>
-                        {new Date(entry.start_time).toLocaleString("sv-SE", { hour: "2-digit", minute: "2-digit" })}
+                        {new Date(entry.start_time).toLocaleString("sv-SE", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </td>
                       <td
                         class={entry.action === "buy" ? "buy-sell-config__action-buy" : "buy-sell-config__action-sell"}

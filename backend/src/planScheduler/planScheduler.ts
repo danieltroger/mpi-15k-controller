@@ -106,7 +106,7 @@ export function startPlanScheduler(
   scheduleNextRun();
 }
 
-export function stopPlanScheduler() {
+function stopPlanScheduler() {
   if (scheduledTimeout) {
     clearTimeout(scheduledTimeout);
     scheduledTimeout = null;

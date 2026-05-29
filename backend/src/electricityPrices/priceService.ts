@@ -12,7 +12,7 @@ interface CachedPrices {
 class ElectricityPriceService {
   private caches = new Map<string, CachedPrices>();
   private fetching = new Set<string>();
-  private fetchListeners: (() => void)[] = [];
+  private fetchListeners = new Map<string, (() => void)[]>();
 
   async fetchPrices(priceZone: string = "SE3", forceRefresh: boolean = false): Promise<CachedPrices> {
     const cache = this.caches.get(priceZone);
@@ -23,7 +23,9 @@ class ElectricityPriceService {
     if (!forceRefresh && this.fetching.has(priceZone)) {
       return new Promise(resolve => {
         const existing = () => resolve(this.caches.get(priceZone)!);
-        this.fetchListeners.push(existing);
+        const listeners = this.fetchListeners.get(priceZone) || [];
+        listeners.push(existing);
+        this.fetchListeners.set(priceZone, listeners);
       });
     }
 
@@ -69,8 +71,8 @@ class ElectricityPriceService {
       });
 
       this.fetching.delete(priceZone);
-      this.fetchListeners.forEach(cb => cb());
-      this.fetchListeners = [];
+      this.fetchListeners.get(priceZone)?.forEach(cb => cb());
+      this.fetchListeners.delete(priceZone);
 
       return this.caches.get(priceZone)!;
     } catch (e) {
@@ -135,17 +137,6 @@ class ElectricityPriceService {
     return this.caches.get(priceZone) || null;
   }
 
-  async waitForTomorrowPrices(priceZone: string = "SE3", maxAttempts: number = 24): Promise<boolean> {
-    for (let i = 0; i < maxAttempts; i++) {
-      const prices = await this.fetchPrices(priceZone);
-      if (prices.tomorrow.length > 0) {
-        return true;
-      }
-      logLog(`Tomorrow's prices not yet available, waiting... (attempt ${i + 1}/${maxAttempts})`);
-      await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
-    }
-    return false;
-  }
 }
 
 export const priceService = new ElectricityPriceService();

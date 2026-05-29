@@ -35,8 +35,9 @@ function formatISOWithTimezone(date: Date): string {
 
   const offset = date.getTimezoneOffset();
   const sign = offset <= 0 ? "+" : "-";
-  const offsetHours = String(Math.abs(Math.floor(offset / 60))).padStart(2, "0");
-  const offsetMinutes = String(Math.abs(offset % 60)).padStart(2, "0");
+  const absOffset = Math.abs(offset);
+  const offsetHours = String(Math.floor(absOffset / 60)).padStart(2, "0");
+  const offsetMinutes = String(absOffset % 60).padStart(2, "0");
   const tz = `${sign}${offsetHours}:${offsetMinutes}`;
 
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.000${tz}`;
@@ -74,7 +75,7 @@ export async function generatePriceWeatherPlan(
   const entries: ProposedScheduleEntry[] = [];
   const now = new Date();
 
-  const todaysSunshineHours = weather ? weatherService.getTodaysSunshineHours(weather) : 0;
+  const todaysSunshineHours = weather ? weatherService.getRemainingSunshineHoursToday(weather) : 0;
   const tomorrowsSunshineHours = weather ? weatherService.getTomorrowsSunshineHours(weather) : 0;
 
   const allPrices = prices ? [...prices.today, ...prices.tomorrow] : [];
@@ -115,9 +116,9 @@ export async function generatePriceWeatherPlan(
       const hourSolarKwh = hourWeather
         ? (hourWeather.shortwave_radiation * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000
         : 0;
-      cumulativeSolarKwh += hourSolarKwh;
 
       const socAtHour = estimateSOCAtHour(currentSOC, batteryCapacityWh, entries, scheduleTime, cumulativeSolarKwh);
+      cumulativeSolarKwh += hourSolarKwh;
 
       const buyLimitSoc = config.scheduled_power_buying.only_buy_below_soc;
       const sellLimitSoc = config.scheduled_power_selling.only_sell_above_soc;

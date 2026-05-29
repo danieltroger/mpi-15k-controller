@@ -81,7 +81,7 @@ class WeatherService {
     });
   }
 
-  getTodaysSunshineHours(forecast: WeatherForecast): number {
+  getRemainingSunshineHoursToday(forecast: WeatherForecast): number {
     const now = new Date();
     const todayEnd = new Date(now);
     todayEnd.setHours(23, 59, 59, 999);
@@ -127,27 +127,6 @@ class WeatherService {
     return totalWh;
   }
 
-  getHourlySolarEstimate(forecast: WeatherForecast, hour: number): number | null {
-    const now = new Date();
-    const targetTime = new Date(now);
-    targetTime.setHours(hour, 0, 0, 0);
-
-    if (targetTime < now) {
-      targetTime.setDate(targetTime.getDate() + 1);
-    }
-
-    const hourData = forecast.hourly.find(h => {
-      const time = new Date(h.time);
-      return time.getHours() === hour && time >= now;
-    });
-
-    if (!hourData) return null;
-
-    const PANEL_EFFICIENCY = 0.18;
-    const PANEL_AREA_M2 = 10;
-    const radiationW = hourData.shortwave_radiation;
-    return (radiationW * PANEL_EFFICIENCY * PANEL_AREA_M2) / 1000;
-  }
 
   getCachedForecast(): WeatherForecast | null {
     return this.cachedForecast;
