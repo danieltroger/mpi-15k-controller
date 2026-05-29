@@ -115,10 +115,7 @@ function BuySellFormInner(props: {
       await sendBackendAction("generate_plan", "plan");
       await showToastWithMessage(owner, () => "Plan generated!");
     } catch (e) {
-      const owner = getOwner();
-      if (owner) {
-        await showToastWithMessage(owner, () => "Failed to generate plan");
-      }
+      await showToastWithMessage(owner, () => "Failed to generate plan");
     }
   };
 
@@ -131,29 +128,43 @@ function BuySellFormInner(props: {
       const ps = c.proposed_schedule;
       if (!ps || !ps.entries.length) return;
 
-      const newConfig = { ...c };
+      const nowISO = new Date().toISOString();
+
+      const buyingSchedule = c.scheduled_power_buying.schedule;
+      const sellingSchedule = c.scheduled_power_selling.schedule;
+
+      const filteredBuying: typeof buyingSchedule = {};
+      const filteredSelling: typeof sellingSchedule = {};
+
+      Object.entries(buyingSchedule).forEach(([key, value]) => {
+        if (value.end_time > nowISO) filteredBuying[key] = value;
+      });
+      Object.entries(sellingSchedule).forEach(([key, value]) => {
+        if (value.end_time > nowISO) filteredSelling[key] = value;
+      });
+
+      const newConfig = {
+        ...c,
+        scheduled_power_buying: {
+          ...c.scheduled_power_buying,
+          schedule: { ...filteredBuying },
+        },
+        scheduled_power_selling: {
+          ...c.scheduled_power_selling,
+          schedule: { ...filteredSelling },
+        },
+      };
+
       ps.entries.forEach((entry: ProposedScheduleEntry) => {
         if (entry.action === "buy") {
-          newConfig.scheduled_power_buying = {
-            ...newConfig.scheduled_power_buying,
-            schedule: {
-              ...newConfig.scheduled_power_buying.schedule,
-              [entry.start_time]: {
-                end_time: entry.end_time,
-                charging_power: entry.power_watts,
-              },
-            },
+          newConfig.scheduled_power_buying.schedule[entry.start_time] = {
+            end_time: entry.end_time,
+            charging_power: entry.power_watts,
           };
         } else if (entry.action === "sell") {
-          newConfig.scheduled_power_selling = {
-            ...newConfig.scheduled_power_selling,
-            schedule: {
-              ...newConfig.scheduled_power_selling.schedule,
-              [entry.start_time]: {
-                end_time: entry.end_time,
-                power_watts: entry.power_watts,
-              },
-            },
+          newConfig.scheduled_power_selling.schedule[entry.start_time] = {
+            end_time: entry.end_time,
+            power_watts: entry.power_watts,
           };
         }
       });
@@ -169,10 +180,7 @@ function BuySellFormInner(props: {
       await props.setConfig(newConfig);
       await showToastWithMessage(owner, () => "Plan accepted!");
     } catch (e) {
-      const owner = getOwner();
-      if (owner) {
-        await showToastWithMessage(owner, () => "Failed to accept plan");
-      }
+      await showToastWithMessage(owner, () => "Failed to accept plan");
     }
   };
 
@@ -195,10 +203,7 @@ function BuySellFormInner(props: {
       await props.setConfig(updatedConfig);
       await showToastWithMessage(owner, () => "Plan rejected");
     } catch (e) {
-      const owner = getOwner();
-      if (owner) {
-        await showToastWithMessage(owner, () => "Failed to reject plan");
-      }
+      await showToastWithMessage(owner, () => "Failed to reject plan");
     }
   };
 
