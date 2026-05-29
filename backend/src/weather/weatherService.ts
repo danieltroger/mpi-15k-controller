@@ -101,7 +101,6 @@ class WeatherService {
     tomorrowStart.setHours(0, 0, 0, 0);
 
     const tomorrowEnd = new Date(tomorrowStart);
-    tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
     tomorrowEnd.setHours(23, 59, 59, 999);
 
     const tomorrowsHours = forecast.hourly.filter(h => {

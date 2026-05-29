@@ -106,13 +106,6 @@ export function startPlanScheduler(
   scheduleNextRun();
 }
 
-function stopPlanScheduler() {
-  if (scheduledTimeout) {
-    clearTimeout(scheduledTimeout);
-    scheduledTimeout = null;
-  }
-}
-
 export function triggerManualPlanGeneration(
   configSignal: [Accessor<Config>, (value: Config | ((prev: Config) => Config)) => void],
   averageSOC: Accessor<number | undefined>
@@ -124,7 +117,7 @@ export function triggerManualPlanGeneration(
 export function acceptProposedSchedule(
   configSignal: [Accessor<Config>, (value: Config | ((prev: Config) => Config)) => void]
 ) {
-  const [config, setConfig] = configSignal;
+  const [, setConfig] = configSignal;
 
   setConfig(prev => {
     const proposed = prev.proposed_schedule;
