@@ -136,7 +136,6 @@ class ElectricityPriceService {
   getCachedPrices(priceZone: string = "SE3"): CachedPrices | null {
     return this.caches.get(priceZone) || null;
   }
-
 }
 
 export const priceService = new ElectricityPriceService();
