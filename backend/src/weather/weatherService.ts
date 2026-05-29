@@ -127,7 +127,6 @@ class WeatherService {
     return totalWh;
   }
 
-
   getCachedForecast(): WeatherForecast | null {
     return this.cachedForecast;
   }
