@@ -41,7 +41,7 @@ The `rate` parameter determines the conversion data rate in samples per second (
 - **_out_min:_** `<number>` scale output min value<br>
 - **_out_max:_** `<number>` scale output max value<br>
 - **_value:_** `<number>` value to scale<br>
-- **_clamp:_** `<boolean>` if true clamp value to in_min and in_max.<br> **_return:_** `<number>` scaled value, `undefined` on error.<br>
+- **_clamp:_** `<boolean>` if true clamp value to in*min and in_max.<br> \*\*\_return:*\*\* `<number>` scaled value, `undefined` on error.<br>
 
 Scale adc value from given edges.<br> in_min must be different to in_max.<br> out_min must be different to out_max.<br>
 
