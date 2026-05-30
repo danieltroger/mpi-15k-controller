@@ -1,7 +1,7 @@
 import { Server, WebSocket, WebSocketServer } from "ws";
 import { errorLog, logLog, warnLog } from "../utilities/logging";
 import { IncomingMessage } from "http";
-import { catchify, wait } from "@depict-ai/utilishared/latest";
+import { catchify, wait } from "../vendor/depictUtilishared";
 import { getOwner, onCleanup, runWithOwner } from "solid-js";
 
 const max_connection_age = 1000 * 60 * 60; //ms

@@ -5,7 +5,7 @@ import { errorLog, logLog } from "../utilities/logging";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
 import { useNow } from "../utilities/useNow";
-import { random_string } from "@depict-ai/utilishared/latest";
+import { random_string } from "../vendor/depictUtilishared";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,

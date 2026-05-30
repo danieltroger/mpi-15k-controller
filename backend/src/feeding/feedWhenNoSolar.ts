@@ -2,7 +2,7 @@ import { get_config_object } from "../config/config";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
 import { errorLog, logLog } from "../utilities/logging";
 import { useNow } from "../utilities/useNow";
-import { catchify } from "@depict-ai/utilishared/latest";
+import { catchify } from "../vendor/depictUtilishared";
 import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
 import { appendFile } from "fs/promises";
 import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";

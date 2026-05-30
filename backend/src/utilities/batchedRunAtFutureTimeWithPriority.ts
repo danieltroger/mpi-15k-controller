@@ -1,4 +1,4 @@
-import { catchify } from "@depict-ai/utilishared/latest";
+import { catchify } from "../vendor/depictUtilishared";
 import { onCleanup } from "solid-js";
 
 const timeoutBatches = new Map<

@@ -1,5 +1,5 @@
 import { Accessor, createContext, createSignal, JSX, onCleanup, useContext } from "solid-js";
-import { catchify } from "@depict-ai/utilishared/latest";
+import { catchify } from "../vendor/depictUtilishared";
 
 const NowContext = createContext<Accessor<number>>();
 

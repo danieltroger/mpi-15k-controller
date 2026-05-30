@@ -1,6 +1,6 @@
 import { Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { WebSocket } from "ws";
-import { DepictAPIWS, random_string, wait } from "@depict-ai/utilishared/latest";
+import { DepictAPIWS, random_string, wait } from "./vendor/depictUtilishared";
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers";
