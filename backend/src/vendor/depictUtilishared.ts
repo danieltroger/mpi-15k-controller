@@ -45,9 +45,7 @@ import { WebSocket } from "ws";
 // In node, debug logging is on when DEBUG=true (or NODE_ENV=development),
 // unless STRIP_DEBUG=true. (The browser-only branches are irrelevant here.)
 const is_debug =
-  process.env.STRIP_DEBUG === "true"
-    ? false
-    : process.env.DEBUG === "true" || process.env.NODE_ENV === "development";
+  process.env.STRIP_DEBUG === "true" ? false : process.env.DEBUG === "true" || process.env.NODE_ENV === "development";
 
 function decorated_log(console_command: (...args: any[]) => void, ...args: any[]) {
   if (is_debug) console_command(new Date().toISOString(), ...args);
@@ -73,12 +71,7 @@ function report(msg: any, severity: string, input_data: Record<string, any> = {}
   const has_human_readable_name = Array.isArray(msg);
   if (is_debug)
     // eslint-disable-next-line no-console
-    console.info(
-      `[sentry-${severity}]:`,
-      ...(has_human_readable_name ? [...msg].reverse() : [msg]),
-      "\n",
-      input_data
-    );
+    console.info(`[sentry-${severity}]:`, ...(has_human_readable_name ? [...msg].reverse() : [msg]), "\n", input_data);
 }
 
 /**
@@ -138,7 +131,7 @@ function deparallelize<T extends (...args: any[]) => any>(the_function: T) {
     // Double await: if `busy` is true it must still be true two ticks later.
     // Fix for the case where a promise that finalizes immediately is passed.
     // https://javascript.info/microtask-queue
-    if (!busy || !((await await busy), busy)) {
+    if (!busy || !(await await busy, busy)) {
       busy = true;
       const to_finally = catchify(the_function)(...args) as Promise<any>;
       current_promise = to_finally.finally(() => (busy = false));
@@ -158,7 +151,7 @@ export function deparallelize_no_drop<T extends (...args: any[]) => any>(the_fun
   let current_promise: Promise<any> | undefined;
   const wrapped_fn = catchify(async (...args: Parameters<T>) => {
     // Double await, see deparallelize above.
-    if (!busy || !((await await busy), busy)) {
+    if (!busy || !(await await busy, busy)) {
       busy = true;
       const to_finally = catchify(the_function)(...args) as Promise<any>;
       current_promise = to_finally.finally(() => {
@@ -442,7 +435,8 @@ export class DepictAPIWS extends AutoReconnectingWS {
           continue;
         } else if (status == "not-ok") dwarn("Got reply not-ok reply from server for event!", payload, reply);
         else if (status == "ok") {
-          if (process.env.BUILD_TARGET !== "node") dlog(`Successfully sent ${payload?.event?.type} (WS)`, payload, reply);
+          if (process.env.BUILD_TARGET !== "node")
+            dlog(`Successfully sent ${payload?.event?.type} (WS)`, payload, reply);
         } else dwarn("Strange reply from WSS server to", payload, ":", reply);
         stop_sending();
         return [reply, data];
@@ -456,7 +450,10 @@ export class DepictAPIWS extends AutoReconnectingWS {
     if (option_retry_ms) this.#initial_retry_ms = option_retry_ms;
     this.addEventListener("message", catchify(this.#msg_ipns.resolve as any));
     ["open", "error", "message"].forEach(event =>
-      this.addEventListener(event, catchify(() => (this.#connection_last_active = +new Date())))
+      this.addEventListener(
+        event,
+        catchify(() => (this.#connection_last_active = +new Date()))
+      )
     );
   }
 }
