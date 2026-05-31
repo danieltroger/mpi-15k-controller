@@ -10,26 +10,26 @@ interface CachedPrices {
 }
 
 class ElectricityPriceService {
-  private caches = new Map<string, CachedPrices>();
-  private fetching = new Set<string>();
-  private fetchListeners = new Map<string, (() => void)[]>();
+  #caches = new Map<string, CachedPrices>();
+  #fetching = new Set<string>();
+  #fetchListeners = new Map<string, (() => void)[]>();
 
   async fetchPrices(priceZone: string = "SE3", forceRefresh: boolean = false): Promise<CachedPrices> {
-    const cache = this.caches.get(priceZone);
-    if (!forceRefresh && cache && this.isFresh(cache.lastFetched)) {
+    const cache = this.#caches.get(priceZone);
+    if (!forceRefresh && cache && this.#isFresh(cache.lastFetched)) {
       return cache;
     }
 
-    if (!forceRefresh && this.fetching.has(priceZone)) {
+    if (!forceRefresh && this.#fetching.has(priceZone)) {
       return new Promise(resolve => {
-        const existing = () => resolve(this.caches.get(priceZone)!);
-        const listeners = this.fetchListeners.get(priceZone) || [];
+        const existing = () => resolve(this.#caches.get(priceZone)!);
+        const listeners = this.#fetchListeners.get(priceZone) || [];
         listeners.push(existing);
-        this.fetchListeners.set(priceZone, listeners);
+        this.#fetchListeners.set(priceZone, listeners);
       });
     }
 
-    this.fetching.add(priceZone);
+    this.#fetching.add(priceZone);
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -64,26 +64,26 @@ class ElectricityPriceService {
         logLog("Tomorrow's prices not yet available (typical before 13:00)");
       }
 
-      this.caches.set(priceZone, {
+      this.#caches.set(priceZone, {
         today,
         tomorrow,
         lastFetched: new Date(),
       });
 
-      this.fetching.delete(priceZone);
-      this.fetchListeners.get(priceZone)?.forEach(cb => cb());
-      this.fetchListeners.delete(priceZone);
+      this.#fetching.delete(priceZone);
+      this.#fetchListeners.get(priceZone)?.forEach(cb => cb());
+      this.#fetchListeners.delete(priceZone);
 
-      return this.caches.get(priceZone)!;
+      return this.#caches.get(priceZone)!;
     } catch (e) {
       errorLog("Error fetching electricity prices:", e);
       throw e;
     } finally {
-      this.fetching.delete(priceZone);
+      this.#fetching.delete(priceZone);
     }
   }
 
-  private isFresh(lastFetched: Date): boolean {
+  #isFresh(lastFetched: Date): boolean {
     const now = new Date();
     const minutesSince = (now.getTime() - lastFetched.getTime()) / (1000 * 60);
     return minutesSince < 30;
@@ -134,7 +134,7 @@ class ElectricityPriceService {
   }
 
   getCachedPrices(priceZone: string = "SE3"): CachedPrices | null {
-    return this.caches.get(priceZone) || null;
+    return this.#caches.get(priceZone) || null;
   }
 }
 

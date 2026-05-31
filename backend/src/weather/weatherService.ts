@@ -9,22 +9,22 @@ interface WeatherForecast {
 }
 
 class WeatherService {
-  private cachedForecast: WeatherForecast | null = null;
-  private isFetching = false;
-  private fetchListeners: (() => void)[] = [];
+  #cachedForecast: WeatherForecast | null = null;
+  #isFetching = false;
+  #fetchListeners: (() => void)[] = [];
 
   async fetchForecast(latitude: number, longitude: number, forecastDays: number = 2): Promise<WeatherForecast> {
-    if (this.cachedForecast && this.isFresh(this.cachedForecast.lastFetched)) {
-      return this.cachedForecast;
+    if (this.#cachedForecast && this.#isFresh(this.#cachedForecast.lastFetched)) {
+      return this.#cachedForecast;
     }
 
-    if (this.isFetching) {
+    if (this.#isFetching) {
       return new Promise(resolve => {
-        this.fetchListeners.push(() => resolve(this.cachedForecast!));
+        this.#fetchListeners.push(() => resolve(this.#cachedForecast!));
       });
     }
 
-    this.isFetching = true;
+    this.#isFetching = true;
 
     const url = new URL(WEATHER_API_BASE);
     url.searchParams.set("latitude", latitude.toString());
@@ -50,24 +50,24 @@ class WeatherService {
 
       logLog(`Fetched ${hourly.length} hourly weather records`);
 
-      this.cachedForecast = {
+      this.#cachedForecast = {
         hourly,
         lastFetched: new Date(),
       };
 
-      this.fetchListeners.forEach(cb => cb());
-      this.fetchListeners = [];
+      this.#fetchListeners.forEach(cb => cb());
+      this.#fetchListeners = [];
 
-      return this.cachedForecast;
+      return this.#cachedForecast;
     } catch (e) {
       errorLog("Error fetching weather forecast:", e);
       throw e;
     } finally {
-      this.isFetching = false;
+      this.#isFetching = false;
     }
   }
 
-  private isFresh(lastFetched: Date): boolean {
+  #isFresh(lastFetched: Date): boolean {
     const now = new Date();
     const minutesSince = (now.getTime() - lastFetched.getTime()) / (1000 * 60);
     return minutesSince < 60;
@@ -127,7 +127,7 @@ class WeatherService {
   }
 
   getCachedForecast(): WeatherForecast | null {
-    return this.cachedForecast;
+    return this.#cachedForecast;
   }
 }
 
