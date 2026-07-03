@@ -1,0 +1,29 @@
+name: Planner tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "backend/src/autoTrading/**"
+      - "backend/src/config/**"
+      - ".github/workflows/planner-test.yml"
+
+jobs:
+  planner-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run planner scenario tests
+        working-directory: backend
+        run: yarn node --loader @swc-node/register/esm src/autoTrading/planner.selftest.ts
