@@ -237,6 +237,8 @@ export function useAutoTrader({
         sellBonusSekPerKwh: at.sell_bonus_sek_per_kwh,
         minBuySavingSekPerKwh: at.min_buy_saving_sek_per_kwh,
         baselineFeedWatts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
+        sellRampMinutes: at.sell_ramp_minutes,
+        allowArbitrageBuying: at.allow_arbitrage_buying,
       },
     };
   }

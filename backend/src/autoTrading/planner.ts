@@ -37,6 +37,10 @@ export type PlannerKnobs = {
   sellBonusSekPerKwh: number;
   minBuySavingSekPerKwh: number;
   baselineFeedWatts: number;
+  /** The inverter ramps grid feed-in slowly (grid safety) — minutes from 0 to full export power */
+  sellRampMinutes: number;
+  /** Also buy purely to re-sell later when the spread beats fees + losses + margin */
+  allowArbitrageBuying: boolean;
 };
 
 export type PlannerInput = {
@@ -170,6 +174,9 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
   let importWh = 0;
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
+  // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
+  // so the first sellRampMinutes of every (re)start deliver reduced power.
+  let sellRunMinutes = 0;
 
   for (let i = 0; i < slots.length; i++) {
     const s = slots[i];
@@ -192,13 +199,29 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
       boughtWh += buySetW * s.durationH;
     }
 
-    if (sellSetW > 0 && socWh > floorRuntimeWh) {
+    const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
+    if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
       exportW = Math.min(sellSetW, k.batteryMaxDischargeWatts + s.pvW - s.houseW - parasiticW);
       exportW = Math.max(exportW, 0);
-    } else if (buySetW === 0 && s.pvW < s.houseW + parasiticW + 380) {
-      // Baseline "feed when no solar" that nets out the inverter's constant grid draw
-      exportW = k.baselineFeedWatts;
+      // Average ramp factor over this slot: linear 0→100% across the first sellRampMinutes of the run
+      const rampMin = k.sellRampMinutes;
+      if (rampMin > 0 && sellRunMinutes < rampMin) {
+        const slotMin = s.durationH * 60;
+        const e0 = sellRunMinutes;
+        const e1 = e0 + slotMin;
+        const rampedUntil = Math.min(e1, rampMin);
+        const avgFactor =
+          ((rampedUntil * rampedUntil - e0 * e0) / (2 * rampMin) + Math.max(0, e1 - rampedUntil)) / slotMin;
+        exportW *= avgFactor;
+      }
+      sellRunMinutes += s.durationH * 60;
+    } else {
+      sellRunMinutes = 0;
+      if (buySetW === 0 && s.pvW < s.houseW + parasiticW + 380) {
+        // Baseline "feed when no solar" that nets out the inverter's constant grid draw
+        exportW = k.baselineFeedWatts;
+      }
     }
 
     let netBattW: number;
@@ -357,22 +380,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     }
   }
 
-  const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
-    slots,
-    acceptedSell,
-    k.maxSellPowerWatts,
-    "sell",
-    k.minWindowMinutes
-  );
-  if (droppedShort) {
-    notes.push(`Dropped ${droppedShort} sell window(s) shorter than ${k.minWindowMinutes} min`);
-    for (const i of acceptedSell) {
-      if (!sellWindows.some(w => w.slotIndexes.includes(i))) sellW[i] = 0;
-    }
-    current = simulate(input, slots, sellW, buyW, tailSpot);
-  }
-
-  // ---- Buy allocation: only to avert projected unavoidable imports, cheapest slots first ----
+  // ---- Buy allocation, pass 1: avert projected unavoidable imports, cheapest slots first ----
   const acceptedBuy: number[] = [];
   if (current.importWh > 500 && k.maxBuyPowerWatts > 0) {
     notes.push(
@@ -399,6 +407,109 @@ export function generatePlan(input: PlannerInput): PlanResult {
       }
       if (current.importWh < 500) break;
     }
+  }
+
+  // ---- Buy allocation, pass 2: arbitrage. Buy cheap purely to re-sell expensive when the spread
+  // beats fees + VAT + round-trip losses + margin. Buys and sells only pay off together (bought
+  // energy has no value without a later sell window), so they are trialled as pairs.
+  const arbitrageBuySlots = new Set<number>();
+  if (k.allowArbitrageBuying && k.maxBuyPowerWatts > 0) {
+    const roundTrip = k.chargeEfficiency * k.dischargeEfficiency;
+    const tradable = (i: number) =>
+      slots[i].spot !== undefined &&
+      sellW[i] === 0 &&
+      buyW[i] === 0 &&
+      slots[i].fixedSellW === 0 &&
+      slots[i].fixedBuyW === 0;
+    const buyPool = slots
+      .map((s, i) => ({ s, i }))
+      .filter(({ s, i }) => tradable(i) && !overlapsVeto(s, input.buyVetoWindows))
+      .sort((a, b) => a.s.spot! - b.s.spot!);
+    // A sold slot moves more energy out than one bought slot puts in (after losses), so a
+    // 1:1 pairing is net-battery-negative and would always fail under a binding reserve floor.
+    // Buy enough slots per sell slot to keep the pair battery-neutral or better.
+    const buySlotKwh = (k.maxBuyPowerWatts * 0.25) / 1000;
+    const sellSlotKwh = (Math.min(k.maxSellPowerWatts, k.batteryMaxDischargeWatts) * 0.25) / 1000;
+    const buysPerSell = Math.max(1, Math.ceil(sellSlotKwh / (buySlotKwh * roundTrip)));
+    let misses = 0;
+    let pairs = 0;
+    while (pairs < 60 && misses < 4) {
+      const buyGroup: number[] = [];
+      for (const { i } of buyPool) {
+        if (tradable(i) && !buyGroup.includes(i)) buyGroup.push(i);
+        if (buyGroup.length === buysPerSell) break;
+      }
+      if (buyGroup.length < buysPerSell) break;
+      const lastBuyStart = Math.max(...buyGroup.map(i => slots[i].startMs));
+      const sellPool = slots
+        .map((s, i) => ({ s, i }))
+        .filter(
+          ({ s, i }) =>
+            tradable(i) &&
+            s.startMs > lastBuyStart &&
+            s.spot! >= k.minSellSpotSekPerKwh &&
+            !overlapsVeto(s, input.sellVetoWindows)
+        )
+        .sort((a, b2) => b2.s.spot! - a.s.spot!);
+      if (!sellPool.length) break;
+      // Even the best possible pairing must clear the margin on prices alone, else nothing can
+      const avgBuySpot = buyGroup.reduce((sum, i) => sum + slots[i].spot!, 0) / buyGroup.length;
+      const bestPossible =
+        (sellPool[0].s.spot! + k.sellBonusSekPerKwh) * roundTrip -
+        (avgBuySpot + k.buySurchargesSekPerKwh) * k.vatMultiplier;
+      if (bestPossible < k.minBuySavingSekPerKwh) break;
+      let matched = false;
+      for (const { i: sellIdx } of sellPool.slice(0, 3)) {
+        for (const b of buyGroup) buyW[b] = k.maxBuyPowerWatts;
+        sellW[sellIdx] = k.maxSellPowerWatts;
+        const trial = simulate(input, slots, sellW, buyW, tailSpot);
+        const gain = trial.revenueSek - current.revenueSek;
+        const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
+        if (feasibleVsBase(trial) && extraBoughtKwh > 0.1 && gain / extraBoughtKwh >= k.minBuySavingSekPerKwh) {
+          current = trial;
+          for (const b of buyGroup) {
+            acceptedBuy.push(b);
+            arbitrageBuySlots.add(b);
+          }
+          acceptedSell.push(sellIdx);
+          matched = true;
+          pairs++;
+          break;
+        }
+        for (const b of buyGroup) buyW[b] = 0;
+        sellW[sellIdx] = 0;
+      }
+      if (matched) {
+        misses = 0;
+      } else {
+        misses++;
+        // These cheapest buys couldn't pair profitably — drop the cheapest one and retry with the next mix
+        const dropIdx = buyPool.findIndex(({ i }) => i === buyGroup[0]);
+        if (dropIdx >= 0) buyPool.splice(dropIdx, 1);
+        else break;
+      }
+    }
+    if (pairs) {
+      notes.push(
+        `Arbitrage: ${pairs} buy/sell slot pair(s) accepted — spread beats fees + losses + ${k.minBuySavingSekPerKwh} SEK/kWh margin`
+      );
+    }
+  }
+
+  // ---- Merge windows (after all passes so arbitrage sells merge in too) ----
+  const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
+    slots,
+    acceptedSell,
+    k.maxSellPowerWatts,
+    "sell",
+    k.minWindowMinutes
+  );
+  if (droppedShort) {
+    notes.push(`Dropped ${droppedShort} sell window(s) shorter than ${k.minWindowMinutes} min`);
+    for (const i of acceptedSell) {
+      if (!sellWindows.some(w => w.slotIndexes.includes(i))) sellW[i] = 0;
+    }
+    current = simulate(input, slots, sellW, buyW, tailSpot);
   }
 
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, k.maxBuyPowerWatts, "buy", k.minWindowMinutes);
@@ -431,10 +542,13 @@ export function generatePlan(input: PlannerInput): PlanResult {
     } else {
       expectedKwh = w.slotIndexes.reduce((sum, i) => sum + (w.watts * slots[i].durationH) / 1000, 0);
     }
+    const isArbitrage = w.kind === "buy" && w.slotIndexes.some(i => arbitrageBuySlots.has(i));
     const reason =
       w.kind === "sell"
         ? `spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)} of horizon), ~${expectedKwh.toFixed(0)} kWh, SOC ${Math.round((socBefore / cap) * 100)}%→${Math.round((socAfter / cap) * 100)}%`
-        : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)}), pre-buying ~${expectedKwh.toFixed(0)} kWh to avoid pricier unavoidable import`;
+        : isArbitrage
+          ? `arbitrage: buying ~${expectedKwh.toFixed(0)} kWh at ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)}) to re-sell at the later price peak`
+          : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)}), pre-buying ~${expectedKwh.toFixed(0)} kWh to avoid pricier unavoidable import`;
     return { startMs: w.startMs, endMs: w.endMs, watts: w.watts, kind: w.kind, reason, expectedKwh, avgSpot };
   };
 

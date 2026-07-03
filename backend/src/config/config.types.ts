@@ -23,8 +23,12 @@ export type AutomaticTradingConfig = {
   min_sell_spot_sek_per_kwh: number;
   /** Minimum estimated revenue gain (SEK) for a 15-min slot to be worth scheduling */
   min_gain_sek_per_slot: number;
-  /** Pre-buying must beat the projected unavoidable import by this much per kWh */
+  /** Buying must beat the alternative by this much per kWh (import averting and arbitrage). Also covers battery wear. */
   min_buy_saving_sek_per_kwh: number;
+  /** Buy cheap purely to re-sell at a later price peak when the spread beats fees + losses + margin */
+  allow_arbitrage_buying: boolean;
+  /** The inverter ramps grid feed-in from 0 to full power over ~this many minutes (grid safety) */
+  sell_ramp_minutes: number;
   /** Generated windows shorter than this are dropped (inverter command churn isn't free) */
   min_window_minutes: number;
   charge_efficiency: number;
