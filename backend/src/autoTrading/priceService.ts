@@ -26,7 +26,8 @@ async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | 
   const { year, month, day } = dateInStockholm(offsetDays);
   const url = `${PRICE_API_BASE}/${year}/${month}-${day}_${area}.json`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  // Generous timeout: this pi's CPU is often pegged (swc compiles, SOC worker) which slows TLS + event loop
+  const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (response.status === 404) return undefined; // not published yet

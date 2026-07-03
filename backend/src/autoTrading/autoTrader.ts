@@ -7,7 +7,7 @@ import { get_config_object } from "../config/config";
 import { Config } from "../config/config.types";
 import { debugLog, errorLog, logLog } from "../utilities/logging";
 import { wait } from "../vendor/depictUtilishared";
-import { fetchPrices, FetchedPrices } from "./priceService";
+import { fetchPrices, FetchedPrices, getCachedPrices } from "./priceService";
 import { fetchSolarForecast } from "./solarForecast";
 import { fetchConsumptionForecast } from "./consumptionForecast";
 import {
@@ -375,7 +375,12 @@ export function useAutoTrader({
       const soc = untrack(averageSOC);
       if (soc === undefined) return;
       const at = cfg.automatic_trading;
-      const prices = await fetchPrices(at.price_area);
+      // For a trim decision slightly stale prices beat no guard run at all
+      const prices = (await fetchPrices(at.price_area).catch(() => undefined)) ?? getCachedPrices(at.price_area);
+      if (!prices) {
+        debugLog("Auto trader guard: prices unavailable (fetch failed, no cache) — skipping this run");
+        return;
+      }
       reconcileOwnership(cfg);
 
       const baseInput = await buildPlannerInput(cfg, prices, soc);
