@@ -115,6 +115,8 @@ export function useAutoTrader({
   let stateLoaded = false;
   let planInFlight = false;
   let aborted = false;
+  let consecutiveFailures = 0;
+  let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
   const knobsConfig = () => config().automatic_trading;
@@ -450,6 +452,30 @@ export function useAutoTrader({
   }
 
   // ---- timers ----
+  /**
+   * runPlan + retry: transient failures (undici connect timeouts while the pi is CPU-pegged,
+   * upstream hiccups) reschedule another attempt instead of silently waiting for the next day.
+   */
+  async function runPlanWithRecovery(trigger: string, waitForTomorrow: boolean): Promise<string> {
+    clearTimeout(recoveryTimer);
+    const result = await runPlan(trigger, waitForTomorrow);
+    if (result.startsWith("error:") && !aborted) {
+      consecutiveFailures++;
+      const maxAttempts = 8;
+      if (consecutiveFailures < maxAttempts) {
+        const minutes = Math.max(2, untrack(config).automatic_trading.replan_retry_minutes);
+        logLog(`Auto trader: plan failed (attempt ${consecutiveFailures}/${maxAttempts}), retrying in ${minutes}m`);
+        recoveryTimer = setTimeout(() => void runPlanWithRecovery(trigger, waitForTomorrow), minutes * 60_000);
+      } else {
+        errorLog(`Auto trader: giving up after ${maxAttempts} failed plan attempts — next try at the daily run`);
+        consecutiveFailures = 0;
+      }
+    } else if (!result.startsWith("error:")) {
+      consecutiveFailures = 0;
+    }
+    return result;
+  }
+
   const planAtMemo = createMemo(() => config().automatic_trading?.plan_at_local_time);
   const guardMinutesMemo = createMemo(() => config().automatic_trading?.guard_interval_minutes);
   createEffect(() => {
@@ -469,7 +495,7 @@ export function useAutoTrader({
       logLog("Auto trader: next daily plan at", new Date(Date.now() + ms).toISOString(), `(${planAt} Stockholm)`);
       refreshStatus();
       dailyTimer = setTimeout(async () => {
-        await runPlan("daily", true);
+        await runPlanWithRecovery("daily", true);
         scheduleDaily();
       }, ms);
     };
@@ -484,7 +510,7 @@ export function useAutoTrader({
       const stale = !lastPlan || horizonEnd < Date.now() + 6 * 3600 * 1000;
       if (stale) {
         logLog("Auto trader: no fresh plan on startup — generating one");
-        await runPlan("startup", false);
+        await runPlanWithRecovery("startup", false);
       } else {
         reconcileOwnership(untrack(config));
         await saveState(state);
@@ -504,6 +530,7 @@ export function useAutoTrader({
       clearTimeout(startupTimer);
       clearTimeout(dailyTimer);
       clearInterval(guardTimer);
+      clearTimeout(recoveryTimer);
     });
   });
 
