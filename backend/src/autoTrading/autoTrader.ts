@@ -5,7 +5,7 @@ import Influx from "influx";
 import { Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "../config/config";
 import { Config } from "../config/config.types";
-import { errorLog, logLog } from "../utilities/logging";
+import { debugLog, errorLog, logLog } from "../utilities/logging";
 import { wait } from "../vendor/depictUtilishared";
 import { fetchPrices, FetchedPrices } from "./priceService";
 import { fetchSolarForecast } from "./solarForecast";
@@ -360,7 +360,16 @@ export function useAutoTrader({
    * drag SOC below the reserve? If so, trim our windows (never the user's), cheapest first.
    */
   async function runGuard() {
-    if (planInFlight || !untrack(enabled)) return;
+    if (planInFlight) {
+      debugLog("Auto trader guard: skipped, plan in flight");
+      return;
+    }
+    if (!untrack(enabled)) {
+      debugLog("Auto trader guard: skipped, disabled");
+      return;
+    }
+    const startedAt = Date.now();
+    debugLog("Auto trader guard: tick");
     try {
       const cfg = untrack(config);
       const soc = untrack(averageSOC);
@@ -446,8 +455,9 @@ export function useAutoTrader({
       };
       await saveState(state);
       refreshStatus();
+      debugLog(`Auto trader guard: done in ${Date.now() - startedAt}ms — ${state.guard.last_action}`);
     } catch (e) {
-      errorLog("Auto trader guard failed (non-fatal)", e);
+      errorLog(`Auto trader guard failed after ${Date.now() - startedAt}ms (non-fatal)`, e);
     }
   }
 

@@ -33,9 +33,13 @@ export async function fetchConsumptionForecast(
   let profile: number[] | undefined;
   if (influxClient) {
     try {
-      const rows = (await influxClient.query(
-        `SELECT mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time > now() - 14d GROUP BY time(1h)`
-      )) as unknown as { time: { getNanoTime(): number }; house: number | null }[];
+      // The influx client has no timeout of its own — don't let a hung connection stall callers forever
+      const rows = (await Promise.race([
+        influxClient.query(
+          `SELECT mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time > now() - 14d GROUP BY time(1h)`
+        ),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("InfluxDB query timed out")), 45_000)),
+      ])) as unknown as { time: { getNanoTime(): number }; house: number | null }[];
       const byHour: number[][] = Array.from({ length: 24 }, () => []);
       for (const row of rows) {
         if (row.house == null) continue;
