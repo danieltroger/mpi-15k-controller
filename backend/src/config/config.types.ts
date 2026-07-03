@@ -1,4 +1,56 @@
+export type AutomaticTradingConfig = {
+  /** Master switch for the automatic day-ahead trading planner */
+  enabled: boolean;
+  /** elprisetjustnu.se price area, e.g. SE3 */
+  price_area: string;
+  /** When to generate the daily plan (HH:MM, Europe/Stockholm). Day-ahead prices publish ~13:00. */
+  plan_at_local_time: string;
+  latitude: number;
+  longitude: number;
+  /** power_watts written into generated sell windows */
+  max_sell_power_watts: number;
+  /** What the battery can really push to the grid on top of PV — used for planning realism, not control */
+  battery_max_discharge_watts: number;
+  /** charging_power written into generated buy windows (only used to avert unavoidable imports) */
+  max_buy_power_watts: number;
+  /** Planner keeps projected SOC above this (plus extra_reserve_kwh) at all times */
+  planner_soc_floor_percent: number;
+  /** Below this SOC the house effectively starts importing — used to price unavoidable imports */
+  emergency_soc_floor_percent: number;
+  /** Extra energy to keep in the battery on top of the floor, e.g. for charging the car. User knob. */
+  extra_reserve_kwh: number;
+  /** Don't bother selling below this spot price */
+  min_sell_spot_sek_per_kwh: number;
+  /** Minimum estimated revenue gain (SEK) for a 15-min slot to be worth scheduling */
+  min_gain_sek_per_slot: number;
+  /** Pre-buying must beat the projected unavoidable import by this much per kWh */
+  min_buy_saving_sek_per_kwh: number;
+  /** Generated windows shorter than this are dropped (inverter command churn isn't free) */
+  min_window_minutes: number;
+  charge_efficiency: number;
+  discharge_efficiency: number;
+  /** Per-kWh surcharges when buying, before VAT: grid transfer + energy tax + supplier markups */
+  buy_surcharges_sek_per_kwh: number;
+  vat_multiplier: number;
+  /** Per-kWh extras when selling: supplier markup + nätnytta */
+  sell_bonus_sek_per_kwh: number;
+  /** How far past the priced horizon SOC constraints are enforced (covers the following night) */
+  constraint_tail_hours: number;
+  /** How often to re-check that the written schedule is still safe with live SOC (0 = off) */
+  guard_interval_minutes: number;
+  /** Retry interval while waiting for tomorrow's prices to publish */
+  replan_retry_minutes: number;
+  /** House load assumption if InfluxDB history is unavailable */
+  fallback_house_load_watts: number;
+  /** Locally calibrated PV model: watts produced per W/m² of open-meteo radiation */
+  solar_model: {
+    watts_per_direct_radiation: number;
+    watts_per_diffuse_radiation: number;
+  };
+};
+
 export type Config = {
+  automatic_trading: AutomaticTradingConfig;
   usb_parameter_setting: {
     min_seconds_between_commands: number;
     /**

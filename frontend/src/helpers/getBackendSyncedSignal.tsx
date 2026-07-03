@@ -5,6 +5,21 @@ import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { isServer } from "solid-js/web";
 
+/** Fire a backend action (command: "action") and return its result string, or undefined on failure. */
+export async function sendBackendAction(
+  socket: ReturnType<typeof useWebSocket>,
+  action: string
+): Promise<string | undefined> {
+  const [response] = (await socket?.ensure_sent({
+    id: random_string(),
+    command: "action",
+    action,
+  })) as [{ id: string; status: "ok" | "not-ok"; value?: string; message?: string }, string];
+  if (response.status === "ok") return response.value ?? "ok";
+  console.error(response);
+  throw new Error(response.message || "Action failed");
+}
+
 export function getBackendSyncedSignal<T, default_value_was_provided extends boolean = false>(
   key: string,
   default_value?: T,

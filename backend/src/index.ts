@@ -25,6 +25,7 @@ import { useShouldBuyPower } from "./buying/useShouldBuyPower";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
 import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring";
 import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider";
+import { useAutoTrader } from "./autoTrading/autoTrader";
 
 while (true) {
   await new Promise<void>(r => {
@@ -121,6 +122,24 @@ function main() {
             const temperatures = useTemperatures(config);
             saveTemperatures({ config, temperatures });
 
+            const [autoTraderErrored, setAutoTraderErrored] = createSignal(false);
+            const autoTrader = createMemo(() => {
+              if (autoTraderErrored()) return;
+              return catchError(
+                () =>
+                  useAutoTrader({
+                    configSignal: configResourceValue,
+                    averageSOC,
+                    assumedParasiticConsumption,
+                  }),
+                e => {
+                  setAutoTraderErrored(true);
+                  errorLog("Auto trader errored", e, "restarting in 60s");
+                  setTimeout(() => setAutoTraderErrored(false), 60_000);
+                }
+              );
+            });
+
             const isChargingOuterScope = createMemo(() => {
               if (!hasCredentials()) {
                 return errorLog(
@@ -191,7 +210,15 @@ function main() {
                 config_signal: configResourceValue,
                 owner,
                 temperatures,
+                actions: {
+                  generate_trading_plan: async () => {
+                    const trader = autoTrader();
+                    if (!trader) return "auto trader not running";
+                    return await trader.triggerPlanNow();
+                  },
+                },
                 exposedAccessors: {
+                  autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                   energyAddedSinceEmpty,
                   lastFeedWhenNoSolarReason,
                   lastChangingFeedWhenNoSolarReason,

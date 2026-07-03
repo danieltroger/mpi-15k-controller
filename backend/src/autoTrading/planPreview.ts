@@ -1,0 +1,123 @@
+/**
+ * Standalone dry-run of the trading planner — fetches real prices, weather and consumption history,
+ * reads the current SOC from InfluxDB and prints the plan it would make. Writes nothing.
+ *
+ * Usage (from backend/):
+ *   SOC=45 yarn node --loader @swc-node/register/esm src/autoTrading/planPreview.ts   # override SOC
+ *   yarn node --loader @swc-node/register/esm src/autoTrading/planPreview.ts          # SOC from InfluxDB
+ */
+import { promises as fs_promises } from "fs";
+import path from "path";
+import process from "process";
+import Influx from "influx";
+import { Config } from "../config/config.types";
+import { fetchPrices } from "./priceService";
+import { fetchSolarForecast } from "./solarForecast";
+import { fetchConsumptionForecast } from "./consumptionForecast";
+import { generatePlan, PlannerInput } from "./planner";
+
+const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
+const config: Config = JSON.parse(await fs_promises.readFile(configPath, { encoding: "utf-8" }));
+const at = config.automatic_trading;
+if (!at) {
+  console.error("No automatic_trading section in", configPath, "- add it first (see config.ts defaults)");
+  process.exit(1);
+}
+
+const influxClient = config.influxdb ? new Influx.InfluxDB({ ...config.influxdb }) : undefined;
+
+let soc = process.env.SOC ? parseFloat(process.env.SOC) : undefined;
+if (soc === undefined && influxClient) {
+  const [row] = (await influxClient.query(`SELECT last(average_soc) as soc FROM "soc_values"`)) as unknown as {
+    soc: number;
+  }[];
+  soc = row?.soc;
+}
+if (soc === undefined) {
+  console.error("No SOC available — pass SOC=<percent> as env var");
+  process.exit(1);
+}
+
+console.log(`\n=== Plan preview: SOC ${soc.toFixed(1)}%, area ${at.price_area} ===\n`);
+
+const prices = await fetchPrices(at.price_area);
+const solar = await fetchSolarForecast(
+  at.latitude,
+  at.longitude,
+  at.solar_model.watts_per_direct_radiation,
+  at.solar_model.watts_per_diffuse_radiation
+);
+const consumption = await fetchConsumptionForecast(influxClient, at.fallback_house_load_watts);
+
+const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
+  .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))
+  .filter(w => w.endMs > Date.now());
+const fixedBuys = Object.entries(config.scheduled_power_buying.schedule)
+  .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.charging_power) }))
+  .filter(w => w.endMs > Date.now());
+
+const input: PlannerInput = {
+  nowMs: Date.now(),
+  prices: prices.slots,
+  solarWattsAt: solar.wattsAt,
+  houseLoadWattsAt: consumption.wattsAt,
+  parasiticWatts: config.soc_calculations.current_state.parasitic_consumption,
+  socPercent: soc,
+  capacityWh: config.soc_calculations.current_state.capacity,
+  constraintTailHours: at.constraint_tail_hours,
+  fixedSells,
+  fixedBuys,
+  sellVetoWindows: [],
+  buyVetoWindows: [],
+  knobs: {
+    maxSellPowerWatts: at.max_sell_power_watts,
+    batteryMaxDischargeWatts: at.battery_max_discharge_watts,
+    maxBuyPowerWatts: at.max_buy_power_watts,
+    plannerSocFloorPercent: at.planner_soc_floor_percent,
+    runtimeSocFloorPercent: Number(config.scheduled_power_selling.only_sell_above_soc),
+    emergencySocFloorPercent: at.emergency_soc_floor_percent,
+    extraReserveKwh: at.extra_reserve_kwh,
+    minSellSpotSekPerKwh: at.min_sell_spot_sek_per_kwh,
+    minGainSekPerSlot: at.min_gain_sek_per_slot,
+    minWindowMinutes: at.min_window_minutes,
+    chargeEfficiency: at.charge_efficiency,
+    dischargeEfficiency: at.discharge_efficiency,
+    buySurchargesSekPerKwh: at.buy_surcharges_sek_per_kwh,
+    vatMultiplier: at.vat_multiplier,
+    sellBonusSekPerKwh: at.sell_bonus_sek_per_kwh,
+    minBuySavingSekPerKwh: at.min_buy_saving_sek_per_kwh,
+    baselineFeedWatts: config.feed_from_battery_when_no_solar.feed_amount_watts,
+  },
+};
+
+if (fixedSells.length || fixedBuys.length) {
+  console.log("Existing (fixed) windows respected:");
+  for (const w of fixedSells)
+    console.log(`  sell ${new Date(w.startMs).toISOString()} → ${new Date(w.endMs).toISOString()} @ ${w.watts}W`);
+  for (const w of fixedBuys)
+    console.log(`  buy  ${new Date(w.startMs).toISOString()} → ${new Date(w.endMs).toISOString()} @ ${w.watts}W`);
+  console.log();
+}
+
+const started = Date.now();
+const plan = generatePlan(input);
+console.log(`\n=== Result (planner took ${Date.now() - started}ms) ===`);
+const fmt = (ms: number) =>
+  new Date(ms).toLocaleString("sv-SE", {
+    timeZone: "Europe/Stockholm",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+for (const w of plan.sells) {
+  console.log(`SELL ${fmt(w.startMs)} → ${fmt(w.endMs)} @ ${w.watts}W | ${w.reason}`);
+}
+for (const w of plan.buys) {
+  console.log(`BUY  ${fmt(w.startMs)} → ${fmt(w.endMs)} @ ${w.watts}W | ${w.reason}`);
+}
+if (!plan.sells.length && !plan.buys.length) console.log("(no windows planned)");
+console.log("\nNotes:");
+for (const n of plan.notes) console.log(" -", n);
+console.log("\nProjection:", JSON.stringify(plan.projection, null, 2));
+process.exit(0);

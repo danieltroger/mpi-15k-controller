@@ -6,6 +6,40 @@ import { errorLog, logLog } from "../utilities/logging";
 import { Config } from "./config.types";
 
 const default_config: Config = {
+  automatic_trading: {
+    enabled: false,
+    price_area: "SE3",
+    plan_at_local_time: "13:10",
+    // Generic Sweden coordinates — set your real ones in config.json
+    latitude: 59.33,
+    longitude: 18.07,
+    max_sell_power_watts: 15000,
+    battery_max_discharge_watts: 13000,
+    max_buy_power_watts: 15000,
+    planner_soc_floor_percent: 20,
+    emergency_soc_floor_percent: 3,
+    extra_reserve_kwh: 0,
+    min_sell_spot_sek_per_kwh: 0.08,
+    min_gain_sek_per_slot: 0.25,
+    min_buy_saving_sek_per_kwh: 0.3,
+    min_window_minutes: 30,
+    charge_efficiency: 0.95,
+    discharge_efficiency: 0.93,
+    // E.ON 2026: elöverföring 0.734 + energiskatt 0.36 + rörliga kostnader ~0.052 + fast påslag 0.04
+    buy_surcharges_sek_per_kwh: 1.186,
+    vat_multiplier: 1.25,
+    // spotpris påslag 0.02 + nätnytta 0.072
+    sell_bonus_sek_per_kwh: 0.092,
+    constraint_tail_hours: 18,
+    guard_interval_minutes: 30,
+    replan_retry_minutes: 15,
+    fallback_house_load_watts: 550,
+    // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026)
+    solar_model: {
+      watts_per_direct_radiation: 9.95,
+      watts_per_diffuse_radiation: 16.4,
+    },
+  },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
   scheduled_power_selling: {
     schedule: {
