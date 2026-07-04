@@ -1,4 +1,4 @@
-import { logLog } from "../utilities/logging";
+import { logLog } from "../utilities/logging.ts";
 
 const WEATHER_API_BASE = "https://api.open-meteo.com/v1/forecast";
 
@@ -36,7 +36,7 @@ export async function fetchSolarForecast(
   url.searchParams.set("timezone", "UTC");
 
   const controller = new AbortController();
-  // Generous timeout: this pi's CPU is often pegged (swc compiles, SOC worker) which slows TLS + event loop
+  // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
   const timeout = setTimeout(() => controller.abort(), 60_000);
   let data: any;
   try {

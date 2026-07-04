@@ -1,7 +1,7 @@
-import { Accessor, createEffect, Owner, runWithOwner, Signal, untrack } from "solid-js";
-import { startWsServer } from "./startWsServer";
-import { useTemperatures } from "../temperatureMeasuring/useTemperatures";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, type Owner, runWithOwner, type Signal, untrack } from "solid-js";
+import { startWsServer } from "./startWsServer.ts";
+import { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
+import type { Config } from "../config/config.types.ts";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],

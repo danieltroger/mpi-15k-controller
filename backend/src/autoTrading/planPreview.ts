@@ -3,18 +3,18 @@
  * reads the current SOC from InfluxDB and prints the plan it would make. Writes nothing.
  *
  * Usage (from backend/):
- *   SOC=45 yarn node --loader @swc-node/register/esm src/autoTrading/planPreview.ts   # override SOC
- *   yarn node --loader @swc-node/register/esm src/autoTrading/planPreview.ts          # SOC from InfluxDB
+ *   SOC=45 yarn node src/autoTrading/planPreview.ts   # override SOC
+ *   yarn node src/autoTrading/planPreview.ts          # SOC from InfluxDB
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import Influx from "influx";
-import { Config } from "../config/config.types";
-import { fetchPrices } from "./priceService";
-import { fetchSolarForecast } from "./solarForecast";
-import { fetchConsumptionForecast } from "./consumptionForecast";
-import { generatePlan, PlannerInput } from "./planner";
+import type { Config } from "../config/config.types.ts";
+import { fetchPrices } from "./priceService.ts";
+import { fetchSolarForecast } from "./solarForecast.ts";
+import { fetchConsumptionForecast } from "./consumptionForecast.ts";
+import { generatePlan, type PlannerInput } from "./planner.ts";
 
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
 const config: Config = JSON.parse(await fs_promises.readFile(configPath, { encoding: "utf-8" }));

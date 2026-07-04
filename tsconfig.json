@@ -8,7 +8,10 @@
     "resolveJsonModule": true,
     "rootDir": ".",
     "skipLibCheck": true,
-    "composite": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
     "module": "ESNext",
     "noImplicitAny": true,
     "strict": true

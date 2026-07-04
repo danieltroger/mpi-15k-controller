@@ -1,5 +1,5 @@
 import Influx from "influx";
-import { errorLog, logLog } from "../utilities/logging";
+import { errorLog, logLog } from "../utilities/logging.ts";
 
 export type ConsumptionForecast = {
   /** Expected house load (AC output) in watts at a given time, excluding inverter parasitic draw */

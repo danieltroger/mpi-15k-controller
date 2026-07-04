@@ -1,5 +1,5 @@
-import { logLog } from "../utilities/logging";
-import { PriceSlot15, SLOT_MS } from "./planner";
+import { logLog } from "../utilities/logging.ts";
+import { type PriceSlot15, SLOT_MS } from "./planner.ts";
 
 const PRICE_API_BASE = "https://www.elprisetjustnu.se/api/v1/prices";
 
@@ -26,7 +26,7 @@ async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | 
   const { year, month, day } = dateInStockholm(offsetDays);
   const url = `${PRICE_API_BASE}/${year}/${month}-${day}_${area}.json`;
   const controller = new AbortController();
-  // Generous timeout: this pi's CPU is often pegged (swc compiles, SOC worker) which slows TLS + event loop
+  // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const response = await fetch(url, { signal: controller.signal });

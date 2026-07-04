@@ -1,8 +1,8 @@
-import { Accessor, createContext, createSignal, JSX, untrack, useContext } from "solid-js";
-import { Config } from "../config/config.types";
-import { CommandQueue, UsbConfiguration } from "./usb.types";
-import { useGetUsbValues } from "./useGetUsbValues";
-import { useProcessUsbQueue } from "./useProcessUsbQueue";
+import { type Accessor, createContext, createSignal, type JSX, untrack, useContext } from "solid-js";
+import type { Config } from "../config/config.types.ts";
+import type { CommandQueue, UsbConfiguration } from "./usb.types.ts";
+import { useGetUsbValues } from "./useGetUsbValues.ts";
+import { useProcessUsbQueue } from "./useProcessUsbQueue.ts";
 
 const UsbInverterConfigurationContext = createContext<UsbConfiguration>();
 

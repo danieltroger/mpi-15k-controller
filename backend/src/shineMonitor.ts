@@ -1,8 +1,8 @@
-import { get_config_object } from "./config/config";
+import { get_config_object } from "./config/config.ts";
 import { untrack } from "solid-js";
-import { sha1 } from "./utilities/sha1";
-import { logLog } from "./utilities/logging";
-import { Config } from "./config/config.types";
+import { sha1 } from "./utilities/sha1.ts";
+import { logLog } from "./utilities/logging.ts";
+import type { Config } from "./config/config.types.ts";
 
 export type GetVoltageResponse = {
   err: number;

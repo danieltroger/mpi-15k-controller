@@ -18,7 +18,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "26"
           cache: "yarn"
 
       - name: Install dependencies
@@ -26,4 +26,4 @@ jobs:
 
       - name: Run planner scenario tests
         working-directory: backend
-        run: yarn node --loader @swc-node/register/esm src/autoTrading/planner.selftest.ts
+        run: yarn node src/autoTrading/planner.selftest.ts

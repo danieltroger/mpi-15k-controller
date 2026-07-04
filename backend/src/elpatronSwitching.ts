@@ -1,10 +1,10 @@
-import { Accessor, createEffect, createMemo, createResource } from "solid-js";
+import { type Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { WebSocket } from "ws";
-import { DepictAPIWS, random_string, wait } from "./vendor/depictUtilishared";
-import { useTotalSolarPower } from "./utilities/useTotalSolarPower";
-import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
-import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers";
-import { Config } from "./config/config.types";
+import { DepictAPIWS, random_string, wait } from "./vendor/depictUtilishared.ts";
+import { useTotalSolarPower } from "./utilities/useTotalSolarPower.ts";
+import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
+import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers.ts";
+import type { Config } from "./config/config.types.ts";
 
 // @ts-ignore
 globalThis.WebSocket = WebSocket;

@@ -1,8 +1,8 @@
 /**
  * Synthetic-scenario self-test for the planner. Run from backend/ with:
- *   yarn node --loader @swc-node/register/esm src/autoTrading/planner.selftest.ts
+ *   yarn node src/autoTrading/planner.selftest.ts
  */
-import { generatePlan, PlannerInput, projectWithFixedWindows, SLOT_MS } from "./planner";
+import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 
 const H = 3600_000;
 const baseKnobs = {

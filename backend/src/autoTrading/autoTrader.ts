@@ -2,22 +2,22 @@ import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import Influx from "influx";
-import { Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import { get_config_object } from "../config/config";
-import { Config } from "../config/config.types";
-import { debugLog, errorLog, logLog } from "../utilities/logging";
-import { wait } from "../vendor/depictUtilishared";
-import { fetchPrices, FetchedPrices, getCachedPrices } from "./priceService";
-import { fetchSolarForecast } from "./solarForecast";
-import { fetchConsumptionForecast } from "./consumptionForecast";
+import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { get_config_object } from "../config/config.ts";
+import type { Config } from "../config/config.types.ts";
+import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
+import { wait } from "../vendor/depictUtilishared.ts";
+import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
+import { fetchSolarForecast } from "./solarForecast.ts";
+import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import {
-  FixedWindow,
+  type FixedWindow,
   generatePlan,
-  PlannerInput,
-  PlanProjection,
-  PlannedWindow,
+  type PlannerInput,
+  type PlanProjection,
+  type PlannedWindow,
   projectWithFixedWindows,
-} from "./planner";
+} from "./planner.ts";
 
 type StateWindow = {
   start: string;

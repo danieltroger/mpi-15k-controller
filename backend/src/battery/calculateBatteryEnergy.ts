@@ -1,7 +1,7 @@
-import { Accessor, createEffect, createMemo, createResource, createSignal } from "solid-js";
-import { InfluxClientAccessor, queryEnergyIntegral } from "./useDatabasePower";
-import { useNow } from "../utilities/useNow";
-import { logLog } from "../utilities/logging";
+import { type Accessor, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { type InfluxClientAccessor, queryEnergyIntegral } from "./useDatabasePower.ts";
+import { useNow } from "../utilities/useNow.ts";
+import { logLog } from "../utilities/logging.ts";
 
 export function calculateBatteryEnergy({
   from,

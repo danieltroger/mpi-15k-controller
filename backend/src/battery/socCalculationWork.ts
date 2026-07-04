@@ -1,4 +1,4 @@
-import { calculateEnergyToSubtract } from "./calculateBatteryEnergy";
+import { calculateEnergyToSubtract } from "./calculateBatteryEnergy.ts";
 
 export function socCalculationWork({
   energyWithoutParasiticSinceEmpty,

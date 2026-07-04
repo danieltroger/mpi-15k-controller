@@ -8,24 +8,24 @@ import {
   getOwner,
   onCleanup,
 } from "solid-js";
-import { errorLog } from "./utilities/logging";
-import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
-import { get_config_object } from "./config/config";
-import { wsMessaging } from "./websocketBackend/wsMessaging";
-import { wait } from "./vendor/depictUtilishared";
-import { useTemperatures } from "./temperatureMeasuring/useTemperatures";
-import { saveTemperatures } from "./temperatureMeasuring/saveTemperatures";
-import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar";
-import { useBatteryValues } from "./battery/useBatteryValues";
-import { mqttValueKeys } from "./sharedTypes";
-import { elpatronSwitching } from "./elpatronSwitching";
-import { shouldSellPower } from "./feeding/shouldSellPower";
-import { NowProvider } from "./utilities/useNow";
-import { useShouldBuyPower } from "./buying/useShouldBuyPower";
-import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
-import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring";
-import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider";
-import { useAutoTrader } from "./autoTrading/autoTrader";
+import { errorLog } from "./utilities/logging.ts";
+import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround.ts";
+import { get_config_object } from "./config/config.ts";
+import { wsMessaging } from "./websocketBackend/wsMessaging.ts";
+import { wait } from "./vendor/depictUtilishared.ts";
+import { useTemperatures } from "./temperatureMeasuring/useTemperatures.ts";
+import { saveTemperatures } from "./temperatureMeasuring/saveTemperatures.ts";
+import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar.ts";
+import { useBatteryValues } from "./battery/useBatteryValues.ts";
+import { mqttValueKeys } from "./sharedTypes.ts";
+import { elpatronSwitching } from "./elpatronSwitching.ts";
+import { shouldSellPower } from "./feeding/shouldSellPower.ts";
+import { NowProvider } from "./utilities/useNow.ts";
+import { useShouldBuyPower } from "./buying/useShouldBuyPower.ts";
+import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
+import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
+import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 
 while (true) {
   await new Promise<void>(r => {

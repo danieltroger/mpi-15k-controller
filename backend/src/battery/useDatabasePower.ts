@@ -1,7 +1,7 @@
 import Influx from "influx";
-import { get_config_object } from "../config/config";
-import { Accessor, createMemo, createResource } from "solid-js";
-import { errorLog, logLog } from "../utilities/logging";
+import { get_config_object } from "../config/config.ts";
+import { type Accessor, createMemo, createResource } from "solid-js";
+import { errorLog, logLog } from "../utilities/logging.ts";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const host = createMemo(() => config()?.influxdb?.host);

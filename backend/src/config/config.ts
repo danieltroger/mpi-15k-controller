@@ -1,9 +1,9 @@
 import { promises as fs_promises } from "fs";
-import { batch, createEffect, createSignal, Owner, runWithOwner, Signal, untrack } from "solid-js";
+import { batch, createEffect, createSignal, type Owner, runWithOwner, type Signal, untrack } from "solid-js";
 import path from "path";
 import process from "process";
-import { errorLog, logLog } from "../utilities/logging";
-import { Config } from "./config.types";
+import { errorLog, logLog } from "../utilities/logging.ts";
+import type { Config } from "./config.types.ts";
 
 const default_config: Config = {
   automatic_trading: {

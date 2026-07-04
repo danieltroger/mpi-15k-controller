@@ -1,6 +1,6 @@
-import { Accessor, createMemo } from "solid-js";
-import { InfluxClientAccessor } from "./useDatabasePower";
-import { calculateBatteryEnergy } from "./calculateBatteryEnergy";
+import { type Accessor, createMemo } from "solid-js";
+import type { InfluxClientAccessor } from "./useDatabasePower.ts";
+import { calculateBatteryEnergy } from "./calculateBatteryEnergy.ts";
 
 export function batteryCalculationsDependingOnUnknowns({
   currentPower,

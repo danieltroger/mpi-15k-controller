@@ -1,9 +1,9 @@
-import { debugLog, errorLog } from "../utilities/logging";
-import { exec } from "../utilities/exec";
-import { Accessor, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
-import { CommandQueueItem } from "./usb.types";
-import { Config } from "../config/config.types";
-import { useUsbInverterConfiguration } from "./UsbInverterConfigurationProvider";
+import { debugLog, errorLog } from "../utilities/logging.ts";
+import { exec } from "../utilities/exec.ts";
+import { type Accessor, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
+import type { CommandQueueItem } from "./usb.types.ts";
+import type { Config } from "../config/config.types.ts";
+import { useUsbInverterConfiguration } from "./UsbInverterConfigurationProvider.ts";
 
 export function useProcessUsbQueue(config: Accessor<Config>) {
   const { commandQueue } = useUsbInverterConfiguration();

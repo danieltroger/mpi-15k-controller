@@ -1,5 +1,5 @@
-import { Accessor, createContext, JSX, useContext } from "solid-js";
-import { useMQTTValues } from "./useMQTTValues";
+import { type Accessor, createContext, type JSX, useContext } from "solid-js";
+import { useMQTTValues } from "./useMQTTValues.ts";
 
 const MqttValuesContext = createContext<ReturnType<typeof useMQTTValues>>();
 
