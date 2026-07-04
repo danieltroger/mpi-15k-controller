@@ -3192,7 +3192,7 @@ const RAW_RUNTIME_STATE =
           ["solid-js", "patch:solid-js@npm%3A1.8.7#~/.yarn/patches/solid-js-npm-1.8.7-4c5df2b26e.patch::version=1.8.7&hash=7c96a8"],\
           ["typescript", "patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=5786d5"],\
           ["ws", "virtual:f49125e9076d65ce30a4dc0070290d25fabf3e8d632aff531c33779e6f245a2d72a35394ea0a333e93696ecff21472977831845a7d7addce0d62f448cd74ade3#npm:8.17.0"],\
-          ["zod", "npm:3.24.1"]\
+          ["zod", "npm:3.25.76"]\
         ],\
         "linkType": "SOFT"\
       }]\
@@ -4362,7 +4362,7 @@ const RAW_RUNTIME_STATE =
           ["typescript", "patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=5786d5"],\
           ["vinxi", "npm:0.3.11"],\
           ["vite", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:5.2.11"],\
-          ["zod", "npm:3.24.1"]\
+          ["zod", "npm:3.25.76"]\
         ],\
         "linkType": "SOFT"\
       }]\
@@ -8127,7 +8127,7 @@ const RAW_RUNTIME_STATE =
           ["unstorage", "virtual:e1c4590557c9c21d9f73d60435e05b3e8e02c05e85558a8da85eb4cd569164b6dabe60a4476ac7edbe5ca447847ff5333a2fd726d5698f0b53b88ea500f64bd2#npm:1.10.2"],\
           ["vinxi", "npm:0.3.11"],\
           ["vite", "virtual:e1c4590557c9c21d9f73d60435e05b3e8e02c05e85558a8da85eb4cd569164b6dabe60a4476ac7edbe5ca447847ff5333a2fd726d5698f0b53b88ea500f64bd2#npm:5.2.11"],\
-          ["zod", "npm:3.23.6"]\
+          ["zod", "npm:3.25.76"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -8540,17 +8540,10 @@ const RAW_RUNTIME_STATE =
       }]\
     ]],\
     ["zod", [\
-      ["npm:3.23.6", {\
-        "packageLocation": "./.yarn/cache/zod-npm-3.23.6-292bd5eb23-9181606c65.zip/node_modules/zod/",\
+      ["npm:3.25.76", {\
+        "packageLocation": "./.yarn/cache/zod-npm-3.25.76-7de26333f8-5718ec35e3.zip/node_modules/zod/",\
         "packageDependencies": [\
-          ["zod", "npm:3.23.6"]\
-        ],\
-        "linkType": "HARD"\
-      }],\
-      ["npm:3.24.1", {\
-        "packageLocation": "./.yarn/cache/zod-npm-3.24.1-62ba4e84b3-0223d21dba.zip/node_modules/zod/",\
-        "packageDependencies": [\
-          ["zod", "npm:3.24.1"]\
+          ["zod", "npm:3.25.76"]\
         ],\
         "linkType": "HARD"\
       }]\
