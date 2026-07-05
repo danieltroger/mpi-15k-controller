@@ -3,8 +3,9 @@
  * so it can be simulated/tested standalone.
  *
  * Economics (E.ON, SE3, 2026): buying costs ≈ (spot + ~1.19 SEK surcharges) × 1.25 VAT ≈ 1.25×spot + 1.48 SEK/kWh,
- * selling earns ≈ spot + ~0.09 SEK/kWh. Buying is therefore only ever scheduled to avoid an even more
- * expensive unavoidable import (battery empty → house pulls from grid), never for arbitrage.
+ * selling earns ≈ spot + ~0.09 SEK/kWh. Buying is therefore only scheduled when it beats those numbers:
+ * to avert an even more expensive unavoidable import (battery empty → house pulls from grid), or as
+ * arbitrage when a later sell clears the full fee + round-trip-loss + margin stack.
  *
  * Strategy: simulate battery SOC over the price horizon (+ a constraint tail covering the following night)
  * using solar + consumption forecasts, then greedily allocate 15-min sell slots from the highest spot price
@@ -13,34 +14,42 @@
  * by the simulation's revenue accounting.
  */
 
+import type { AutomaticTradingConfig } from "../config/config.types.ts";
+
 export const SLOT_MS = 15 * 60 * 1000;
 
 export type PriceSlot15 = { startMs: number; spot: number };
 
 export type FixedWindow = { startMs: number; endMs: number; watts: number };
 
-export type PlannerKnobs = {
-  maxSellPowerWatts: number;
-  batteryMaxDischargeWatts: number;
-  maxBuyPowerWatts: number;
-  plannerSocFloorPercent: number;
-  runtimeSocFloorPercent: number;
-  emergencySocFloorPercent: number;
-  extraReserveKwh: number;
-  minSellSpotSekPerKwh: number;
-  minGainSekPerSlot: number;
-  minWindowMinutes: number;
-  chargeEfficiency: number;
-  dischargeEfficiency: number;
-  buySurchargesSekPerKwh: number;
-  vatMultiplier: number;
-  sellBonusSekPerKwh: number;
-  minBuySavingSekPerKwh: number;
-  baselineFeedWatts: number;
-  /** The inverter ramps grid feed-in slowly (grid safety) — minutes from 0 to full export power */
-  sellRampMinutes: number;
-  /** Also buy purely to re-sell later when the spread beats fees + losses + margin */
-  allowArbitrageBuying: boolean;
+/**
+ * Knobs are the automatic_trading config section verbatim (spread it in), plus two values
+ * that live elsewhere in the config: the runtime sell cutoff and the baseline night feed.
+ */
+export type PlannerKnobs = Pick<
+  AutomaticTradingConfig,
+  | "max_sell_power_watts"
+  | "battery_max_discharge_watts"
+  | "max_buy_power_watts"
+  | "planner_soc_floor_percent"
+  | "emergency_soc_floor_percent"
+  | "extra_reserve_kwh"
+  | "min_sell_spot_sek_per_kwh"
+  | "min_gain_sek_per_slot"
+  | "min_window_minutes"
+  | "charge_efficiency"
+  | "discharge_efficiency"
+  | "buy_surcharges_sek_per_kwh"
+  | "vat_multiplier"
+  | "sell_bonus_sek_per_kwh"
+  | "min_buy_saving_sek_per_kwh"
+  | "sell_ramp_minutes"
+  | "allow_arbitrage_buying"
+> & {
+  /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
+  runtime_soc_floor_percent: number;
+  /** feed_from_battery_when_no_solar.feed_amount_watts */
+  baseline_feed_watts: number;
 };
 
 export type PlannerInput = {
@@ -160,9 +169,9 @@ function buildSlots(input: PlannerInput): Slot[] {
 function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: number[], tailSpot: number): SimResult {
   const k = input.knobs;
   const cap = input.capacityWh;
-  const floorPlannerWh = (k.plannerSocFloorPercent / 100) * cap + k.extraReserveKwh * 1000;
-  const floorRuntimeWh = (k.runtimeSocFloorPercent / 100) * cap;
-  const floorEmergencyWh = (k.emergencySocFloorPercent / 100) * cap;
+  const floorPlannerWh = (k.planner_soc_floor_percent / 100) * cap + k.extra_reserve_kwh * 1000;
+  const floorRuntimeWh = (k.runtime_soc_floor_percent / 100) * cap;
+  const floorEmergencyWh = (k.emergency_soc_floor_percent / 100) * cap;
 
   let socWh = (input.socPercent / 100) * cap;
   let revenueSek = 0;
@@ -175,7 +184,7 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
   // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
-  // so the first sellRampMinutes of every (re)start deliver reduced power.
+  // so the first sell_ramp_minutes of every (re)start deliver reduced power.
   let sellRunMinutes = 0;
 
   for (let i = 0; i < slots.length; i++) {
@@ -202,10 +211,10 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
-      exportW = Math.min(sellSetW, k.batteryMaxDischargeWatts + s.pvW - s.houseW - parasiticW);
+      exportW = Math.min(sellSetW, k.battery_max_discharge_watts + s.pvW - s.houseW - parasiticW);
       exportW = Math.max(exportW, 0);
-      // Average ramp factor over this slot: linear 0→100% across the first sellRampMinutes of the run
-      const rampMin = k.sellRampMinutes;
+      // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
+      const rampMin = k.sell_ramp_minutes;
       if (rampMin > 0 && sellRunMinutes < rampMin) {
         const slotMin = s.durationH * 60;
         const e0 = sellRunMinutes;
@@ -220,7 +229,7 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
       sellRunMinutes = 0;
       if (buySetW === 0 && s.pvW < s.houseW + parasiticW + 380) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw
-        exportW = k.baselineFeedWatts;
+        exportW = k.baseline_feed_watts;
       }
     }
 
@@ -231,29 +240,29 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
       netBattW = s.pvW - s.houseW - parasiticW - exportW;
     }
     const deltaWh =
-      netBattW >= 0 ? netBattW * k.chargeEfficiency * s.durationH : (netBattW / k.dischargeEfficiency) * s.durationH;
+      netBattW >= 0 ? netBattW * k.charge_efficiency * s.durationH : (netBattW / k.discharge_efficiency) * s.durationH;
     socWh += deltaWh;
 
     if (socWh > cap) {
       // Battery full: surplus PV flows to the grid by itself (solar-mode feeding)
       const overflowInBatteryWh = socWh - cap;
-      autoExportWh += overflowInBatteryWh / k.chargeEfficiency;
-      revenueSek += (overflowInBatteryWh / k.chargeEfficiency / 1000) * (spot + k.sellBonusSekPerKwh);
+      autoExportWh += overflowInBatteryWh / k.charge_efficiency;
+      revenueSek += (overflowInBatteryWh / k.charge_efficiency / 1000) * (spot + k.sell_bonus_sek_per_kwh);
       socWh = cap;
     }
     if (socWh < floorEmergencyWh) {
       // Battery can't go lower — the house pulls the deficit from the grid (unavoidable import)
       const deficitWh = floorEmergencyWh - socWh;
-      const importedForHouseWh = deficitWh * k.dischargeEfficiency;
+      const importedForHouseWh = deficitWh * k.discharge_efficiency;
       slotImportWh += importedForHouseWh;
       socWh = floorEmergencyWh;
     }
 
     const exportedWh = exportW * s.durationH;
     sellExportWh += sellSetW > 0 ? exportedWh : 0;
-    revenueSek += (exportedWh / 1000) * (spot + k.sellBonusSekPerKwh);
+    revenueSek += (exportedWh / 1000) * (spot + k.sell_bonus_sek_per_kwh);
     importWh += slotImportWh;
-    revenueSek -= (slotImportWh / 1000) * (spot + k.buySurchargesSekPerKwh) * k.vatMultiplier;
+    revenueSek -= (slotImportWh / 1000) * (spot + k.buy_surcharges_sek_per_kwh) * k.vat_multiplier;
 
     if (socWh < floorPlannerWh) violationWh += floorPlannerWh - socWh;
     if (socWh < minSocWh) {
@@ -282,7 +291,7 @@ function mergeAcceptedSlots(
   accepted: number[],
   watts: number,
   kind: "sell" | "buy",
-  minWindowMinutes: number
+  min_window_minutes: number
 ): {
   windows: { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] }[];
   droppedShort: number;
@@ -299,7 +308,7 @@ function mergeAcceptedSlots(
     }
   }
   const before = windows.length;
-  const kept = windows.filter(w => (w.endMs - w.startMs) / 60000 >= minWindowMinutes);
+  const kept = windows.filter(w => (w.endMs - w.startMs) / 60000 >= min_window_minutes);
   return { windows: kept, droppedShort: before - kept.length };
 }
 
@@ -339,7 +348,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     .filter(
       ({ s }) =>
         s.spot !== undefined &&
-        s.spot >= k.minSellSpotSekPerKwh &&
+        s.spot >= k.min_sell_spot_sek_per_kwh &&
         s.fixedSellW === 0 &&
         s.fixedBuyW === 0 &&
         !overlapsVeto(s, input.sellVetoWindows)
@@ -349,10 +358,10 @@ export function generatePlan(input: PlannerInput): PlanResult {
   let current = base;
   const acceptedSell: number[] = [];
   for (const { i } of sellCandidates) {
-    sellW[i] = k.maxSellPowerWatts;
+    sellW[i] = k.max_sell_power_watts;
     const trial = simulate(input, slots, sellW, buyW, tailSpot);
     const gain = trial.revenueSek - current.revenueSek;
-    if (feasibleVsBase(trial) && gain >= k.minGainSekPerSlot) {
+    if (feasibleVsBase(trial) && gain >= k.min_gain_sek_per_slot) {
       current = trial;
       acceptedSell.push(i);
     } else {
@@ -360,29 +369,52 @@ export function generatePlan(input: PlannerInput): PlanResult {
     }
   }
 
-  // Fill single-slot gaps between accepted slots: a 15-min feed stop/start costs inverter
-  // rampup + USB command churn, so accept a small revenue loss for a contiguous window.
-  const acceptedSet = new Set(acceptedSell);
-  const maxSmoothingLossSek = 1;
-  for (let i = 1; i < slots.length - 1; i++) {
-    if (sellW[i] > 0 || slots[i].spot === undefined) continue;
-    if (!acceptedSet.has(i - 1) || !acceptedSet.has(i + 1)) continue;
-    if (slots[i - 1].endMs !== slots[i].startMs || slots[i].endMs !== slots[i + 1].startMs) continue;
-    if (slots[i].fixedSellW > 0 || slots[i].fixedBuyW > 0 || overlapsVeto(slots[i], input.sellVetoWindows)) continue;
-    sellW[i] = k.maxSellPowerWatts;
-    const trial = simulate(input, slots, sellW, buyW, tailSpot);
-    if (feasibleVsBase(trial) && trial.revenueSek - current.revenueSek >= -maxSmoothingLossSek) {
-      current = trial;
-      acceptedSell.push(i);
-      acceptedSet.add(i);
-    } else {
-      sellW[i] = 0;
+  // Bridge short price valleys between accepted windows: every feed stop/start restarts the
+  // slow feed-in ramp (which the simulation prices in), so selling through a shallow dip is
+  // usually better than pausing — and nobody wants a schedule with a 30-min hole in it.
+  // Accept a bounded revenue loss per bridged slot; the sim decides using ramp + prices.
+  const maxGapSlots = 3;
+  const maxSmoothingLossSekPerSlot = 1;
+  for (let pass = 0, changed = true; pass < 4 && changed; pass++) {
+    changed = false;
+    const acceptedSorted = [...new Set(acceptedSell)].sort((a, b) => a - b);
+    for (let idx = 0; idx + 1 < acceptedSorted.length; idx++) {
+      const before = acceptedSorted[idx];
+      const after = acceptedSorted[idx + 1];
+      const gapSlots = after - before - 1;
+      if (gapSlots < 1 || gapSlots > maxGapSlots) continue;
+      if (slots[after].startMs - slots[before].endMs !== gapSlots * SLOT_MS) continue;
+      const fillable: number[] = [];
+      for (let j = before + 1; j < after; j++) {
+        const s = slots[j];
+        if (
+          sellW[j] > 0 ||
+          s.spot === undefined ||
+          s.fixedSellW > 0 ||
+          s.fixedBuyW > 0 ||
+          overlapsVeto(s, input.sellVetoWindows)
+        ) {
+          fillable.length = 0;
+          break;
+        }
+        fillable.push(j);
+      }
+      if (fillable.length !== gapSlots) continue;
+      for (const j of fillable) sellW[j] = k.max_sell_power_watts;
+      const trial = simulate(input, slots, sellW, buyW, tailSpot);
+      if (feasibleVsBase(trial) && trial.revenueSek - current.revenueSek >= -maxSmoothingLossSekPerSlot * gapSlots) {
+        current = trial;
+        acceptedSell.push(...fillable);
+        changed = true;
+      } else {
+        for (const j of fillable) sellW[j] = 0;
+      }
     }
   }
 
   // ---- Buy allocation, pass 1: avert projected unavoidable imports, cheapest slots first ----
   const acceptedBuy: number[] = [];
-  if (current.importWh > 500 && k.maxBuyPowerWatts > 0) {
+  if (current.importWh > 500 && k.max_buy_power_watts > 0) {
     notes.push(
       `Projected unavoidable import of ${(current.importWh / 1000).toFixed(1)} kWh — evaluating pre-buying at cheap hours`
     );
@@ -395,11 +427,11 @@ export function generatePlan(input: PlannerInput): PlanResult {
       .sort((a, b) => a.s.spot! - b.s.spot!);
     for (const { i } of buyCandidates) {
       if (sellW[i] > 0) continue;
-      buyW[i] = k.maxBuyPowerWatts;
+      buyW[i] = k.max_buy_power_watts;
       const trial = simulate(input, slots, sellW, buyW, tailSpot);
       const gain = trial.revenueSek - current.revenueSek;
       const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
-      if (feasibleVsBase(trial) && extraBoughtKwh > 0 && gain / extraBoughtKwh >= k.minBuySavingSekPerKwh) {
+      if (feasibleVsBase(trial) && extraBoughtKwh > 0 && gain / extraBoughtKwh >= k.min_buy_saving_sek_per_kwh) {
         current = trial;
         acceptedBuy.push(i);
       } else {
@@ -413,8 +445,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
   // beats fees + VAT + round-trip losses + margin. Buys and sells only pay off together (bought
   // energy has no value without a later sell window), so they are trialled as pairs.
   const arbitrageBuySlots = new Set<number>();
-  if (k.allowArbitrageBuying && k.maxBuyPowerWatts > 0) {
-    const roundTrip = k.chargeEfficiency * k.dischargeEfficiency;
+  if (k.allow_arbitrage_buying && k.max_buy_power_watts > 0) {
+    const roundTrip = k.charge_efficiency * k.discharge_efficiency;
     const tradable = (i: number) =>
       slots[i].spot !== undefined &&
       sellW[i] === 0 &&
@@ -428,8 +460,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
     // A sold slot moves more energy out than one bought slot puts in (after losses), so a
     // 1:1 pairing is net-battery-negative and would always fail under a binding reserve floor.
     // Buy enough slots per sell slot to keep the pair battery-neutral or better.
-    const buySlotKwh = (k.maxBuyPowerWatts * 0.25) / 1000;
-    const sellSlotKwh = (Math.min(k.maxSellPowerWatts, k.batteryMaxDischargeWatts) * 0.25) / 1000;
+    const buySlotKwh = (k.max_buy_power_watts * 0.25) / 1000;
+    const sellSlotKwh = (Math.min(k.max_sell_power_watts, k.battery_max_discharge_watts) * 0.25) / 1000;
     const buysPerSell = Math.max(1, Math.ceil(sellSlotKwh / (buySlotKwh * roundTrip)));
     let misses = 0;
     let pairs = 0;
@@ -447,7 +479,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
           ({ s, i }) =>
             tradable(i) &&
             s.startMs > lastBuyStart &&
-            s.spot! >= k.minSellSpotSekPerKwh &&
+            s.spot! >= k.min_sell_spot_sek_per_kwh &&
             !overlapsVeto(s, input.sellVetoWindows)
         )
         .sort((a, b2) => b2.s.spot! - a.s.spot!);
@@ -455,17 +487,17 @@ export function generatePlan(input: PlannerInput): PlanResult {
       // Even the best possible pairing must clear the margin on prices alone, else nothing can
       const avgBuySpot = buyGroup.reduce((sum, i) => sum + slots[i].spot!, 0) / buyGroup.length;
       const bestPossible =
-        (sellPool[0].s.spot! + k.sellBonusSekPerKwh) * roundTrip -
-        (avgBuySpot + k.buySurchargesSekPerKwh) * k.vatMultiplier;
-      if (bestPossible < k.minBuySavingSekPerKwh) break;
+        (sellPool[0].s.spot! + k.sell_bonus_sek_per_kwh) * roundTrip -
+        (avgBuySpot + k.buy_surcharges_sek_per_kwh) * k.vat_multiplier;
+      if (bestPossible < k.min_buy_saving_sek_per_kwh) break;
       let matched = false;
       for (const { i: sellIdx } of sellPool.slice(0, 3)) {
-        for (const b of buyGroup) buyW[b] = k.maxBuyPowerWatts;
-        sellW[sellIdx] = k.maxSellPowerWatts;
+        for (const b of buyGroup) buyW[b] = k.max_buy_power_watts;
+        sellW[sellIdx] = k.max_sell_power_watts;
         const trial = simulate(input, slots, sellW, buyW, tailSpot);
         const gain = trial.revenueSek - current.revenueSek;
         const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
-        if (feasibleVsBase(trial) && extraBoughtKwh > 0.1 && gain / extraBoughtKwh >= k.minBuySavingSekPerKwh) {
+        if (feasibleVsBase(trial) && extraBoughtKwh > 0.1 && gain / extraBoughtKwh >= k.min_buy_saving_sek_per_kwh) {
           current = trial;
           for (const b of buyGroup) {
             acceptedBuy.push(b);
@@ -491,7 +523,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     }
     if (pairs) {
       notes.push(
-        `Arbitrage: ${pairs} buy/sell slot pair(s) accepted — spread beats fees + losses + ${k.minBuySavingSekPerKwh} SEK/kWh margin`
+        `Arbitrage: ${pairs} buy/sell slot pair(s) accepted — spread beats fees + losses + ${k.min_buy_saving_sek_per_kwh} SEK/kWh margin`
       );
     }
   }
@@ -500,19 +532,25 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
     slots,
     acceptedSell,
-    k.maxSellPowerWatts,
+    k.max_sell_power_watts,
     "sell",
-    k.minWindowMinutes
+    k.min_window_minutes
   );
   if (droppedShort) {
-    notes.push(`Dropped ${droppedShort} sell window(s) shorter than ${k.minWindowMinutes} min`);
+    notes.push(`Dropped ${droppedShort} sell window(s) shorter than ${k.min_window_minutes} min`);
     for (const i of acceptedSell) {
       if (!sellWindows.some(w => w.slotIndexes.includes(i))) sellW[i] = 0;
     }
     current = simulate(input, slots, sellW, buyW, tailSpot);
   }
 
-  const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, k.maxBuyPowerWatts, "buy", k.minWindowMinutes);
+  const { windows: buyWindows } = mergeAcceptedSlots(
+    slots,
+    acceptedBuy,
+    k.max_buy_power_watts,
+    "buy",
+    k.min_window_minutes
+  );
 
   // ---- Package result ----
   const spotsAll = pricedSlots.map(s => s.spot!).sort((a, b) => a - b);
@@ -535,7 +573,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
         const s = slots[i];
         const exportW = Math.max(
           0,
-          Math.min(w.watts, k.batteryMaxDischargeWatts + s.pvW - s.houseW - input.parasiticWatts)
+          Math.min(w.watts, k.battery_max_discharge_watts + s.pvW - s.houseW - input.parasiticWatts)
         );
         return sum + (exportW * s.durationH) / 1000;
       }, 0);
@@ -563,7 +601,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   notes.push(
     `Horizon ${new Date(Math.max(input.nowMs, pricedSlots[0].startMs)).toISOString()} → ${new Date(pricedSlots[pricedSlots.length - 1].endMs).toISOString()} (+${input.constraintTailHours}h reserve tail)`
   );
-  if (k.extraReserveKwh > 0) notes.push(`User extra reserve of ${k.extraReserveKwh} kWh respected`);
+  if (k.extra_reserve_kwh > 0) notes.push(`User extra reserve of ${k.extra_reserve_kwh} kWh respected`);
 
   const projection: PlanProjection = {
     startSocPercent: input.socPercent,

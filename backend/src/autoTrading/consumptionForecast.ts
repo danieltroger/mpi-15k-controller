@@ -13,7 +13,7 @@ let cache: ConsumptionForecast | undefined;
 
 function localHour(ms: number): number {
   return parseInt(
-    new Date(ms).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", hour12: false }),
+    new Date(ms).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", hourCycle: "h23" }),
     10
   );
 }

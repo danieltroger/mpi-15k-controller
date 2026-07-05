@@ -6,26 +6,26 @@ import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } fro
 
 const H = 3600_000;
 const baseKnobs = {
-  maxSellPowerWatts: 15000,
-  batteryMaxDischargeWatts: 13000,
-  maxBuyPowerWatts: 10000,
-  plannerSocFloorPercent: 20,
-  runtimeSocFloorPercent: 15,
-  emergencySocFloorPercent: 3,
-  extraReserveKwh: 0,
-  minSellSpotSekPerKwh: 0.08,
-  minGainSekPerSlot: 0.25,
-  minWindowMinutes: 30,
-  chargeEfficiency: 0.95,
-  dischargeEfficiency: 0.93,
-  buySurchargesSekPerKwh: 1.186,
-  vatMultiplier: 1.25,
-  sellBonusSekPerKwh: 0.092,
-  minBuySavingSekPerKwh: 0.3,
-  baselineFeedWatts: 350,
+  max_sell_power_watts: 15000,
+  battery_max_discharge_watts: 13000,
+  max_buy_power_watts: 10000,
+  planner_soc_floor_percent: 20,
+  runtime_soc_floor_percent: 15,
+  emergency_soc_floor_percent: 3,
+  extra_reserve_kwh: 0,
+  min_sell_spot_sek_per_kwh: 0.08,
+  min_gain_sek_per_slot: 0.25,
+  min_window_minutes: 30,
+  charge_efficiency: 0.95,
+  discharge_efficiency: 0.93,
+  buy_surcharges_sek_per_kwh: 1.186,
+  vat_multiplier: 1.25,
+  sell_bonus_sek_per_kwh: 0.092,
+  min_buy_saving_sek_per_kwh: 0.3,
+  baseline_feed_watts: 350,
   // Existing scenarios predate ramp modeling and arbitrage — keep them isolated
-  sellRampMinutes: 0,
-  allowArbitrageBuying: false,
+  sell_ramp_minutes: 0,
+  allow_arbitrage_buying: false,
 };
 
 // t0 = a midnight-aligned "now"
@@ -186,7 +186,7 @@ function check(name: string, cond: boolean, detail = "") {
     fixedBuys: [],
     sellVetoWindows: [],
     buyVetoWindows: [],
-    knobs: { ...baseKnobs, extraReserveKwh: extra },
+    knobs: { ...baseKnobs, extra_reserve_kwh: extra },
   });
   const withoutReserve = generatePlan(mk(0));
   const withReserve = generatePlan(mk(20));
@@ -227,7 +227,7 @@ function check(name: string, cond: boolean, detail = "") {
     fixedBuys: [],
     sellVetoWindows: [],
     buyVetoWindows: [],
-    knobs: { ...baseKnobs, allowArbitrageBuying: arbitrage, minBuySavingSekPerKwh: 0.25 },
+    knobs: { ...baseKnobs, allow_arbitrage_buying: arbitrage, min_buy_saving_sek_per_kwh: 0.25 },
   });
   const withoutArb = generatePlan(mk(false));
   const withArb = generatePlan(mk(true));
@@ -284,7 +284,7 @@ function check(name: string, cond: boolean, detail = "") {
     fixedBuys: [],
     sellVetoWindows: [],
     buyVetoWindows: [],
-    knobs: { ...baseKnobs, sellRampMinutes: rampMinutes },
+    knobs: { ...baseKnobs, sell_ramp_minutes: rampMinutes },
   });
   const noRamp = generatePlan(mk(0));
   const withRamp = generatePlan(mk(10));

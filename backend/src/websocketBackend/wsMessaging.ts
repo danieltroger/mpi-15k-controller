@@ -8,13 +8,13 @@ export async function wsMessaging({
   owner,
   temperatures,
   exposedAccessors,
-  actions = {},
+  actions,
 }: {
   config_signal: Signal<Config>;
   owner: Owner;
   temperatures: ReturnType<typeof useTemperatures>;
   exposedAccessors: Record<string, Accessor<any>>;
-  actions?: Record<string, () => Promise<string>>;
+  actions: Record<string, () => Promise<string>>;
 }) {
   const exposed_signals = {
     config: {

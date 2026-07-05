@@ -14,9 +14,9 @@ const default_config: Config = {
     latitude: 59.33,
     longitude: 18.07,
     max_sell_power_watts: 15000,
-    battery_max_discharge_watts: 13000,
+    battery_max_discharge_watts: 14500,
     max_buy_power_watts: 15000,
-    planner_soc_floor_percent: 20,
+    planner_soc_floor_percent: 10,
     emergency_soc_floor_percent: 3,
     extra_reserve_kwh: 0,
     min_sell_spot_sek_per_kwh: 0.08,
@@ -24,7 +24,7 @@ const default_config: Config = {
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
     sell_ramp_minutes: 10,
-    min_window_minutes: 30,
+    min_window_minutes: 15,
     charge_efficiency: 0.95,
     discharge_efficiency: 0.93,
     // E.ON 2026: elöverföring 0.734 + energiskatt 0.36 + rörliga kostnader ~0.052 + fast påslag 0.04
@@ -36,7 +36,8 @@ const default_config: Config = {
     guard_interval_minutes: 30,
     replan_retry_minutes: 15,
     fallback_house_load_watts: 550,
-    // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026)
+    // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026).
+    // Sun angles shift over the year — worth re-fitting seasonally (see planPreview/backtest tooling).
     solar_model: {
       watts_per_direct_radiation: 9.95,
       watts_per_diffuse_radiation: 16.4,

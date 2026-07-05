@@ -1,102 +1,21 @@
-import { promises as fs_promises } from "fs";
-import path from "path";
-import process from "process";
-import Influx from "influx";
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
 import { wait } from "../vendor/depictUtilishared.ts";
+import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
+import { useInfluxClient } from "../utilities/useInfluxClient.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
+import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import {
   type FixedWindow,
   generatePlan,
   type PlannerInput,
-  type PlanProjection,
   type PlannedWindow,
   projectWithFixedWindows,
 } from "./planner.ts";
-
-type StateWindow = {
-  start: string;
-  end: string;
-  watts: number;
-  kind: "sell" | "buy";
-  reason: string;
-  expected_kwh: number;
-  avg_spot: number;
-};
-
-type AutoTraderState = {
-  last_plan?: {
-    generated_at: string;
-    trigger: string;
-    horizon_end: string;
-    projection: PlanProjection;
-    notes: string[];
-    windows: StateWindow[];
-  };
-  /** Exactly the schedule entries the auto trader wrote (used to tell ours from the user's) */
-  owned_entries: {
-    selling: Record<string, { end_time: string; power_watts: number }>;
-    buying: Record<string, { end_time: string; charging_power: number }>;
-  };
-  /** Time ranges where the user deleted one of our windows — don't re-plan trades there until they pass */
-  vetoes: { start: string; end: string; kind: "sell" | "buy"; noticed_at: string }[];
-  last_error?: { at: string; message: string };
-  guard?: { last_run_at: string; last_action: string };
-};
-
-const EMPTY_STATE: AutoTraderState = { owned_entries: { selling: {}, buying: {} }, vetoes: [] };
-
-function stateFilePath() {
-  return path.dirname(process.argv[1]) + "/../auto_trader_state.json";
-}
-
-async function loadState(): Promise<AutoTraderState> {
-  try {
-    const raw = await fs_promises.readFile(stateFilePath(), { encoding: "utf-8" });
-    const parsed = JSON.parse(raw);
-    return { ...EMPTY_STATE, ...parsed };
-  } catch {
-    return structuredClone(EMPTY_STATE);
-  }
-}
-
-async function saveState(state: AutoTraderState) {
-  try {
-    await fs_promises.writeFile(stateFilePath(), JSON.stringify(state, null, 2), { encoding: "utf-8" });
-  } catch (e) {
-    errorLog("Auto trader: failed to persist state file", e);
-  }
-}
-
-/** Next occurrence of HH:MM in Europe/Stockholm, DST-proof (scans minute marks). */
-function msUntilNextLocalTime(hhmm: string): number {
-  const now = Date.now();
-  const startMinute = Math.floor(now / 60000) * 60000;
-  for (let m = 1; m <= 25 * 60; m++) {
-    const candidate = startMinute + m * 60000;
-    const local = new Date(candidate).toLocaleTimeString("sv-SE", {
-      timeZone: "Europe/Stockholm",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    if (local === hhmm) return candidate - now;
-  }
-  errorLog("Auto trader: could not resolve local time", hhmm, "- defaulting to 24h");
-  return 24 * 3600 * 1000;
-}
-
-function entriesEqual(
-  a: { end_time: string } & Record<string, unknown>,
-  b: { end_time: string } & Record<string, unknown>,
-  powerKey: string
-) {
-  return a.end_time === b.end_time && Number(a[powerKey]) === Number(b[powerKey]);
-}
 
 export function useAutoTrader({
   configSignal,
@@ -117,15 +36,18 @@ export function useAutoTrader({
   let aborted = false;
   let consecutiveFailures = 0;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  // Serializes every read-modify-write of the schedules + ownership state, so a guard run and a
+  // plan run can't interleave their setConfig calls and desync owned_entries from the config.
+  let scheduleLock: Promise<unknown> = Promise.resolve();
+  function withScheduleLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = scheduleLock.then(fn);
+    scheduleLock = run.catch(() => undefined);
+    return run;
+  }
 
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
-  const knobsConfig = () => config().automatic_trading;
 
-  const influxClient = createMemo(() => {
-    const { host, database, username, password } = config().influxdb ?? {};
-    if (!host || !database || !username || !password) return undefined;
-    return new Influx.InfluxDB({ host, database, username, password });
-  });
+  const influxClient = useInfluxClient(config);
 
   function refreshStatus(extra?: object) {
     setStatus({
@@ -150,13 +72,25 @@ export function useAutoTrader({
   function reconcileOwnership(cfg: Config) {
     const now = Date.now();
     const next: AutoTraderState["owned_entries"] = { selling: {}, buying: {} };
+    // A vanished owned key whose range is covered by another entry isn't a deletion — the user
+    // reshaped the window (e.g. merged two windows into one). Only a bare removal is a veto.
+    const overlapsAnyEntry = (schedule: Record<string, { end_time: string }>, startMs: number, endMs: number) =>
+      Object.entries(schedule).some(([k, e]) => {
+        const s = +new Date(k);
+        const en = +new Date(e.end_time);
+        return isFinite(s) && isFinite(en) && s < endMs && en > startMs;
+      });
     for (const [key, owned] of Object.entries(state.owned_entries.selling)) {
       const inConfig = cfg.scheduled_power_selling.schedule[key];
       if (inConfig && entriesEqual(inConfig, owned, "power_watts")) {
         next.selling[key] = owned;
       } else if (!inConfig && +new Date(owned.end_time) > now) {
-        state.vetoes.push({ start: key, end: owned.end_time, kind: "sell", noticed_at: new Date(now).toISOString() });
-        logLog("Auto trader: user removed our sell window", key, "→ won't re-plan selling in that range");
+        if (overlapsAnyEntry(cfg.scheduled_power_selling.schedule, +new Date(key), +new Date(owned.end_time))) {
+          logLog("Auto trader: our sell window", key, "was reshaped by the user — theirs now, no veto");
+        } else {
+          state.vetoes.push({ start: key, end: owned.end_time, kind: "sell", noticed_at: new Date(now).toISOString() });
+          logLog("Auto trader: user removed our sell window", key, "→ won't re-plan selling in that range");
+        }
       }
     }
     for (const [key, owned] of Object.entries(state.owned_entries.buying)) {
@@ -164,8 +98,12 @@ export function useAutoTrader({
       if (inConfig && entriesEqual(inConfig, owned, "charging_power")) {
         next.buying[key] = owned;
       } else if (!inConfig && +new Date(owned.end_time) > now) {
-        state.vetoes.push({ start: key, end: owned.end_time, kind: "buy", noticed_at: new Date(now).toISOString() });
-        logLog("Auto trader: user removed our buy window", key, "→ won't re-plan buying in that range");
+        if (overlapsAnyEntry(cfg.scheduled_power_buying.schedule, +new Date(key), +new Date(owned.end_time))) {
+          logLog("Auto trader: our buy window", key, "was reshaped by the user — theirs now, no veto");
+        } else {
+          state.vetoes.push({ start: key, end: owned.end_time, kind: "buy", noticed_at: new Date(now).toISOString() });
+          logLog("Auto trader: user removed our buy window", key, "→ won't re-plan buying in that range");
+        }
       }
     }
     state.owned_entries = next;
@@ -220,25 +158,9 @@ export function useAutoTrader({
         .filter(v => v.kind === "buy")
         .map(v => ({ startMs: +new Date(v.start), endMs: +new Date(v.end) })),
       knobs: {
-        maxSellPowerWatts: at.max_sell_power_watts,
-        batteryMaxDischargeWatts: at.battery_max_discharge_watts,
-        maxBuyPowerWatts: at.max_buy_power_watts,
-        plannerSocFloorPercent: at.planner_soc_floor_percent,
-        runtimeSocFloorPercent: cfg.scheduled_power_selling.only_sell_above_soc,
-        emergencySocFloorPercent: at.emergency_soc_floor_percent,
-        extraReserveKwh: at.extra_reserve_kwh,
-        minSellSpotSekPerKwh: at.min_sell_spot_sek_per_kwh,
-        minGainSekPerSlot: at.min_gain_sek_per_slot,
-        minWindowMinutes: at.min_window_minutes,
-        chargeEfficiency: at.charge_efficiency,
-        dischargeEfficiency: at.discharge_efficiency,
-        buySurchargesSekPerKwh: at.buy_surcharges_sek_per_kwh,
-        vatMultiplier: at.vat_multiplier,
-        sellBonusSekPerKwh: at.sell_bonus_sek_per_kwh,
-        minBuySavingSekPerKwh: at.min_buy_saving_sek_per_kwh,
-        baselineFeedWatts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
-        sellRampMinutes: at.sell_ramp_minutes,
-        allowArbitrageBuying: at.allow_arbitrage_buying,
+        ...at,
+        runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
+        baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
       },
     };
   }
@@ -313,42 +235,45 @@ export function useAutoTrader({
       if (soc === undefined) throw new Error("SOC not available — cannot plan");
       if (aborted) return "aborted";
 
-      const freshCfg = untrack(config);
-      reconcileOwnership(freshCfg);
-      const input = await buildPlannerInput(freshCfg, prices, soc);
-      const result = generatePlan(input);
+      const plannedSoc = soc;
+      const summary = await withScheduleLock(async () => {
+        const freshCfg = untrack(config);
+        reconcileOwnership(freshCfg);
+        const input = await buildPlannerInput(freshCfg, prices, plannedSoc);
+        const result = generatePlan(input);
 
-      applyPlan(result.sells, result.buys);
+        applyPlan(result.sells, result.buys);
 
-      state.last_plan = {
-        generated_at: new Date().toISOString(),
-        trigger,
-        horizon_end: new Date(prices.horizonEndMs).toISOString(),
-        projection: result.projection,
-        notes: result.notes,
-        windows: [...result.sells, ...result.buys].map(w => ({
-          start: new Date(w.startMs).toISOString(),
-          end: new Date(w.endMs).toISOString(),
-          watts: w.watts,
-          kind: w.kind,
-          reason: w.reason,
-          expected_kwh: Math.round(w.expectedKwh * 10) / 10,
-          avg_spot: Math.round(w.avgSpot * 1000) / 1000,
-        })),
-      };
-      state.last_error = undefined;
-      await saveState(state);
+        state.last_plan = {
+          generated_at: new Date().toISOString(),
+          trigger,
+          horizon_end: new Date(prices.horizonEndMs).toISOString(),
+          projection: result.projection,
+          notes: result.notes,
+          windows: [...result.sells, ...result.buys].map(w => ({
+            start: new Date(w.startMs).toISOString(),
+            end: new Date(w.endMs).toISOString(),
+            watts: w.watts,
+            kind: w.kind,
+            reason: w.reason,
+            expected_kwh: Math.round(w.expectedKwh * 10) / 10,
+            avg_spot: Math.round(w.avgSpot * 1000) / 1000,
+          })),
+        };
+        state.last_error = undefined;
+        await saveAutoTraderState(state);
 
-      const summary = `planned ${result.sells.length} sell + ${result.buys.length} buy window(s), est ${result.projection.estimatedRevenueSek} SEK (baseline ${result.projection.baselineRevenueSek}), min SOC ${result.projection.minSocPercent}% @ ${result.projection.minSocAt}`;
+        return `planned ${result.sells.length} sell + ${result.buys.length} buy window(s), est ${result.projection.estimatedRevenueSek} SEK (baseline ${result.projection.baselineRevenueSek}), min SOC ${result.projection.minSocPercent}% @ ${result.projection.minSocAt}`;
+      });
       logLog("Auto trader:", summary);
-      for (const w of state.last_plan.windows) {
+      for (const w of state.last_plan?.windows ?? []) {
         logLog(`Auto trader window: ${w.kind} ${w.start} → ${w.end} @ ${w.watts}W — ${w.reason}`);
       }
       refreshStatus();
       return summary;
     } catch (e) {
       state.last_error = { at: new Date().toISOString(), message: String(e) };
-      await saveState(state);
+      await saveAutoTraderState(state);
       errorLog("Auto trader: plan generation failed", e);
       refreshStatus();
       return `error: ${e}`;
@@ -383,86 +308,88 @@ export function useAutoTrader({
         debugLog("Auto trader guard: prices unavailable (fetch failed, no cache) — skipping this run");
         return;
       }
-      reconcileOwnership(cfg);
+      const guardSoc = soc;
+      await withScheduleLock(async () => {
+        reconcileOwnership(cfg);
 
-      const baseInput = await buildPlannerInput(cfg, prices, soc);
-      const now = Date.now();
-      const ourWindows = Object.entries(state.owned_entries.selling)
-        .map(([key, e]) => ({ startMs: +new Date(key), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))
-        .filter(w => w.endMs > now);
-      if (!ourWindows.length) {
-        state.guard = { last_run_at: new Date().toISOString(), last_action: "nothing to guard" };
-        refreshStatus();
-        return;
-      }
+        const baseInput = await buildPlannerInput(cfg, prices, guardSoc);
+        const now = Date.now();
+        const ourWindows = Object.entries(state.owned_entries.selling)
+          .map(([key, e]) => ({ startMs: +new Date(key), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))
+          .filter(w => w.endMs > now);
+        if (!ourWindows.length) {
+          state.guard = { last_run_at: new Date().toISOString(), last_action: "nothing to guard" };
+          return;
+        }
 
-      const projectionWith = (windows: typeof ourWindows) =>
-        projectWithFixedWindows({ ...baseInput, fixedSells: [...baseInput.fixedSells, ...windows] });
+        const projectionWith = (windows: typeof ourWindows) =>
+          projectWithFixedWindows({ ...baseInput, fixedSells: [...baseInput.fixedSells, ...windows] });
 
-      let kept = [...ourWindows];
-      let projection = projectionWith(kept);
-      const tolerable = projectWithFixedWindows(baseInput).violationWh + 1000; // don't blame our windows for a forecast already under water
-      let trimmed = 0;
-      while (projection.violationWh > tolerable && kept.length) {
-        // Sacrifice the least valuable window first (lowest avg spot per state notes, fallback: latest)
-        const value = (w: (typeof kept)[number]) => {
-          const sw = state.last_plan?.windows.find(x => +new Date(x.start) === w.startMs && x.kind === "sell");
-          return sw?.avg_spot ?? 0;
-        };
-        kept.sort((a, b) => value(a) - value(b));
-        const sacrificed = kept.shift()!;
-        trimmed++;
-        logLog(
-          "Auto trader guard: trimming sell window",
-          new Date(sacrificed.startMs).toISOString(),
-          "to protect reserve (projected min SOC",
-          projection.minSocPercent,
-          "% )"
-        );
-        projection = projectionWith(kept);
-      }
+        let kept = [...ourWindows];
+        let projection = projectionWith(kept);
+        const tolerable = projectWithFixedWindows(baseInput).violationWh + 1000; // don't blame our windows for a forecast already under water
+        let trimmed = 0;
+        while (projection.violationWh > tolerable && kept.length) {
+          // Sacrifice the least valuable window first (lowest avg spot per state notes, fallback: latest)
+          const value = (w: (typeof kept)[number]) => {
+            const sw = state.last_plan?.windows.find(x => +new Date(x.start) === w.startMs && x.kind === "sell");
+            return sw?.avg_spot ?? 0;
+          };
+          kept.sort((a, b) => value(a) - value(b));
+          const sacrificed = kept.shift()!;
+          trimmed++;
+          logLog(
+            "Auto trader guard: trimming sell window",
+            new Date(sacrificed.startMs).toISOString(),
+            "to protect reserve (projected min SOC",
+            projection.minSocPercent,
+            "% )"
+          );
+          projection = projectionWith(kept);
+        }
 
-      if (trimmed) {
-        const keptKeys = new Set(kept.map(w => new Date(w.startMs).toISOString()));
-        const shortenedStubs: Record<string, { end_time: string; power_watts: number }> = {};
-        setConfig(prev => {
-          const selling = { ...prev.scheduled_power_selling.schedule };
-          for (const [key, owned] of Object.entries(state.owned_entries.selling)) {
-            if (keptKeys.has(key)) continue;
-            if (+new Date(owned.end_time) <= now) continue;
-            if (selling[key] && entriesEqual(selling[key], owned, "power_watts")) {
-              const startMs = +new Date(key);
-              if (startMs <= now) {
-                // Active window: end it now instead of deleting so history stays visible
-                const stubEnd = new Date(now + 60_000).toISOString();
-                selling[key] = { ...selling[key], end_time: stubEnd };
-                shortenedStubs[key] = { end_time: stubEnd, power_watts: Number(owned.power_watts) };
-              } else {
-                delete selling[key];
+        if (trimmed) {
+          const keptKeys = new Set(kept.map(w => new Date(w.startMs).toISOString()));
+          const shortenedStubs: Record<string, { end_time: string; power_watts: number }> = {};
+          setConfig(prev => {
+            const selling = { ...prev.scheduled_power_selling.schedule };
+            for (const [key, owned] of Object.entries(state.owned_entries.selling)) {
+              if (keptKeys.has(key)) continue;
+              if (+new Date(owned.end_time) <= now) continue;
+              if (selling[key] && entriesEqual(selling[key], owned, "power_watts")) {
+                const startMs = +new Date(key);
+                if (startMs <= now) {
+                  // Active window: end it now instead of deleting so history stays visible
+                  const stubEnd = new Date(now + 60_000).toISOString();
+                  selling[key] = { ...selling[key], end_time: stubEnd };
+                  shortenedStubs[key] = { end_time: stubEnd, power_watts: Number(owned.power_watts) };
+                } else {
+                  delete selling[key];
+                }
               }
             }
+            return { ...prev, scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling } };
+          });
+          // Ownership: surviving windows, already-finished windows and the just-shortened stub stay ours
+          const nextOwned: typeof state.owned_entries.selling = { ...shortenedStubs };
+          for (const key of Object.keys(state.owned_entries.selling)) {
+            if (keptKeys.has(key) || +new Date(state.owned_entries.selling[key].end_time) <= now) {
+              nextOwned[key] = state.owned_entries.selling[key];
+            }
           }
-          return { ...prev, scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling } };
-        });
-        // Ownership: surviving windows, already-finished windows and the just-shortened stub stay ours
-        const nextOwned: typeof state.owned_entries.selling = { ...shortenedStubs };
-        for (const key of Object.keys(state.owned_entries.selling)) {
-          if (keptKeys.has(key) || +new Date(state.owned_entries.selling[key].end_time) <= now) {
-            nextOwned[key] = state.owned_entries.selling[key];
-          }
+          state.owned_entries.selling = nextOwned;
         }
-        state.owned_entries.selling = nextOwned;
-      }
 
-      state.guard = {
-        last_run_at: new Date().toISOString(),
-        last_action: trimmed
-          ? `trimmed ${trimmed} sell window(s), projected min SOC now ${projection.minSocPercent}%`
-          : `ok (projected min SOC ${projection.minSocPercent}% @ ${projection.minSocAt})`,
-      };
-      await saveState(state);
+        state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: trimmed
+            ? `trimmed ${trimmed} sell window(s), projected min SOC now ${projection.minSocPercent}%`
+            : `ok (projected min SOC ${projection.minSocPercent}% @ ${projection.minSocAt})`,
+        };
+      });
+      await saveAutoTraderState(state);
       refreshStatus();
-      debugLog(`Auto trader guard: done in ${Date.now() - startedAt}ms — ${state.guard.last_action}`);
+      debugLog(`Auto trader guard: done in ${Date.now() - startedAt}ms — ${state.guard?.last_action}`);
     } catch (e) {
       errorLog(`Auto trader guard failed after ${Date.now() - startedAt}ms (non-fatal)`, e);
     }
@@ -519,7 +446,7 @@ export function useAutoTrader({
 
     const startupTimer = setTimeout(async () => {
       if (!stateLoaded) {
-        state = await loadState();
+        state = await loadAutoTraderState();
         stateLoaded = true;
       }
       const lastPlan = state.last_plan;
@@ -530,7 +457,7 @@ export function useAutoTrader({
         await runPlanWithRecovery("startup", false);
       } else {
         reconcileOwnership(untrack(config));
-        await saveState(state);
+        await saveAutoTraderState(state);
         refreshStatus({ note: "startup: existing plan still fresh" });
       }
     }, 90_000);
@@ -555,4 +482,12 @@ export function useAutoTrader({
     autoTraderStatus: status,
     triggerPlanNow: () => runPlan("manual", false),
   };
+}
+
+function entriesEqual(
+  a: { end_time: string } & Record<string, unknown>,
+  b: { end_time: string } & Record<string, unknown>,
+  powerKey: string
+) {
+  return a.end_time === b.end_time && Number(a[powerKey]) === Number(b[powerKey]);
 }

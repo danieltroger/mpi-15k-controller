@@ -98,7 +98,9 @@ export function AutoTraderPanel() {
               min="0"
               step="1"
               value={tradingConfig()?.extra_reserve_kwh ?? 0}
-              onChange={e => void writeTradingConfig({ extra_reserve_kwh: parseFloat(e.currentTarget.value) || 0 })}
+              onChange={e =>
+                void writeTradingConfig({ extra_reserve_kwh: Math.max(0, parseFloat(e.currentTarget.value) || 0) })
+              }
             />
           </label>
         </div>

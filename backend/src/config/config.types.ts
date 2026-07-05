@@ -9,7 +9,7 @@ export type AutomaticTradingConfig = {
   longitude: number;
   /** power_watts written into generated sell windows */
   max_sell_power_watts: number;
-  /** What the battery can really push to the grid on top of PV — used for planning realism, not control */
+  /** Measured battery-only AC export ceiling (2026-07-04: 14.7 kW sustained) — planning realism, not control */
   battery_max_discharge_watts: number;
   /** charging_power written into generated buy windows (only used to avert unavoidable imports) */
   max_buy_power_watts: number;
