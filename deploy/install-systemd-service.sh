@@ -28,10 +28,9 @@ generate_unit() {
   cat <<EOF
 [Unit]
 Description=MPI 15k inverter controller (solar/battery/auto-trading)
-# Start even if network/NTP are down: battery management must always run,
-# and the app retries its own connections. Do not add time-sync.target here.
-After=network-online.target
-Wants=network-online.target
+# Deliberately no network-online/time-sync ordering: battery management must
+# start ASAP even when the router/NTP are down after a power cut, and the app
+# retries all of its own connections. Do not add such dependencies here.
 StartLimitIntervalSec=0
 
 [Service]
@@ -69,8 +68,10 @@ id -u "${SERVICE_USER}" >/dev/null 2>&1 || {
 
 # Refuse to enable a second controller instance: anything matching the run command
 # that is NOT inside our unit's cgroup (e.g. an rc.local launch) must be stopped first.
+# An unreadable/missing cgroup file means the process is already gone — skip it.
 for pid in $(pgrep -f "node --max-old-space-size.*src/index\.ts" || true); do
-  if ! grep -q "${SERVICE_NAME}.service" "/proc/${pid}/cgroup" 2>/dev/null; then
+  cgroup=$(cat "/proc/${pid}/cgroup" 2>/dev/null || true)
+  if [[ -n "${cgroup}" ]] && ! grep -q "${SERVICE_NAME}.service" <<<"${cgroup}"; then
     echo "ERROR: a controller instance is already running outside systemd (PID ${pid})." >&2
     echo "Stop it first (and remove its launch line from /etc/rc.local), then re-run." >&2
     exit 1
@@ -87,6 +88,11 @@ else
   unit_changed=1
 fi
 
+# Snapshot BEFORE enable --now: on a fresh install the service starts below with
+# the just-written unit, so no restart hint is needed afterwards.
+was_active=0
+systemctl is-active --quiet "${SERVICE_NAME}" && was_active=1
+
 # The controller drives the mpp-solar *user* unit via `systemctl --user`; lingering
 # keeps the user instance (and mpp-solar) alive at boot without an SSH session.
 sudo loginctl enable-linger "${SERVICE_USER}"
@@ -94,8 +100,8 @@ sudo loginctl enable-linger "${SERVICE_USER}"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SERVICE_NAME}"
 
-if [[ "${unit_changed}" == 1 ]] && systemctl is-active --quiet "${SERVICE_NAME}"; then
-  echo "NOTE: unit file changed while the service is running."
+if [[ "${unit_changed}" == 1 && "${was_active}" == 1 ]]; then
+  echo "NOTE: unit file changed while the service was already running."
   echo "Apply it with:  sudo systemctl restart ${SERVICE_NAME}"
   echo "(check backend/config.json scheduled_power_selling/buying for active windows first!)"
 fi

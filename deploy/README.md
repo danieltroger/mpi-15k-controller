@@ -1,6 +1,6 @@
 # Deployment
 
-The controller runs as the systemd unit `mpi-15k-controller.service`: auto-respawn on crash (30 s backoff, retries forever), OOM-kill protection (`OOMScoreAdjust=-800`), starts at boot after network-online, and appends stdout/stderr to `/var/log/mpi-15k-controller.log` (same file as the old rc.local setup). It deliberately does **not** wait for NTP: battery management availability beats clock precision after a power cut.
+The controller runs as the systemd unit `mpi-15k-controller.service`: auto-respawn on crash (30 s backoff, retries forever), OOM-kill protection (`OOMScoreAdjust=-800`), starts at boot, and appends stdout/stderr to `/var/log/mpi-15k-controller.log` (same file as the old rc.local setup). It deliberately waits for **neither network-online nor NTP**: after a power cut the router may be down too, and battery management availability beats both clock precision and clean first connections — the app retries on its own.
 
 ## Install / update
 
