@@ -4,17 +4,11 @@ import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFut
 import { calculateChargingAmperage } from "./calculateChargingAmperage.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
 
-export function useShouldBuyPower({
-  config,
-  averageSOC,
-  assumedParasiticConsumption,
-}: {
-  config: Accessor<Config>;
-  averageSOC: Accessor<number | undefined>;
-  assumedParasiticConsumption: Accessor<number>;
-}) {
+export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
+  const { averageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_buying.schedule),

@@ -10,6 +10,7 @@ This repo live-controls a 15 kW MPI hybrid inverter + 65 kWh LiFePO4 battery pow
 - **Config values keep their snake_case names end-to-end.** When passing chunks of config around, spread the config section (`{ ...config().automatic_trading, extra_field: ... }`) instead of hand-mapping snake_case to camelCase — no translation walls.
 - **Descriptive variable names** — it should say on the lid what's in the box. No `Sdd`/`k`/`e` single-letter soup, not even in a 3-line lambda; bundle size is irrelevant, maintainability isn't.
 - **Don't nest function declarations.** Helpers live at module level taking explicit parameters (a shared context object is fine) so their inputs and outputs are visible at a glance; nesting is reserved for cases where the closure genuinely earns its keep.
+- **No `object` or `any` type annotations.** They switch off type checking exactly where it matters (a status payload typed `object` lets any typo through). Use a named type/interface, a precise shape, `Record<K, V>`, or `unknown` + narrowing. The one accepted `any` is variadic logger-style `...args: any[]`. A wire shape shared with the frontend lives in a pure `*.types.ts` (no fs/path/runtime imports) so both sides import one definition and can't drift — e.g. `autoTraderState.types.ts`.
 - Comments explain constraints the code can't express (hardware quirks, economics, protocol bugs), not what the next line does.
 - Run `yarn prettier --write` on changed files before committing (CI auto-formats otherwise) and `yarn typecheck` from the repo root.
 

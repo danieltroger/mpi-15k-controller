@@ -5,10 +5,17 @@ import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
 import { wait } from "../vendor/depictUtilishared.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
+import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
+import {
+  type AutoTraderState,
+  type AutoTraderStatus,
+  EMPTY_STATE,
+  loadAutoTraderState,
+  saveAutoTraderState,
+} from "./autoTraderState.ts";
 import { maybeRefitSolarModel } from "./solarCalibration.ts";
 import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
@@ -27,7 +34,7 @@ type TraderCtx = {
   influxClient: ReturnType<typeof useInfluxClient>;
   enabled: Accessor<boolean>;
   nextDailyRunAt: Accessor<string | undefined>;
-  setStatus: (value: object) => void;
+  setStatus: (value: AutoTraderStatus) => void;
   state: AutoTraderState;
   flags: {
     stateLoaded: boolean;
@@ -40,17 +47,10 @@ type TraderCtx = {
   scheduleLock: Promise<unknown>;
 };
 
-export function useAutoTrader({
-  configSignal,
-  averageSOC,
-  assumedParasiticConsumption,
-}: {
-  configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  averageSOC: Accessor<number | undefined>;
-  assumedParasiticConsumption: Accessor<number>;
-}) {
+export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnType<typeof get_config_object>> }) {
   const [config, setConfig] = configSignal;
-  const [status, setStatus] = createSignal<object>({ enabled: false, note: "starting" });
+  const { averageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
+  const [status, setStatus] = createSignal<AutoTraderStatus>({ enabled: false, note: "starting" });
   const [nextDailyRunAt, setNextDailyRunAt] = createSignal<string | undefined>();
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
 
@@ -182,18 +182,27 @@ function withScheduleLock<T>(ctx: TraderCtx, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function refreshStatus(ctx: TraderCtx, extra?: object) {
-  ctx.setStatus({
-    enabled: ctx.enabled(),
-    next_daily_run_at: ctx.nextDailyRunAt(),
-    last_plan: ctx.state.last_plan,
-    vetoes: ctx.state.vetoes,
-    guard: ctx.state.guard,
-    last_error: ctx.state.last_error,
-    owned_selling_windows: Object.keys(ctx.state.owned_entries.selling).length,
-    owned_buying_windows: Object.keys(ctx.state.owned_entries.buying).length,
-    ...extra,
-  });
+/**
+ * Push a fresh status snapshot. The `enabled`/`nextDailyRunAt` reads are wrapped in `untrack`
+ * because refreshStatus runs synchronously inside the main createEffect (via scheduleDaily). Without
+ * it the effect would subscribe to nextDailyRunAt, and since the daily timer rewrites nextDailyRunAt
+ * on every run the effect would tear itself down and rebuild all its timers once a day. Status
+ * reporting must never create reactive dependencies.
+ */
+function refreshStatus(ctx: TraderCtx, extra?: Partial<AutoTraderStatus>) {
+  ctx.setStatus(
+    untrack(() => ({
+      enabled: ctx.enabled(),
+      next_daily_run_at: ctx.nextDailyRunAt(),
+      last_plan: ctx.state.last_plan,
+      vetoes: ctx.state.vetoes,
+      guard: ctx.state.guard,
+      last_error: ctx.state.last_error,
+      owned_selling_windows: Object.keys(ctx.state.owned_entries.selling).length,
+      owned_buying_windows: Object.keys(ctx.state.owned_entries.buying).length,
+      ...extra,
+    }))
+  );
 }
 
 /**

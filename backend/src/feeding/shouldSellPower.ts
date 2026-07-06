@@ -2,9 +2,11 @@ import { type Accessor, createEffect, createMemo, createSignal, mapArray, untrac
 import { logLog, errorLog } from "../utilities/logging.ts";
 import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
+import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
 
-export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
+export function shouldSellPower(config: Accessor<Config>) {
+  const { averageSOC } = useBatteryValuesProvider();
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_selling.schedule),
