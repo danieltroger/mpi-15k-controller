@@ -9,6 +9,7 @@ import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
+import { calibrateSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 import {
   type FixedWindow,
   generatePlan,
@@ -420,6 +421,59 @@ export function useAutoTrader({
     return result;
   }
 
+  /**
+   * Sun angles drift over the seasons, so the PV coefficients are re-fitted against actual
+   * production every solar_model.refit_interval_days. Failures and implausible fits only log —
+   * the previous coefficients keep working.
+   */
+  async function maybeRefitSolarModel() {
+    try {
+      const at = untrack(config).automatic_trading;
+      const model = at.solar_model;
+      const intervalDays = model.refit_interval_days ?? 0;
+      if (intervalDays <= 0) return;
+      const lastFitMs = model.last_fitted_at ? +new Date(model.last_fitted_at) : 0;
+      if (Date.now() - lastFitMs < intervalDays * 24 * 3600 * 1000) return;
+      const client = influxClient();
+      if (!client) return;
+
+      logLog("Auto trader: re-fitting solar model against the last 45 days of production");
+      const fit = await calibrateSolarModel(client, at.latitude, at.longitude, 45);
+      if (!fit.ok) {
+        errorLog("Auto trader: solar model refit not applied —", fit.reason);
+        return;
+      }
+      const implausible = fitIsPlausibleVsCurrent(
+        fit,
+        model.watts_per_direct_radiation,
+        model.watts_per_diffuse_radiation
+      );
+      if (implausible) {
+        errorLog("Auto trader:", implausible);
+        return;
+      }
+      setConfig(prev => ({
+        ...prev,
+        automatic_trading: {
+          ...prev.automatic_trading,
+          solar_model: {
+            ...prev.automatic_trading.solar_model,
+            watts_per_direct_radiation: fit.watts_per_direct_radiation,
+            watts_per_diffuse_radiation: fit.watts_per_diffuse_radiation,
+            last_fitted_at: new Date().toISOString(),
+            fit_r2: fit.r2,
+            fit_samples: fit.samples,
+          },
+        },
+      }));
+      logLog(
+        `Auto trader: solar model refit applied — ${fit.watts_per_direct_radiation} W/(W/m²) direct + ${fit.watts_per_diffuse_radiation} diffuse (R²=${fit.r2}, n=${fit.samples})`
+      );
+    } catch (e) {
+      errorLog("Auto trader: solar model refit failed (non-fatal)", e);
+    }
+  }
+
   const planAtMemo = createMemo(() => config().automatic_trading?.plan_at_local_time);
   const guardMinutesMemo = createMemo(() => config().automatic_trading?.guard_interval_minutes);
   createEffect(() => {
@@ -440,6 +494,7 @@ export function useAutoTrader({
       refreshStatus();
       dailyTimer = setTimeout(async () => {
         await runPlanWithRecovery("daily", true);
+        void maybeRefitSolarModel();
         scheduleDaily();
       }, ms);
     };

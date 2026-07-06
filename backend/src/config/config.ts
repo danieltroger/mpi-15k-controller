@@ -41,6 +41,7 @@ const default_config: Config = {
     solar_model: {
       watts_per_direct_radiation: 9.95,
       watts_per_diffuse_radiation: 16.4,
+      refit_interval_days: 14,
     },
   },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
