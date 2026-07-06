@@ -7,7 +7,7 @@ import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } fro
 const H = 3600_000;
 const baseKnobs = {
   max_sell_power_watts: 15000,
-  battery_max_discharge_watts: 13000,
+  inverter_max_ac_output_watts: 15000,
   max_buy_power_watts: 10000,
   planner_soc_floor_percent: 20,
   runtime_soc_floor_percent: 15,

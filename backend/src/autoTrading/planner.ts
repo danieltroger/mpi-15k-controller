@@ -29,7 +29,7 @@ export type FixedWindow = { startMs: number; endMs: number; watts: number };
 export type PlannerKnobs = Pick<
   AutomaticTradingConfig,
   | "max_sell_power_watts"
-  | "battery_max_discharge_watts"
+  | "inverter_max_ac_output_watts"
   | "max_buy_power_watts"
   | "planner_soc_floor_percent"
   | "emergency_soc_floor_percent"
@@ -211,7 +211,8 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
-      exportW = Math.min(sellSetW, k.battery_max_discharge_watts + s.pvW - s.houseW - parasiticW);
+      // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
+      exportW = Math.min(sellSetW, k.inverter_max_ac_output_watts - s.houseW);
       exportW = Math.max(exportW, 0);
       // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
       const rampMin = k.sell_ramp_minutes;
@@ -461,7 +462,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     // 1:1 pairing is net-battery-negative and would always fail under a binding reserve floor.
     // Buy enough slots per sell slot to keep the pair battery-neutral or better.
     const buySlotKwh = (k.max_buy_power_watts * 0.25) / 1000;
-    const sellSlotKwh = (Math.min(k.max_sell_power_watts, k.battery_max_discharge_watts) * 0.25) / 1000;
+    const sellSlotKwh = (Math.min(k.max_sell_power_watts, k.inverter_max_ac_output_watts) * 0.25) / 1000;
     const buysPerSell = Math.max(1, Math.ceil(sellSlotKwh / (buySlotKwh * roundTrip)));
     let misses = 0;
     let pairs = 0;
@@ -571,10 +572,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     if (w.kind === "sell") {
       expectedKwh = w.slotIndexes.reduce((sum, i) => {
         const s = slots[i];
-        const exportW = Math.max(
-          0,
-          Math.min(w.watts, k.battery_max_discharge_watts + s.pvW - s.houseW - input.parasiticWatts)
-        );
+        const exportW = Math.max(0, Math.min(w.watts, k.inverter_max_ac_output_watts - s.houseW));
         return sum + (exportW * s.durationH) / 1000;
       }, 0);
     } else {

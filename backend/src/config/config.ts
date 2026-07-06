@@ -14,7 +14,7 @@ const default_config: Config = {
     latitude: 59.33,
     longitude: 18.07,
     max_sell_power_watts: 15000,
-    battery_max_discharge_watts: 14500,
+    inverter_max_ac_output_watts: 15000,
     max_buy_power_watts: 15000,
     planner_soc_floor_percent: 10,
     emergency_soc_floor_percent: 3,
