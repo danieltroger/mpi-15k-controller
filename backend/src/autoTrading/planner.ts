@@ -627,6 +627,8 @@ export function projectWithFixedWindows(input: PlannerInput): {
   minSocAt: string;
   unavoidableImportKwh: number;
   endSocPercent: number;
+  /** Same revenue accounting as generatePlan's projection — comparable across plans on equal inputs */
+  revenueSek: number;
 } {
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(s => s.spot !== undefined);
@@ -642,6 +644,7 @@ export function projectWithFixedWindows(input: PlannerInput): {
     minSocAt: new Date(r.minSocMs).toISOString(),
     unavoidableImportKwh: Math.round(r.importWh / 100) / 10,
     endSocPercent: Math.round((r.endSocWh / input.capacityWh) * 1000) / 10,
+    revenueSek: Math.round(r.revenueSek * 10) / 10,
   };
 }
 

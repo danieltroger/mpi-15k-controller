@@ -209,7 +209,12 @@ export function useAutoTrader({
     state.owned_entries = newOwned;
   }
 
-  async function runPlan(trigger: string, waitForTomorrow: boolean): Promise<string> {
+  /**
+   * @param onlyIfGainSek when set, the new plan only replaces the existing windows if its projected
+   * revenue beats what the currently-written windows would earn by at least this much (used by the
+   * opportunistic replan so a working plan isn't churned for pennies).
+   */
+  async function runPlan(trigger: string, waitForTomorrow: boolean, onlyIfGainSek?: number): Promise<string> {
     if (planInFlight) return "plan already in progress";
     planInFlight = true;
     try {
@@ -243,6 +248,26 @@ export function useAutoTrader({
         const input = await buildPlannerInput(freshCfg, prices, plannedSoc);
         const result = generatePlan(input);
 
+        if (onlyIfGainSek !== undefined) {
+          // What would the windows currently in the config earn under the same live conditions?
+          const ownedAsWindows = (entries: Record<string, { end_time: string }>, powerKey: string) =>
+            Object.entries(entries).map(([key, e]) => ({
+              startMs: +new Date(key),
+              endMs: +new Date(e.end_time),
+              watts: Number((e as Record<string, unknown>)[powerKey]),
+            }));
+          const existing = projectWithFixedWindows({
+            ...input,
+            fixedSells: [...input.fixedSells, ...ownedAsWindows(state.owned_entries.selling, "power_watts")],
+            fixedBuys: [...input.fixedBuys, ...ownedAsWindows(state.owned_entries.buying, "charging_power")],
+          });
+          const gain = result.projection.estimatedRevenueSek - existing.revenueSek;
+          if (gain < onlyIfGainSek) {
+            return `kept existing plan — replacement would gain ${gain.toFixed(1)} SEK (< ${onlyIfGainSek})`;
+          }
+          logLog(`Auto trader: opportunistic replan beats current windows by ${gain.toFixed(1)} SEK — applying`);
+        }
+
         applyPlan(result.sells, result.buys);
 
         state.last_plan = {
@@ -267,8 +292,10 @@ export function useAutoTrader({
         return `planned ${result.sells.length} sell + ${result.buys.length} buy window(s), est ${result.projection.estimatedRevenueSek} SEK (baseline ${result.projection.baselineRevenueSek}), min SOC ${result.projection.minSocPercent}% @ ${result.projection.minSocAt}`;
       });
       logLog("Auto trader:", summary);
-      for (const w of state.last_plan?.windows ?? []) {
-        logLog(`Auto trader window: ${w.kind} ${w.start} → ${w.end} @ ${w.watts}W — ${w.reason}`);
+      if (!summary.startsWith("kept existing plan")) {
+        for (const w of state.last_plan?.windows ?? []) {
+          logLog(`Auto trader window: ${w.kind} ${w.start} → ${w.end} @ ${w.watts}W — ${w.reason}`);
+        }
       }
       refreshStatus();
       return summary;
@@ -488,6 +515,7 @@ export function useAutoTrader({
 
     let dailyTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleDaily = () => {
+      clearTimeout(dailyTimer); // idempotent — a double call must not leave two timers racing
       const ms = msUntilNextLocalTime(planAt);
       setNextDailyRunAt(new Date(Date.now() + ms).toISOString());
       logLog("Auto trader: next daily plan at", new Date(Date.now() + ms).toISOString(), `(${planAt} Stockholm)`);
@@ -498,6 +526,25 @@ export function useAutoTrader({
         scheduleDaily();
       }, ms);
     };
+
+    /**
+     * The guard only ever shrinks a plan when reality falls short of the forecast. This is the
+     * mirror image: when reality beats the forecast (sunnier day, lower consumption), re-plan and
+     * apply only if the projected revenue gain clears opportunistic_replan_min_gain_sek.
+     */
+    const replanMinutes = untrack(config).automatic_trading.opportunistic_replan_interval_minutes ?? 0;
+    let replanTimer: ReturnType<typeof setInterval> | undefined;
+    if (replanMinutes > 0) {
+      replanTimer = setInterval(() => {
+        if (planInFlight) return;
+        const lastPlanMs = state.last_plan ? +new Date(state.last_plan.generated_at) : 0;
+        if (Date.now() - lastPlanMs < 45 * 60_000) return; // fresh plan — nothing to improve yet
+        const gainGate = untrack(config).automatic_trading.opportunistic_replan_min_gain_sek ?? 5;
+        void runPlan("opportunistic", false, gainGate).then(result => {
+          if (result.startsWith("kept existing plan")) debugLog("Auto trader opportunistic:", result);
+        });
+      }, replanMinutes * 60_000);
+    }
 
     const startupTimer = setTimeout(async () => {
       if (!stateLoaded) {
@@ -529,6 +576,7 @@ export function useAutoTrader({
       clearTimeout(startupTimer);
       clearTimeout(dailyTimer);
       clearInterval(guardTimer);
+      clearInterval(replanTimer);
       clearTimeout(recoveryTimer);
     });
   });

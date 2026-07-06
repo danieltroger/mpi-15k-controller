@@ -20,7 +20,7 @@ const default_config: Config = {
     emergency_soc_floor_percent: 3,
     extra_reserve_kwh: 0,
     min_sell_spot_sek_per_kwh: 0.08,
-    min_gain_sek_per_slot: 0.25,
+    min_gain_sek_per_slot: 0.05,
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
     sell_ramp_minutes: 10,
@@ -34,6 +34,8 @@ const default_config: Config = {
     sell_bonus_sek_per_kwh: 0.092,
     constraint_tail_hours: 18,
     guard_interval_minutes: 30,
+    opportunistic_replan_interval_minutes: 60,
+    opportunistic_replan_min_gain_sek: 5,
     replan_retry_minutes: 15,
     fallback_house_load_watts: 550,
     // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026).
