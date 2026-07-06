@@ -39,17 +39,27 @@ export async function fetchSolarForecast(
   const controller = new AbortController();
   // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
   const timeout = setTimeout(() => controller.abort(), 60_000);
-  onCleanup(() => clearTimeout(timeout);)
+  onCleanup(() => clearTimeout(timeout));
   let data: any;
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
-      console.error("Weather API response text", await response.text(), "headers", Object.fromEntries(response.headers))
-      throw new Error(`Weather API returned ${response.status}`);}
+      console.error(
+        "Weather API response text",
+        await response.text(),
+        "headers",
+        Object.fromEntries(response.headers)
+      );
+      throw new Error(`Weather API returned ${response.status}`);
+    }
     data = await response.json();
   } catch (e) {
     if (cache && cache.key === key) {
-      warnLog("Solar forecast fetch failed, using stale cache from", new Date(cache.value.fetchedAtMs).toISOString(), e);
+      warnLog(
+        "Solar forecast fetch failed, using stale cache from",
+        new Date(cache.value.fetchedAtMs).toISOString(),
+        e
+      );
       return cache.value;
     }
     throw e;

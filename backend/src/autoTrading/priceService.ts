@@ -31,7 +31,10 @@ async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | 
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (response.status === 404) return undefined; // not published yet
-    if (!response.ok) throw new Error(`Price API ${url} returned ${response.status}`);
+    if (!response.ok) {
+      console.error("Price response", await response.text(), "headers", Object.fromEntries(response.headers));
+      throw new Error(`Price API ${url} returned ${response.status}`);
+    }
     return (await response.json()) as ApiEntry[];
   } finally {
     clearTimeout(timeout);
