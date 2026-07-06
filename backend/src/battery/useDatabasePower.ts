@@ -2,10 +2,10 @@ import type Influx from "influx";
 import { get_config_object } from "../config/config.ts";
 import { type Accessor, createEffect, createMemo, createResource } from "solid-js";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { useInfluxClient } from "../utilities/useInfluxClient.ts";
+import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
-  const influxClient = useInfluxClient(config);
+  const influxClient = useInfluxClient();
   createEffect(() => {
     if (!influxClient()) {
       errorLog(

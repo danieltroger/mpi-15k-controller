@@ -4,7 +4,7 @@ import type { Config } from "../config/config.types.ts";
 import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
 import { wait } from "../vendor/depictUtilishared.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
-import { useInfluxClient } from "../utilities/useInfluxClient.ts";
+import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
@@ -63,7 +63,7 @@ export function useAutoTrader({
     setConfig,
     averageSOC,
     assumedParasiticConsumption,
-    influxClient: useInfluxClient(config),
+    influxClient: useInfluxClient(),
     enabled,
     nextDailyRunAt,
     setStatus,
