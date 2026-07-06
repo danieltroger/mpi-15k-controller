@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "util";
 import Influx from "influx";
 import { type Accessor, createContext, createMemo, type JSX, useContext } from "solid-js";
 import type { Config } from "../config/config.types.ts";
@@ -13,11 +14,14 @@ const InfluxClientContext = createContext<Accessor<Influx.InfluxDB | undefined>>
  * memo recomputes.
  */
 export function InfluxClientProvider(props: { children: JSX.Element; config: Accessor<Config> }) {
-  const settingsJson = createMemo(() => JSON.stringify(props.config().influxdb ?? null));
+  // Deep-equal so config writes that leave the influxdb settings untouched don't retrigger and
+  // rebuild the client — only a real change to host/database/credentials does.
+  const settings = createMemo(() => props.config().influxdb ?? null, undefined, { equals: isDeepStrictEqual });
   const client = createMemo(() => {
-    const settings = JSON.parse(settingsJson()) as Config["influxdb"] | null;
-    if (!settings?.host || !settings.database || !settings.username || !settings.password) return undefined;
-    return new Influx.InfluxDB({ ...settings });
+    const currentSettings = settings();
+    if (!currentSettings?.host || !currentSettings.database || !currentSettings.username || !currentSettings.password)
+      return undefined;
+    return new Influx.InfluxDB({ ...currentSettings });
   });
 
   return InfluxClientContext.Provider({
