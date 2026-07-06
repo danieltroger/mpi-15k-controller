@@ -1,4 +1,4 @@
-import { logLog } from "../utilities/logging.ts";
+import { logLog, warnLog } from "../utilities/logging.ts";
 import { onCleanup } from "solid-js";
 
 const WEATHER_API_BASE = "https://api.open-meteo.com/v1/forecast";
@@ -49,7 +49,7 @@ export async function fetchSolarForecast(
     data = await response.json();
   } catch (e) {
     if (cache && cache.key === key) {
-      logLog("Solar forecast fetch failed, using stale cache from", new Date(cache.value.fetchedAtMs).toISOString(), e);
+      warnLog("Solar forecast fetch failed, using stale cache from", new Date(cache.value.fetchedAtMs).toISOString(), e);
       return cache.value;
     }
     throw e;
