@@ -1,4 +1,12 @@
 import type Influx from "influx";
+import type { Accessor } from "solid-js";
+import { untrack } from "solid-js";
+import type { Config } from "../config/config.types.ts";
+import type { get_config_object } from "../config/config.ts";
+import { errorLog, logLog } from "../utilities/logging.ts";
+
+/** Trailing window of production history each re-fit is computed over */
+const FIT_WINDOW_DAYS = 45;
 
 export type SolarFitResult =
   | {
@@ -13,10 +21,65 @@ export type SolarFitResult =
 export type SolarFitSample = { direct: number; diffuse: number; pvWatts: number };
 
 /**
- * Re-fit the PV production model (pv_W ≈ a×direct_radiation + b×diffuse_radiation) against what the
- * panels actually produced. Pairs hourly inverter PV averages from InfluxDB with open-meteo's
- * radiation history for the same hours, then least-squares fits through the origin. Sun angles
- * change over the seasons, so this runs periodically (automatic_trading.solar_model.refit_interval_days).
+ * Sun angles drift over the seasons, so the PV coefficients are re-fitted against actual
+ * production every solar_model.refit_interval_days. Failures and implausible fits only log —
+ * the previous coefficients keep working.
+ */
+export async function maybeRefitSolarModel(
+  config: Accessor<Config>,
+  setConfig: Awaited<ReturnType<typeof get_config_object>>[1],
+  influxClient: Accessor<Influx.InfluxDB | undefined>
+) {
+  try {
+    const tradingConfig = untrack(config).automatic_trading;
+    const model = tradingConfig.solar_model;
+    const intervalDays = model.refit_interval_days ?? 0;
+    if (intervalDays <= 0) return;
+    const lastFitMs = model.last_fitted_at ? +new Date(model.last_fitted_at) : 0;
+    if (Date.now() - lastFitMs < intervalDays * 24 * 3600 * 1000) return;
+    const client = influxClient();
+    if (!client) return;
+
+    logLog(`Auto trader: re-fitting solar model against the last ${FIT_WINDOW_DAYS} days of production`);
+    const fit = await calibrateSolarModel(client, tradingConfig.latitude, tradingConfig.longitude, FIT_WINDOW_DAYS);
+    if (!fit.ok) {
+      errorLog("Auto trader: solar model refit not applied —", fit.reason);
+      return;
+    }
+    const implausible = fitIsPlausibleVsCurrent(
+      fit,
+      model.watts_per_direct_radiation,
+      model.watts_per_diffuse_radiation
+    );
+    if (implausible) {
+      errorLog("Auto trader:", implausible);
+      return;
+    }
+    setConfig(prev => ({
+      ...prev,
+      automatic_trading: {
+        ...prev.automatic_trading,
+        solar_model: {
+          ...prev.automatic_trading.solar_model,
+          watts_per_direct_radiation: fit.watts_per_direct_radiation,
+          watts_per_diffuse_radiation: fit.watts_per_diffuse_radiation,
+          last_fitted_at: new Date().toISOString(),
+          fit_r2: fit.r2,
+          fit_samples: fit.samples,
+        },
+      },
+    }));
+    logLog(
+      `Auto trader: solar model refit applied — ${fit.watts_per_direct_radiation} W/(W/m²) direct + ${fit.watts_per_diffuse_radiation} diffuse (R²=${fit.r2}, n=${fit.samples})`
+    );
+  } catch (e) {
+    errorLog("Auto trader: solar model refit failed (non-fatal)", e);
+  }
+}
+
+/**
+ * Pair hourly inverter PV averages from InfluxDB with open-meteo's radiation history for the same
+ * hours, then least-squares fit pv_W ≈ a×direct_radiation + b×diffuse_radiation through the origin.
  */
 export async function calibrateSolarModel(
   influxClient: Influx.InfluxDB,
@@ -24,7 +87,7 @@ export async function calibrateSolarModel(
   longitude: number,
   days: number
 ): Promise<SolarFitResult> {
-  const pvByHourMs = new Map<number, number>();
+  const pvWattsByHourMs = new Map<number, number>();
   const rows = (await Promise.race([
     influxClient.query(
       `SELECT mean(solar_input_power_1) as pv1, mean(solar_input_power_2) as pv2 FROM "mpp-solar" WHERE time > now() - ${days}d GROUP BY time(1h)`
@@ -33,8 +96,8 @@ export async function calibrateSolarModel(
   ])) as unknown as { time: { getNanoTime(): number }; pv1: number | null; pv2: number | null }[];
   for (const row of rows) {
     if (row.pv1 === null && row.pv2 === null) continue;
-    const ms = Math.round(row.time.getNanoTime() / 1e6);
-    pvByHourMs.set(Math.floor(ms / 3600_000) * 3600_000, (row.pv1 ?? 0) + (row.pv2 ?? 0));
+    const timestampMs = Math.round(row.time.getNanoTime() / 1e6);
+    pvWattsByHourMs.set(Math.floor(timestampMs / 3600_000) * 3600_000, (row.pv1 ?? 0) + (row.pv2 ?? 0));
   }
 
   const url = new URL("https://api.open-meteo.com/v1/forecast");
@@ -44,84 +107,96 @@ export async function calibrateSolarModel(
   url.searchParams.set("past_days", String(Math.min(days, 92)));
   url.searchParams.set("forecast_days", "1");
   url.searchParams.set("timezone", "UTC");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
-  let data: any;
+  const abortController = new AbortController();
+  const fetchTimeout = setTimeout(() => abortController.abort(), 60_000);
+  let weatherData: any;
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: abortController.signal });
     if (!response.ok) throw new Error(`Weather API returned ${response.status}`);
-    data = await response.json();
+    weatherData = await response.json();
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(fetchTimeout);
   }
 
   const samples: SolarFitSample[] = [];
-  const times: string[] = data.hourly.time;
-  for (let i = 0; i < times.length; i++) {
-    const pv = pvByHourMs.get(+new Date(times[i] + ":00Z"));
-    const direct = data.hourly.direct_radiation[i];
-    const diffuse = data.hourly.diffuse_radiation[i];
-    if (pv === undefined || direct === null || diffuse === null) continue;
-    samples.push({ direct, diffuse, pvWatts: pv });
+  const hourLabels: string[] = weatherData.hourly.time;
+  for (let i = 0; i < hourLabels.length; i++) {
+    const pvWatts = pvWattsByHourMs.get(+new Date(hourLabels[i] + ":00Z"));
+    const direct = weatherData.hourly.direct_radiation[i];
+    const diffuse = weatherData.hourly.diffuse_radiation[i];
+    if (pvWatts === undefined || direct === null || diffuse === null) continue;
+    samples.push({ direct, diffuse, pvWatts });
   }
   return fitSolarModel(samples);
 }
 
 /** Pure least-squares fit (through the origin, two regressors). Exported for the self-test. */
 export function fitSolarModel(samples: SolarFitSample[]): SolarFitResult {
-  const daylight = samples.filter(s => s.direct > 0 || s.diffuse > 0);
-  if (daylight.length < 300) {
-    return { ok: false, reason: `only ${daylight.length} daylight samples, need 300` };
+  const daylightSamples = samples.filter(sample => sample.direct > 0 || sample.diffuse > 0);
+  if (daylightSamples.length < 300) {
+    return { ok: false, reason: `only ${daylightSamples.length} daylight samples, need 300` };
   }
-  let Sdd = 0,
-    Sff = 0,
-    Sdf = 0,
-    Sdp = 0,
-    Sfp = 0;
-  for (const { direct: d, diffuse: f, pvWatts: p } of daylight) {
-    Sdd += d * d;
-    Sff += f * f;
-    Sdf += d * f;
-    Sdp += d * p;
-    Sfp += f * p;
+  let sumDirectDirect = 0;
+  let sumDiffuseDiffuse = 0;
+  let sumDirectDiffuse = 0;
+  let sumDirectPv = 0;
+  let sumDiffusePv = 0;
+  for (const { direct, diffuse, pvWatts } of daylightSamples) {
+    sumDirectDirect += direct * direct;
+    sumDiffuseDiffuse += diffuse * diffuse;
+    sumDirectDiffuse += direct * diffuse;
+    sumDirectPv += direct * pvWatts;
+    sumDiffusePv += diffuse * pvWatts;
   }
-  const det = Sdd * Sff - Sdf * Sdf;
-  if (!isFinite(det) || Math.abs(det) < 1e-3) {
+  const determinant = sumDirectDirect * sumDiffuseDiffuse - sumDirectDiffuse * sumDirectDiffuse;
+  if (!isFinite(determinant) || Math.abs(determinant) < 1e-3) {
     return { ok: false, reason: "degenerate radiation data (direct and diffuse collinear)" };
   }
-  const a = (Sdp * Sff - Sfp * Sdf) / det;
-  const b = (Sdd * Sfp - Sdf * Sdp) / det;
+  const wattsPerDirect = (sumDirectPv * sumDiffuseDiffuse - sumDiffusePv * sumDirectDiffuse) / determinant;
+  const wattsPerDiffuse = (sumDirectDirect * sumDiffusePv - sumDirectDiffuse * sumDirectPv) / determinant;
 
-  const mean = daylight.reduce((s, x) => s + x.pvWatts, 0) / daylight.length;
-  let ssTot = 0,
-    ssRes = 0;
-  for (const { direct: d, diffuse: f, pvWatts: p } of daylight) {
-    ssTot += (p - mean) ** 2;
-    ssRes += (p - a * d - b * f) ** 2;
+  // Note: R² about the mean while the fit is through the origin — not a textbook goodness-of-fit
+  // for no-intercept models, but a deliberately conservative accept/reject gate.
+  const meanPvWatts = daylightSamples.reduce((sum, sample) => sum + sample.pvWatts, 0) / daylightSamples.length;
+  let sumSquaresTotal = 0;
+  let sumSquaresResidual = 0;
+  for (const { direct, diffuse, pvWatts } of daylightSamples) {
+    sumSquaresTotal += (pvWatts - meanPvWatts) ** 2;
+    sumSquaresResidual += (pvWatts - wattsPerDirect * direct - wattsPerDiffuse * diffuse) ** 2;
   }
-  const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 0;
+  const r2 = sumSquaresTotal > 0 ? 1 - sumSquaresResidual / sumSquaresTotal : 0;
 
-  if (!(a > 0.5 && a < 200 && b > 0.5 && b < 200)) {
-    return { ok: false, reason: `coefficients out of sane range (a=${a.toFixed(2)}, b=${b.toFixed(2)})` };
+  if (!(wattsPerDirect > 0.5 && wattsPerDirect < 200 && wattsPerDiffuse > 0.5 && wattsPerDiffuse < 200)) {
+    return {
+      ok: false,
+      reason: `coefficients out of sane range (direct=${wattsPerDirect.toFixed(2)}, diffuse=${wattsPerDiffuse.toFixed(2)})`,
+    };
   }
   if (r2 < 0.6) {
     return { ok: false, reason: `fit too poor (R²=${r2.toFixed(2)})` };
   }
   return {
     ok: true,
-    watts_per_direct_radiation: Math.round(a * 100) / 100,
-    watts_per_diffuse_radiation: Math.round(b * 100) / 100,
+    watts_per_direct_radiation: Math.round(wattsPerDirect * 100) / 100,
+    watts_per_diffuse_radiation: Math.round(wattsPerDiffuse * 100) / 100,
     r2: Math.round(r2 * 1000) / 1000,
-    samples: daylight.length,
+    samples: daylightSamples.length,
   };
 }
 
 /** Sanity clamp: refuse to swing coefficients more than ±50% in one refit — that needs human eyes. */
-export function fitIsPlausibleVsCurrent(fit: SolarFitResult, currentA: number, currentB: number): string | undefined {
+export function fitIsPlausibleVsCurrent(
+  fit: SolarFitResult,
+  currentWattsPerDirect: number,
+  currentWattsPerDiffuse: number
+): string | undefined {
   if (!fit.ok) return undefined;
   const within = (next: number, current: number) => next >= current * 0.5 && next <= current * 1.5;
-  if (!within(fit.watts_per_direct_radiation, currentA) || !within(fit.watts_per_diffuse_radiation, currentB)) {
-    return `refit moved coefficients >50% (${currentA}/${currentB} → ${fit.watts_per_direct_radiation}/${fit.watts_per_diffuse_radiation}) — not applying, check panels/data`;
+  if (
+    !within(fit.watts_per_direct_radiation, currentWattsPerDirect) ||
+    !within(fit.watts_per_diffuse_radiation, currentWattsPerDiffuse)
+  ) {
+    return `refit moved coefficients >50% (${currentWattsPerDirect}/${currentWattsPerDiffuse} → ${fit.watts_per_direct_radiation}/${fit.watts_per_diffuse_radiation}) — not applying, check panels/data`;
   }
   return undefined;
 }

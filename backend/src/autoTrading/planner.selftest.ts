@@ -351,5 +351,42 @@ function check(name: string, cond: boolean, detail = "") {
   check("solarfit: rejects sparse data", !fitSolarModel(samples.slice(0, 100)).ok);
 }
 
+// ---------- Scenario 8: projectWithFixedWindows revenue agrees with generatePlan ----------
+// The opportunistic replan compares a fresh plan's projected revenue against the currently
+// written windows re-simulated as fixed — those two accountings must match on identical inputs.
+{
+  const sunnyDay = (h: number) => {
+    const hh = h % 24;
+    return hh >= 6 && hh <= 20 ? Math.max(0, Math.sin(((hh - 6) / 14) * Math.PI)) * 12000 : 0;
+  };
+  const priceCurve = (h: number) => (h % 24 >= 19 && h % 24 <= 22 ? 1.2 : 0.35);
+  const input: PlannerInput = {
+    nowMs: t0 + 13 * H,
+    prices: mkPrices(36, priceCurve),
+    solarWattsAt: ms => sunnyDay((ms - t0) / H),
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent: 85,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: baseKnobs,
+  };
+  const plan = generatePlan(input);
+  const replayed = projectWithFixedWindows({
+    ...input,
+    fixedSells: plan.sells.map(w => ({ startMs: w.startMs, endMs: w.endMs, watts: w.watts })),
+    fixedBuys: plan.buys.map(w => ({ startMs: w.startMs, endMs: w.endMs, watts: w.watts })),
+  });
+  check(
+    "replay: fixed-window revenue matches the plan's projection",
+    Math.abs(replayed.revenueSek - plan.projection.estimatedRevenueSek) < 0.5,
+    `(${replayed.revenueSek} vs ${plan.projection.estimatedRevenueSek} SEK)`
+  );
+}
+
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");
 process.exit(fails.length ? 1 : 0);
