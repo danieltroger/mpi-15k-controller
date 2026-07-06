@@ -97,7 +97,3 @@ export async function fetchSolarForecast(
   );
   return value;
 }
-
-export function getCachedSolarForecast(): SolarForecast | undefined {
-  return cache?.value;
-}
