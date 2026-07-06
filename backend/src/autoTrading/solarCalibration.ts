@@ -4,6 +4,7 @@ import { untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { get_config_object } from "../config/config.ts";
 import { errorLog, logLog } from "../utilities/logging.ts";
+import { fetchRadiationByHour } from "./solarForecast.ts";
 
 /** Trailing window of production history each re-fit is computed over */
 const FIT_WINDOW_DAYS = 45;
@@ -100,31 +101,11 @@ export async function calibrateSolarModel(
     pvWattsByHourMs.set(Math.floor(timestampMs / 3600_000) * 3600_000, (row.pv1 ?? 0) + (row.pv2 ?? 0));
   }
 
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.searchParams.set("latitude", String(latitude));
-  url.searchParams.set("longitude", String(longitude));
-  url.searchParams.set("hourly", "direct_radiation,diffuse_radiation");
-  url.searchParams.set("past_days", String(Math.min(days, 92)));
-  url.searchParams.set("forecast_days", "1");
-  url.searchParams.set("timezone", "UTC");
-  const abortController = new AbortController();
-  const fetchTimeout = setTimeout(() => abortController.abort(), 60_000);
-  let weatherData: any;
-  try {
-    const response = await fetch(url, { signal: abortController.signal });
-    if (!response.ok) throw new Error(`Weather API returned ${response.status}`);
-    weatherData = await response.json();
-  } finally {
-    clearTimeout(fetchTimeout);
-  }
-
+  const radiationHours = await fetchRadiationByHour(latitude, longitude, { pastDays: days });
   const samples: SolarFitSample[] = [];
-  const hourLabels: string[] = weatherData.hourly.time;
-  for (let i = 0; i < hourLabels.length; i++) {
-    const pvWatts = pvWattsByHourMs.get(+new Date(hourLabels[i] + ":00Z"));
-    const direct = weatherData.hourly.direct_radiation[i];
-    const diffuse = weatherData.hourly.diffuse_radiation[i];
-    if (pvWatts === undefined || direct === null || diffuse === null) continue;
+  for (const { hourMs, direct, diffuse } of radiationHours) {
+    const pvWatts = pvWattsByHourMs.get(hourMs);
+    if (pvWatts === undefined) continue;
     samples.push({ direct, diffuse, pvWatts });
   }
   return fitSolarModel(samples);
