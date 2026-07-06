@@ -1,5 +1,5 @@
 import {
-  Accessor,
+  type Accessor,
   createComputed,
   createMemo,
   createResource,
@@ -9,10 +9,10 @@ import {
   untrack,
 } from "solid-js";
 import { promises as fs } from "fs";
-import { exec } from "../utilities/exec";
-import { logLog, warnLog } from "../utilities/logging";
-import { rand, wait } from "../vendor/depictUtilishared";
-import { Config } from "../config/config.types";
+import { exec } from "../utilities/exec.ts";
+import { logLog, warnLog } from "../utilities/logging.ts";
+import { rand, wait } from "../vendor/depictUtilishared.ts";
+import type { Config } from "../config/config.types.ts";
 
 export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
 

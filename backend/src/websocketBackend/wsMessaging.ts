@@ -1,18 +1,20 @@
-import { Accessor, createEffect, Owner, runWithOwner, Signal, untrack } from "solid-js";
-import { startWsServer } from "./startWsServer";
-import { useTemperatures } from "../temperatureMeasuring/useTemperatures";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, type Owner, runWithOwner, type Signal, untrack } from "solid-js";
+import { startWsServer } from "./startWsServer.ts";
+import { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
+import type { Config } from "../config/config.types.ts";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
   owner,
   temperatures,
   exposedAccessors,
+  actions,
 }: {
   config_signal: Signal<Config>;
   owner: Owner;
   temperatures: ReturnType<typeof useTemperatures>;
   exposedAccessors: Record<string, Accessor<any>>;
+  actions: Record<string, () => Promise<string>>;
 }) {
   const exposed_signals = {
     config: {
@@ -31,7 +33,23 @@ export async function wsMessaging({
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
-    const { command, key, value, id } = msg;
+    const { command, key, value, id, action } = msg;
+
+    if (command === "action") {
+      const handler = actions[action as string];
+      if (!handler) {
+        return JSON.stringify({
+          id,
+          status: "not-ok",
+          message: `Unknown action: ${action}, allowed actions: ${Object.keys(actions).join(", ")}`,
+        });
+      }
+      try {
+        return JSON.stringify({ id, status: "ok", value: await handler() });
+      } catch (e) {
+        return JSON.stringify({ id, status: "not-ok", message: `Action ${action} failed: ${e}` });
+      }
+    }
 
     if (command === "read" || command === "write") {
       const specifier = exposed_signals[key as keyof typeof exposed_signals];

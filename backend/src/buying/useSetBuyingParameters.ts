@@ -1,6 +1,6 @@
-import { Accessor, createEffect, createMemo } from "solid-js";
-import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage";
-import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider";
+import { type Accessor, createEffect, createMemo } from "solid-js";
+import { useLogExpectedVsActualChargingAmperage } from "./useExpectedInputAmperage.ts";
+import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
 
 export function useSetBuyingParameters({
   stillFeedingIn,

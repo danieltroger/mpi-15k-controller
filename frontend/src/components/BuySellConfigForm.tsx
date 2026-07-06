@@ -3,7 +3,7 @@ import type { Accessor } from "solid-js";
 import { createEffect, createMemo, For, Show, getOwner, untrack } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
-import { configToBuySellFormData, formValuesToConfig, type BuySellFormData } from "~/helpers/buySellConfigMapping";
+import { configToBuySellFormData, diffMergeFormIntoConfig, type BuySellFormData } from "~/helpers/buySellConfigMapping";
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
 import { formatDurationLabel, rowDurationHours, rowEnergyKwh } from "~/helpers/scheduleRowDerived";
 import type { Config } from "../../../backend/src/config/config.types";
@@ -87,13 +87,19 @@ function BuySellFormInner(props: {
   });
 
   let lastAppliedSnap = buySellSliceKey(untrack(() => props.getConfig()));
+  // What the form was last synced from — saves only apply the diff vs this, so server-side
+  // changes (e.g. the auto-trader writing windows) survive a save from an open tab.
+  let pristine = configToBuySellFormData(untrack(() => props.getConfig()));
 
   createEffect(() => {
     const c = props.getConfig();
     const snap = buySellSliceKey(c);
     if (snap === lastAppliedSnap) return;
     lastAppliedSnap = snap;
-    setValues(buySellForm, configToBuySellFormData(c), {
+    // Don't clobber in-progress edits; the diff-merge on save reconciles instead
+    if (buySellForm.dirty) return;
+    pristine = configToBuySellFormData(c);
+    setValues(buySellForm, pristine, {
       shouldDirty: false,
       shouldTouched: false,
     });
@@ -103,13 +109,13 @@ function BuySellFormInner(props: {
     <Form
       class="buy-sell-config"
       onSubmit={async values => {
-        const c = props.getConfig();
-        const next = formValuesToConfig(values, c);
+        const next = diffMergeFormIntoConfig(pristine, values as BuySellFormData, props.getConfig());
         const ok = await props.setConfig(next);
         const owner = getOwner()!;
         if (ok) {
           await showToastWithMessage(owner, () => "Saved!");
-          setValues(buySellForm, configToBuySellFormData(next), {
+          pristine = configToBuySellFormData(next);
+          setValues(buySellForm, pristine, {
             shouldDirty: false,
             shouldTouched: false,
           });
@@ -123,9 +129,9 @@ function BuySellFormInner(props: {
           class="buy-sell-config__btn buy-sell-config__btn--secondary"
           onClick={() => {
             const c = props.getConfig();
-            const snap = buySellSliceKey(c);
-            lastAppliedSnap = snap;
-            setValues(buySellForm, configToBuySellFormData(c), {
+            lastAppliedSnap = buySellSliceKey(c);
+            pristine = configToBuySellFormData(c);
+            setValues(buySellForm, pristine, {
               shouldDirty: false,
               shouldTouched: false,
             });
@@ -154,7 +160,7 @@ function BuySellFormInner(props: {
         <div class="buy-sell-config__grid2">
           <label class="buy-sell-config__label">
             Only buy below SOC (%)
-            <Field name="buyOnlyBelowSoc">
+            <Field name="buyOnlyBelowSoc" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -175,7 +181,7 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start buying again below SOC (%)
-            <Field name="buyStartAgainBelowSoc">
+            <Field name="buyStartAgainBelowSoc" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -196,7 +202,7 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Max grid input (A)
-            <Field name="maxGridInputAmperage">
+            <Field name="maxGridInputAmperage" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -279,7 +285,7 @@ function BuySellFormInner(props: {
                             </Field>
                           </td>
                           <td>
-                            <Field name={`buyingRows.${index()}.power`}>
+                            <Field name={`buyingRows.${index()}.power`} type="number">
                               {(field, p) => (
                                 <>
                                   <input
@@ -347,7 +353,7 @@ function BuySellFormInner(props: {
         <div class="buy-sell-config__grid2">
           <label class="buy-sell-config__label">
             Only sell above SOC (%)
-            <Field name="sellOnlyAboveSoc">
+            <Field name="sellOnlyAboveSoc" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -368,7 +374,7 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start selling again above SOC (%)
-            <Field name="sellStartAgainAboveSoc">
+            <Field name="sellStartAgainAboveSoc" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -389,7 +395,7 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Only sell above voltage (V)
-            <Field name="onlySellAboveVoltage">
+            <Field name="onlySellAboveVoltage" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -409,7 +415,7 @@ function BuySellFormInner(props: {
           </label>
           <label class="buy-sell-config__label">
             Start selling again above voltage (V)
-            <Field name="startSellingAgainAboveVoltage">
+            <Field name="startSellingAgainAboveVoltage" type="number">
               {(field, p) => (
                 <>
                   <input
@@ -492,7 +498,7 @@ function BuySellFormInner(props: {
                             </Field>
                           </td>
                           <td>
-                            <Field name={`sellingRows.${index()}.power`}>
+                            <Field name={`sellingRows.${index()}.power`} type="number">
                               {(field, p) => (
                                 <>
                                   <input

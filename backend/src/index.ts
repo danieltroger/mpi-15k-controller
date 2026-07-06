@@ -8,23 +8,24 @@ import {
   getOwner,
   onCleanup,
 } from "solid-js";
-import { errorLog } from "./utilities/logging";
-import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround";
-import { get_config_object } from "./config/config";
-import { wsMessaging } from "./websocketBackend/wsMessaging";
-import { wait } from "./vendor/depictUtilishared";
-import { useTemperatures } from "./temperatureMeasuring/useTemperatures";
-import { saveTemperatures } from "./temperatureMeasuring/saveTemperatures";
-import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar";
-import { useBatteryValues } from "./battery/useBatteryValues";
-import { mqttValueKeys } from "./sharedTypes";
-import { elpatronSwitching } from "./elpatronSwitching";
-import { shouldSellPower } from "./feeding/shouldSellPower";
-import { NowProvider } from "./utilities/useNow";
-import { useShouldBuyPower } from "./buying/useShouldBuyPower";
-import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider";
-import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring";
-import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider";
+import { errorLog } from "./utilities/logging.ts";
+import { prematureFloatBugWorkaround } from "./battery/prematureFloatBugWorkaround.ts";
+import { get_config_object } from "./config/config.ts";
+import { wsMessaging } from "./websocketBackend/wsMessaging.ts";
+import { wait } from "./vendor/depictUtilishared.ts";
+import { useTemperatures } from "./temperatureMeasuring/useTemperatures.ts";
+import { saveTemperatures } from "./temperatureMeasuring/saveTemperatures.ts";
+import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar.ts";
+import { useBatteryValues } from "./battery/useBatteryValues.ts";
+import { mqttValueKeys } from "./sharedTypes.ts";
+import { elpatronSwitching } from "./elpatronSwitching.ts";
+import { shouldSellPower } from "./feeding/shouldSellPower.ts";
+import { NowProvider } from "./utilities/useNow.ts";
+import { useShouldBuyPower } from "./buying/useShouldBuyPower.ts";
+import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
+import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
+import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 
 while (true) {
   await new Promise<void>(r => {
@@ -121,6 +122,24 @@ function main() {
             const temperatures = useTemperatures(config);
             saveTemperatures({ config, temperatures });
 
+            const [autoTraderErrored, setAutoTraderErrored] = createSignal(false);
+            const autoTrader = createMemo(() => {
+              if (autoTraderErrored()) return;
+              return catchError(
+                () =>
+                  useAutoTrader({
+                    configSignal: configResourceValue,
+                    averageSOC,
+                    assumedParasiticConsumption,
+                  }),
+                e => {
+                  setAutoTraderErrored(true);
+                  errorLog("Auto trader errored", e, "restarting in 60s");
+                  setTimeout(() => setAutoTraderErrored(false), 60_000);
+                }
+              );
+            });
+
             const isChargingOuterScope = createMemo(() => {
               if (!hasCredentials()) {
                 return errorLog(
@@ -191,7 +210,15 @@ function main() {
                 config_signal: configResourceValue,
                 owner,
                 temperatures,
+                actions: {
+                  generate_trading_plan: async () => {
+                    const trader = autoTrader();
+                    if (!trader) return "auto trader not running";
+                    return await trader.triggerPlanNow();
+                  },
+                },
                 exposedAccessors: {
+                  autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                   energyAddedSinceEmpty,
                   lastFeedWhenNoSolarReason,
                   lastChangingFeedWhenNoSolarReason,

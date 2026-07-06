@@ -1,8 +1,8 @@
-import { Accessor, createEffect, createMemo, onCleanup, Setter, untrack } from "solid-js";
-import { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, createMemo, onCleanup, type Setter, untrack } from "solid-js";
+import type { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types.ts";
+import type { Config } from "../config/config.types.ts";
 import { createStore } from "solid-js/store";
-import { warnLog } from "../utilities/logging";
+import { warnLog } from "../utilities/logging.ts";
 
 const commands = new Set(["GPMP", "HECS"] as const);
 

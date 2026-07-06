@@ -19,3 +19,6 @@ tsconfig.typecheck.tsbuildinfo
 backend/src/socCalculationLog*
 backend/config_pre_*
 backend/for_influx.txt
+
+auto_trader_state.json
+backend/auto_trader_state.json

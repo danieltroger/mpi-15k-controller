@@ -1,11 +1,11 @@
-import { useLastFullAndEmpty } from "./useLastFullAndEmpty";
-import { useDatabasePower } from "./useDatabasePower";
-import { Accessor, catchError, createEffect, createMemo, createSignal } from "solid-js";
-import { get_config_object } from "../config/config";
-import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns";
-import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters";
-import { reportSOCToMqtt } from "./reportSOCToMqtt";
-import { errorLog } from "../utilities/logging";
+import { useLastFullAndEmpty } from "./useLastFullAndEmpty.ts";
+import { useDatabasePower } from "./useDatabasePower.ts";
+import { type Accessor, catchError, createEffect, createMemo, createSignal } from "solid-js";
+import { get_config_object } from "../config/config.ts";
+import { batteryCalculationsDependingOnUnknowns } from "./batteryCalculationsDependingOnUnknowns.ts";
+import { iterativelyFindSocParameters } from "./iterativelyFindSocParameters.ts";
+import { reportSOCToMqtt } from "./reportSOCToMqtt.ts";
+import { errorLog } from "../utilities/logging.ts";
 
 export function useBatteryValues(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,

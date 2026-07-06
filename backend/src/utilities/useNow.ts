@@ -1,5 +1,5 @@
-import { Accessor, createContext, createSignal, JSX, onCleanup, useContext } from "solid-js";
-import { catchify } from "../vendor/depictUtilishared";
+import { type Accessor, createContext, createSignal, type JSX, onCleanup, useContext } from "solid-js";
+import { catchify } from "../vendor/depictUtilishared.ts";
 
 const NowContext = createContext<Accessor<number>>();
 

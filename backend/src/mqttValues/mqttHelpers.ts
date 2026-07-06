@@ -1,4 +1,4 @@
-import { useFromMqttProvider } from "./MQTTValuesProvider";
+import { useFromMqttProvider } from "./MQTTValuesProvider.ts";
 
 // Volts
 export function reactiveBatteryVoltage() {
