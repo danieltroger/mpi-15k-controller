@@ -43,7 +43,9 @@ export async function fetchSolarForecast(
   let data: any;
   try {
     const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`Weather API returned ${response.status}`);
+    if (!response.ok) {
+      console.error("Weather API response text", await response.text(), "headers", Object.fromEntries(response.headers))
+      throw new Error(`Weather API returned ${response.status}`);}
     data = await response.json();
   } catch (e) {
     if (cache && cache.key === key) {
