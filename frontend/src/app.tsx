@@ -22,6 +22,17 @@ export default function App() {
                 </Show>
                 {props.children}
               </Suspense>
+              <footer style={{ "margin-top": "2rem", "font-size": "0.8rem", opacity: "0.7" }}>
+                Free software under the{" "}
+                <a
+                  href="https://github.com/danieltroger/mpi-15k-controller"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  AGPL-3.0 — source code
+                </a>
+                .
+              </footer>
             </WebSocketProvider>
           </MetaProvider>
         );

@@ -1,5 +1,6 @@
 {
   "packageManager": "yarn@4.1.1",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "SENTRY=false DEBUG=true BUILD_TARGET=node nodemon src/index.ts",
     "run-no-nodemon": "SENTRY=false DEBUG=true BUILD_TARGET=node node --max-old-space-size=3072 src/index.ts"
