@@ -2,9 +2,10 @@
  * Synthetic-scenario self-test for the planner. Run from backend/ with:
  *   yarn node src/autoTrading/planner.selftest.ts
  */
-import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
+import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
+import type { PlannerInput } from "./planner.types.ts";
 
 const H = 3600_000;
 const baseKnobs = {

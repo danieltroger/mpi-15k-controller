@@ -11,13 +11,8 @@ import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import { maybeRefitSolarModel } from "./solarCalibration.ts";
 import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
-import {
-  type FixedWindow,
-  generatePlan,
-  type PlannerInput,
-  type PlannedWindow,
-  projectWithFixedWindows,
-} from "./planner.ts";
+import { generatePlan, projectWithFixedWindows } from "./planner.ts";
+import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.ts";
 
 /**
  * Everything the trader's module-level functions share. Passed explicitly instead of closing over

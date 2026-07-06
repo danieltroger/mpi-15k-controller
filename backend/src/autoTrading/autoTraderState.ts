@@ -2,7 +2,8 @@ import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import { errorLog } from "../utilities/logging.ts";
-import type { PlanProjection } from "./planner.ts";
+
+import type { PlanProjection } from "./planner.types.ts";
 
 /** What the forecasts predicted for one local day, captured at plan time for later settlement. */
 export type DayForecast = { predicted_pv_kwh: number; predicted_house_kwh: number; planned_sell_kwh: number };

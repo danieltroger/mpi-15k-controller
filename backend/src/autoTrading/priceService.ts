@@ -1,5 +1,6 @@
 import { logLog } from "../utilities/logging.ts";
-import { type PriceSlot15, SLOT_MS } from "./planner.ts";
+import { SLOT_MS } from "./planner.ts";
+import type { PriceSlot15 } from "./planner.types.ts";
 
 const PRICE_API_BASE = "https://www.elprisetjustnu.se/api/v1/prices";
 
