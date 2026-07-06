@@ -4,6 +4,9 @@ import process from "process";
 import { errorLog } from "../utilities/logging.ts";
 import type { PlanProjection } from "./planner.ts";
 
+/** What the forecasts predicted for one local day, captured at plan time for later settlement. */
+export type DayForecast = { predicted_pv_kwh: number; predicted_house_kwh: number; planned_sell_kwh: number };
+
 export type StateWindow = {
   start: string;
   end: string;
@@ -32,6 +35,13 @@ export type AutoTraderState = {
   vetoes: { start: string; end: string; kind: "sell" | "buy"; noticed_at: string }[];
   last_error?: { at: string; message: string };
   guard?: { last_run_at: string; last_action: string };
+  /**
+   * What the forecasts predicted per local day (YYYY-MM-DD), captured at plan time so a settled day
+   * can be compared against reality. Pruned to a handful of recent days.
+   */
+  forecast_log?: Record<string, DayForecast>;
+  /** Most recent local date (YYYY-MM-DD) whose realized performance has been measured + written */
+  last_settled_date?: string;
 };
 
 export const EMPTY_STATE: AutoTraderState = { owned_entries: { selling: {}, buying: {} }, vetoes: [] };
