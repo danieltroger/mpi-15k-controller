@@ -42,6 +42,10 @@ export type AutomaticTradingConfig = {
   constraint_tail_hours: number;
   /** How often to re-check that the written schedule is still safe with live SOC (0 = off) */
   guard_interval_minutes: number;
+  /** How often to look for a *better* plan under live conditions (0 = off). The guard only shrinks; this can grow. */
+  opportunistic_replan_interval_minutes: number;
+  /** A replacement plan must beat the current one's projected revenue by this much to be applied */
+  opportunistic_replan_min_gain_sek: number;
   /** Retry interval while waiting for tomorrow's prices to publish */
   replan_retry_minutes: number;
   /** House load assumption if InfluxDB history is unavailable */

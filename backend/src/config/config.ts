@@ -5,6 +5,10 @@ import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import type { Config } from "./config.types.ts";
 
+// The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
+// sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
+const INVERTER_NAMEPLATE_AC_WATTS = 15000;
+
 const default_config: Config = {
   automatic_trading: {
     enabled: false,
@@ -13,14 +17,14 @@ const default_config: Config = {
     // Generic Sweden coordinates — set your real ones in config.json
     latitude: 59.33,
     longitude: 18.07,
-    max_sell_power_watts: 15000,
-    inverter_max_ac_output_watts: 15000,
-    max_buy_power_watts: 15000,
+    max_sell_power_watts: INVERTER_NAMEPLATE_AC_WATTS,
+    inverter_max_ac_output_watts: INVERTER_NAMEPLATE_AC_WATTS,
+    max_buy_power_watts: INVERTER_NAMEPLATE_AC_WATTS,
     planner_soc_floor_percent: 10,
     emergency_soc_floor_percent: 3,
     extra_reserve_kwh: 0,
     min_sell_spot_sek_per_kwh: 0.08,
-    min_gain_sek_per_slot: 0.25,
+    min_gain_sek_per_slot: 0.05,
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
     sell_ramp_minutes: 10,
@@ -34,6 +38,8 @@ const default_config: Config = {
     sell_bonus_sek_per_kwh: 0.092,
     constraint_tail_hours: 18,
     guard_interval_minutes: 30,
+    opportunistic_replan_interval_minutes: 60,
+    opportunistic_replan_min_gain_sek: 5,
     replan_retry_minutes: 15,
     fallback_house_load_watts: 550,
     // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026).
