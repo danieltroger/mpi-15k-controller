@@ -4,6 +4,7 @@
  */
 import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
+import { computeRealizedRevenue } from "./tradingPerformance.ts";
 
 const H = 3600_000;
 const baseKnobs = {
@@ -385,6 +386,34 @@ function check(name: string, cond: boolean, detail = "") {
     "replay: fixed-window revenue matches the plan's projection",
     Math.abs(replayed.revenueSek - plan.projection.estimatedRevenueSek) < 0.5,
     `(${replayed.revenueSek} vs ${plan.projection.estimatedRevenueSek} SEK)`
+  );
+}
+
+// ---------- Scenario 9: realized-revenue accounting (settlement) ----------
+{
+  const fees = { sell_bonus_sek_per_kwh: 0.092, buy_surcharges_sek_per_kwh: 1.186, vat_multiplier: 1.25 };
+  // Four 15-min slots exporting 15 kW (gridW negative) at spot 1.00 → 15 kWh sold
+  const exportSlots = Array.from({ length: 4 }, () => ({ gridW: -15000, spot: 1.0 }));
+  const sold = computeRealizedRevenue(exportSlots, 0.25, fees);
+  check("settle: export kWh from negative grid power", Math.abs(sold.export_kwh - 15) < 0.01, `(${sold.export_kwh})`);
+  check("settle: no import counted when exporting", sold.import_kwh === 0);
+  check(
+    "settle: export revenue = kWh × (spot + bonus)",
+    Math.abs(sold.revenue_sek - 15 * (1.0 + 0.092)) < 0.05,
+    `(${sold.revenue_sek})`
+  );
+  // Two slots importing 8 kW (gridW positive) at spot 0.5 → 4 kWh bought at the full fee+VAT
+  const importSlots = Array.from({ length: 2 }, () => ({ gridW: 8000, spot: 0.5 }));
+  const bought = computeRealizedRevenue(importSlots, 0.25, fees);
+  check(
+    "settle: import kWh from positive grid power",
+    Math.abs(bought.import_kwh - 4) < 0.01,
+    `(${bought.import_kwh})`
+  );
+  check(
+    "settle: import cost = kWh × (spot + surcharge) × VAT, negative revenue",
+    Math.abs(bought.revenue_sek - -(4 * (0.5 + 1.186) * 1.25)) < 0.05,
+    `(${bought.revenue_sek})`
   );
 }
 
