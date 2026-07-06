@@ -2,13 +2,11 @@
   "packageManager": "yarn@4.1.1",
   "scripts": {
     "start": "SENTRY=false DEBUG=true BUILD_TARGET=node nodemon src/index.ts",
-    "run-no-nodemon": "SENTRY=false DEBUG=true BUILD_TARGET=node node --max-old-space-size=3072 --loader @swc-node/register/esm src/index.ts"
+    "run-no-nodemon": "SENTRY=false DEBUG=true BUILD_TARGET=node node --max-old-space-size=3072 src/index.ts"
   },
   "dependencies": {
     "@bloomberg/record-tuple-polyfill": "patch:@bloomberg/record-tuple-polyfill@npm%3A0.0.4#~/.yarn/patches/@bloomberg-record-tuple-polyfill-npm-0.0.4-51dd697933.patch",
     "@iiot2k/ads1115": "file:./vendor/@iiot2k/ads1115",
-    "@swc-node/register": "1.9.0",
-    "@swc/core": "^1.4.17",
     "@types/node": "^20.12.7",
     "@types/ws": "^8.5.10",
     "async-mqtt": "^2.6.3",

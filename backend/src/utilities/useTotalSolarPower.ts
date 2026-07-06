@@ -1,4 +1,4 @@
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 
 export function useTotalSolarPower() {
   const { mqttValues } = useFromMqttProvider();

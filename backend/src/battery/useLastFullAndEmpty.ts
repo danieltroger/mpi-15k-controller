@@ -1,6 +1,10 @@
-import { get_config_object } from "../config/config";
+import { get_config_object } from "../config/config.ts";
 import { createMemo } from "solid-js";
-import { reactiveBatteryCurrent, reactiveBatteryVoltage, reactiveBatteryVoltageTime } from "../mqttValues/mqttHelpers";
+import {
+  reactiveBatteryCurrent,
+  reactiveBatteryVoltage,
+  reactiveBatteryVoltageTime,
+} from "../mqttValues/mqttHelpers.ts";
 
 export function useLastFullAndEmpty([config]: Awaited<ReturnType<typeof get_config_object>>) {
   const haveSeenBatteryFullAt = createMemo<number | undefined>(prev => {

@@ -1,6 +1,6 @@
-import { Accessor, createEffect, untrack } from "solid-js";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, untrack } from "solid-js";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import type { Config } from "../config/config.types.ts";
 
 export function reportSOCToMqtt({
   config,

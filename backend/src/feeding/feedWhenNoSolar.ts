@@ -1,15 +1,15 @@
-import { get_config_object } from "../config/config";
-import { Accessor, createEffect, createMemo, createSignal, onCleanup, Setter, untrack } from "solid-js";
-import { errorLog, logLog } from "../utilities/logging";
-import { useNow } from "../utilities/useNow";
-import { catchify } from "../vendor/depictUtilishared";
-import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
+import { get_config_object } from "../config/config.ts";
+import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter, untrack } from "solid-js";
+import { errorLog, logLog } from "../utilities/logging.ts";
+import { useNow } from "../utilities/useNow.ts";
+import { catchify } from "../vendor/depictUtilishared.ts";
+import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
 import { appendFile } from "fs/promises";
-import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose";
-import { useSetBuyingParameters } from "../buying/useSetBuyingParameters";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
-import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider";
+import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose.ts";
+import { useSetBuyingParameters } from "../buying/useSetBuyingParameters.ts";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
+import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.

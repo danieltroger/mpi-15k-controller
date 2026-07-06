@@ -11,6 +11,7 @@
     "allowJs": true,
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["vinxi/types/client"],
     "isolatedModules": true,
     "paths": {

@@ -1,11 +1,20 @@
-import { Accessor, createEffect, createMemo, createSignal, getOwner, onCleanup, runWithOwner, untrack } from "solid-js";
-import { get_config_object } from "../config/config";
-import { SocWorkerData, WorkerResponse, WorkerResult } from "./socCalculationWorker.types";
-import { errorLog, logLog } from "../utilities/logging";
+import {
+  type Accessor,
+  createEffect,
+  createMemo,
+  createSignal,
+  getOwner,
+  onCleanup,
+  runWithOwner,
+  untrack,
+} from "solid-js";
+import { get_config_object } from "../config/config.ts";
+import type { SocWorkerData, WorkerResponse, WorkerResult } from "./socCalculationWorker.types.ts";
+import { errorLog, logLog } from "../utilities/logging.ts";
 import { Worker } from "worker_threads";
 import { appendFile } from "fs/promises";
-import { useNow } from "../utilities/useNow";
-import { random_string } from "../vendor/depictUtilishared";
+import { useNow } from "../utilities/useNow.ts";
+import { random_string } from "../vendor/depictUtilishared.ts";
 
 export function iterativelyFindSocParameters({
   totalLastEmpty,

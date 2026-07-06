@@ -1,4 +1,4 @@
-import { Accessor, Setter } from "solid-js";
+import type { Accessor, Setter } from "solid-js";
 
 type USBCommands =
   // Only added the ones I currently need, see jblance mpp-solar documentation for more

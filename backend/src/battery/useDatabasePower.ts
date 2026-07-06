@@ -1,27 +1,17 @@
-import Influx from "influx";
-import { get_config_object } from "../config/config";
-import { Accessor, createMemo, createResource } from "solid-js";
-import { errorLog, logLog } from "../utilities/logging";
+import type Influx from "influx";
+import { get_config_object } from "../config/config.ts";
+import { type Accessor, createEffect, createMemo, createResource } from "solid-js";
+import { errorLog, logLog } from "../utilities/logging.ts";
+import { useInfluxClient } from "../utilities/useInfluxClient.ts";
 
 export function useDatabasePower([config]: Awaited<ReturnType<typeof get_config_object>>) {
-  const host = createMemo(() => config()?.influxdb?.host);
-  const database = createMemo(() => config()?.influxdb?.database);
-  const username = createMemo(() => config()?.influxdb?.username);
-  const password = createMemo(() => config()?.influxdb?.password);
-  const influxClient = createMemo(() => {
-    if (!host() || !database() || !username() || !password()) {
+  const influxClient = useInfluxClient(config);
+  createEffect(() => {
+    if (!influxClient()) {
       errorLog(
         "No influxdb config found (or incomplete), please configure influxdb.host, influxdb.database, influxdb.username and influxdb.password in config.json"
       );
-      return;
     }
-
-    return new Influx.InfluxDB({
-      "host": host(),
-      "database": database(),
-      "username": username(),
-      "password": password(),
-    });
   });
 
   const fullWhenAccessor = createMemo(() => config().full_battery_voltage);

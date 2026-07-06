@@ -1,14 +1,14 @@
-import { Accessor, createEffect } from "solid-js";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { type Accessor, createEffect } from "solid-js";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import {
   reactiveAcInputVoltageR,
   reactiveAcInputVoltageS,
   reactiveAcInputVoltageT,
   reactiveBatteryVoltage,
-} from "../mqttValues/mqttHelpers";
+} from "../mqttValues/mqttHelpers.ts";
 import { createStore, reconcile } from "solid-js/store";
-import { logLog } from "../utilities/logging";
-import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
+import { logLog } from "../utilities/logging.ts";
+import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
 
 /**
  * Calculates what we expect the 230v input (grid) amperage to be when telling the inverter to charge the battery at a certain amperage (amperage at battery).

@@ -1,10 +1,10 @@
-import { Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
-import { logLog } from "../utilities/logging";
-import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
-import { calculateChargingAmperage } from "./calculateChargingAmperage";
-import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
+import { logLog } from "../utilities/logging.ts";
+import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority.ts";
+import { calculateChargingAmperage } from "./calculateChargingAmperage.ts";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import type { Config } from "../config/config.types.ts";
 
 export function useShouldBuyPower({
   config,

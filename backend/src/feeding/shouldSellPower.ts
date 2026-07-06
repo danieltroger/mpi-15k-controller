@@ -1,8 +1,8 @@
-import { Accessor, createEffect, createMemo, createSignal, mapArray, untrack } from "solid-js";
-import { logLog, errorLog } from "../utilities/logging";
-import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority";
-import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers";
-import { Config } from "../config/config.types";
+import { type Accessor, createEffect, createMemo, createSignal, mapArray, untrack } from "solid-js";
+import { logLog, errorLog } from "../utilities/logging.ts";
+import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority.ts";
+import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
+import type { Config } from "../config/config.types.ts";
 
 export function shouldSellPower(config: Accessor<Config>, averageSOC: Accessor<number | undefined>) {
   const scheduleOutput = createMemo(

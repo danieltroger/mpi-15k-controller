@@ -1,4 +1,4 @@
-import { catchify } from "../vendor/depictUtilishared";
+import { catchify } from "../vendor/depictUtilishared.ts";
 import { onCleanup } from "solid-js";
 
 const timeoutBatches = new Map<

@@ -1,12 +1,12 @@
-import { Accessor, createMemo } from "solid-js";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider";
+import { type Accessor, createMemo } from "solid-js";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import {
   reactiveAcInputVoltageR,
   reactiveAcInputVoltageS,
   reactiveAcInputVoltageT,
   reactiveBatteryVoltage,
-} from "../mqttValues/mqttHelpers";
-import { useTotalSolarPower } from "../utilities/useTotalSolarPower";
+} from "../mqttValues/mqttHelpers.ts";
+import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
 
 /**
  * Takes in a desired amperage at the grid connection and returns the current maximum amperage we can tell the inverter to charge the battery from the grid with.

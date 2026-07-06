@@ -1,8 +1,8 @@
 import MQTT from "async-mqtt";
-import { Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
-import { logLog, warnLog } from "../utilities/logging";
+import { type Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
+import { logLog, warnLog } from "../utilities/logging.ts";
 import { createStore } from "solid-js/store";
-import { RawMQTTValues, validateMessage } from "./rawValuesSchema";
+import { type RawMQTTValues, validateMessage } from "./rawValuesSchema.ts";
 
 export function useMQTTValues(mqttHost: Accessor<string>) {
   const [reconnectToggle, setReconnectToggle] = createSignal(1); // Needs to be truthy or createResource won't fetch
