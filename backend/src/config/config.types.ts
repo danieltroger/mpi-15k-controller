@@ -50,6 +50,11 @@ export type AutomaticTradingConfig = {
   solar_model: {
     watts_per_direct_radiation: number;
     watts_per_diffuse_radiation: number;
+    /** Re-fit the coefficients against actual production every N days (0 = never) */
+    refit_interval_days: number;
+    last_fitted_at?: string;
+    fit_r2?: number;
+    fit_samples?: number;
   };
 };
 
