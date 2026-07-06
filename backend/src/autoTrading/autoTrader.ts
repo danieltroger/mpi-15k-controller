@@ -10,7 +10,7 @@ import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import { maybeRefitSolarModel } from "./solarCalibration.ts";
-import { settleTradingDay } from "./tradingPerformance.ts";
+import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import {
   type FixedWindow,
   generatePlan,
@@ -99,7 +99,12 @@ export function useAutoTrader({
       dailyTimer = setTimeout(async () => {
         await runPlanWithRecovery(ctx, "daily", true);
         void maybeRefitSolarModel(ctx.config, ctx.setConfig, ctx.influxClient);
-        void settleRecentDays(ctx);
+        void settleRecentDays(
+          ctx.influxClient(),
+          untrack(config).automatic_trading.price_area,
+          untrack(config).automatic_trading,
+          ctx.state
+        );
         scheduleDaily();
       }, ms);
     };
@@ -137,7 +142,13 @@ export function useAutoTrader({
         await saveAutoTraderState(ctx.state);
         refreshStatus(ctx, { note: "startup: existing plan still fresh" });
       }
-      void settleRecentDays(ctx); // catch up any recently-completed day the last run missed
+      // catch up any recently-completed day the last run missed
+      void settleRecentDays(
+        ctx.influxClient(),
+        untrack(config).automatic_trading.price_area,
+        untrack(config).automatic_trading,
+        ctx.state
+      );
     }, 90_000);
 
     scheduleDaily();
@@ -453,7 +464,7 @@ async function runPlan(
           avg_spot: Math.round(window.avgSpot * 1000) / 1000,
         })),
       };
-      captureForecastLog(ctx, input, result.sells);
+      captureForecastLog(ctx.state, input, result.sells);
       ctx.state.last_error = undefined;
       await saveAutoTraderState(ctx.state);
 
@@ -632,63 +643,6 @@ function ownedEntriesAsWindows(
     endMs: +new Date(entry.end_time),
     watts: Number((entry as Record<string, unknown>)[powerKey]),
   }));
-}
-
-function localDateStr(ms: number): string {
-  return new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
-}
-
-/**
- * Snapshot what the forecasts predict per local day so a settled day can later be scored against
- * reality. Summed hourly from the same forecast functions the plan used; overwritten each plan run
- * (latest forecast wins) and pruned to a week.
- */
-function captureForecastLog(ctx: TraderCtx, input: PlannerInput, sells: PlannedWindow[]) {
-  const log = ctx.state.forecast_log ?? {};
-  const horizonEndMs = input.prices.length ? input.prices[input.prices.length - 1].startMs + 15 * 60_000 : input.nowMs;
-  const perDay = new Map<string, { pvKwh: number; houseKwh: number; sellKwh: number }>();
-  for (let hourMs = Math.floor(input.nowMs / 3600_000) * 3600_000; hourMs < horizonEndMs; hourMs += 3600_000) {
-    const midHourMs = hourMs + 1800_000;
-    const date = localDateStr(midHourMs);
-    const day = perDay.get(date) ?? { pvKwh: 0, houseKwh: 0, sellKwh: 0 };
-    day.pvKwh += Math.max(0, input.solarWattsAt(midHourMs)) / 1000;
-    day.houseKwh += Math.max(0, input.houseLoadWattsAt(midHourMs)) / 1000;
-    perDay.set(date, day);
-  }
-  for (const window of sells) {
-    const day = perDay.get(localDateStr((window.startMs + window.endMs) / 2));
-    if (day) day.sellKwh += window.expectedKwh;
-  }
-  for (const [date, day] of perDay) {
-    log[date] = {
-      predicted_pv_kwh: Math.round(day.pvKwh * 10) / 10,
-      predicted_house_kwh: Math.round(day.houseKwh * 10) / 10,
-      planned_sell_kwh: Math.round(day.sellKwh * 10) / 10,
-    };
-  }
-  const cutoff = localDateStr(input.nowMs - 7 * 24 * 3600_000);
-  ctx.state.forecast_log = Object.fromEntries(Object.entries(log).filter(([date]) => date >= cutoff));
-}
-
-/**
- * Settle any recently-completed local day (up to 2 days back) not yet measured, writing its realized
- * P&L + forecast error to InfluxDB. Non-fatal throughout.
- */
-async function settleRecentDays(ctx: TraderCtx) {
-  const client = ctx.influxClient();
-  if (!client) return;
-  const cfg = untrack(ctx.config).automatic_trading;
-  const today = localDateStr(Date.now());
-  const candidates = [localDateStr(Date.now() - 2 * 24 * 3600_000), localDateStr(Date.now() - 24 * 3600_000)];
-  for (const date of candidates) {
-    if (date >= today) continue; // only fully-completed days
-    if (ctx.state.last_settled_date && date <= ctx.state.last_settled_date) continue;
-    const realized = await settleTradingDay(client, date, cfg.price_area, cfg, ctx.state.forecast_log?.[date]);
-    if (realized) {
-      ctx.state.last_settled_date = date;
-      await saveAutoTraderState(ctx.state);
-    }
-  }
 }
 
 /** True when any schedule entry overlaps [rangeStartMs, rangeEndMs). */

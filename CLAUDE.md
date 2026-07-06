@@ -5,7 +5,8 @@ This repo live-controls a 15 kW MPI hybrid inverter + 65 kWh LiFePO4 battery pow
 ## Code conventions
 
 - **Never swallow errors silently.** Every `catch` either handles the error meaningfully or logs it via `errorLog`/`warnLog` with enough context to debug. If a failure "can't happen", that's exactly why it must be loud when it does. Expected cases (e.g. a state file's first-boot ENOENT) may be quiet, but only when explicitly distinguished from unexpected ones.
-- **Main function at the top of the file.** Export the primary function first; helpers go below it (function declarations hoist) or into their own files. Split files that accumulate several unrelated responsibilities.
+- **Main function at the top of the file.** Export the primary function first; helpers go below it (function declarations hoist) or into their own files.
+- **Split files early.** Once a file passes ~400 lines or grows a second distinct responsibility, move the newcomer into its own module (e.g. settlement/measurement code lives in `tradingPerformance.ts`, not bolted onto `autoTrader.ts`). Prefer many small single-purpose files over one that keeps accreting; a moved-out function takes what it needs as explicit parameters rather than reaching back into a shared object.
 - **Config values keep their snake_case names end-to-end.** When passing chunks of config around, spread the config section (`{ ...config().automatic_trading, extra_field: ... }`) instead of hand-mapping snake_case to camelCase — no translation walls.
 - **Descriptive variable names** — it should say on the lid what's in the box. No `Sdd`/`k`/`e` single-letter soup, not even in a 3-line lambda; bundle size is irrelevant, maintainability isn't.
 - **Don't nest function declarations.** Helpers live at module level taking explicit parameters (a shared context object is fine) so their inputs and outputs are visible at a glance; nesting is reserved for cases where the closure genuinely earns its keep.

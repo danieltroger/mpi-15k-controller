@@ -24,6 +24,10 @@ function dateInStockholm(msOffsetDays: number): { year: string; month: string; d
 
 async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | undefined> {
   const { year, month, day } = dateInStockholm(offsetDays);
+  return fetchDayByDate(area, year, month, day);
+}
+
+async function fetchDayByDate(area: string, year: string, month: string, day: string): Promise<ApiEntry[] | undefined> {
   const url = `${PRICE_API_BASE}/${year}/${month}-${day}_${area}.json`;
   const controller = new AbortController();
   // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
@@ -39,6 +43,25 @@ async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Normalise API entries to 15-min slots (handles the pre-2025-10 hourly-era days too). */
+function entriesToSlots(entries: ApiEntry[]): PriceSlot15[] {
+  const slots: PriceSlot15[] = [];
+  for (const entry of entries) {
+    const startMs = +new Date(entry.time_start);
+    const endMs = +new Date(entry.time_end);
+    if (!isFinite(startMs) || !isFinite(endMs) || typeof entry.SEK_per_kWh !== "number") continue;
+    for (let t = startMs; t < endMs; t += SLOT_MS) slots.push({ startMs: t, spot: entry.SEK_per_kWh });
+  }
+  return slots.sort((a, b) => a.startMs - b.startMs);
+}
+
+/** Fetch one specific date's (YYYY-MM-DD) 15-min spot prices; [] if the day isn't published. */
+export async function fetchPriceSlotsForDate(area: string, dateStr: string): Promise<PriceSlot15[]> {
+  const [year, month, day] = dateStr.split("-");
+  const entries = await fetchDayByDate(area, year, month, day);
+  return entries ? entriesToSlots(entries) : [];
 }
 
 /**
@@ -60,16 +83,7 @@ export async function fetchPrices(area: string, forceRefresh = false): Promise<F
   const [today, tomorrow] = await Promise.all([fetchDay(area, 0), fetchDay(area, 1)]);
   if (!today) throw new Error("Price API has no data for today");
 
-  const slots: PriceSlot15[] = [];
-  for (const entry of [...today, ...(tomorrow ?? [])]) {
-    const startMs = +new Date(entry.time_start);
-    const endMs = +new Date(entry.time_end);
-    if (!isFinite(startMs) || !isFinite(endMs) || typeof entry.SEK_per_kWh !== "number") continue;
-    for (let t = startMs; t < endMs; t += SLOT_MS) {
-      slots.push({ startMs: t, spot: entry.SEK_per_kWh });
-    }
-  }
-  slots.sort((a, b) => a.startMs - b.startMs);
+  const slots = entriesToSlots([...today, ...(tomorrow ?? [])]);
 
   const horizonEndMs = slots.length ? slots[slots.length - 1].startMs + SLOT_MS : Date.now();
   const value: FetchedPrices = {

@@ -37,14 +37,21 @@ export type AutoTraderState = {
   guard?: { last_run_at: string; last_action: string };
   /**
    * What the forecasts predicted per local day (YYYY-MM-DD), captured at plan time so a settled day
-   * can be compared against reality. Pruned to a handful of recent days.
+   * can be compared against reality. Empty until the first plan; pruned to a handful of recent days.
    */
-  forecast_log?: Record<string, DayForecast>;
-  /** Most recent local date (YYYY-MM-DD) whose realized performance has been measured + written */
+  forecast_log: Record<string, DayForecast>;
+  /**
+   * Most recent local date (YYYY-MM-DD) whose realized performance has been measured + written.
+   * Genuinely absent until the first day settles (distinct from any real date), so it stays optional.
+   */
   last_settled_date?: string;
 };
 
-export const EMPTY_STATE: AutoTraderState = { owned_entries: { selling: {}, buying: {} }, vetoes: [] };
+export const EMPTY_STATE: AutoTraderState = {
+  owned_entries: { selling: {}, buying: {} },
+  vetoes: [],
+  forecast_log: {},
+};
 
 export async function loadAutoTraderState(): Promise<AutoTraderState> {
   try {

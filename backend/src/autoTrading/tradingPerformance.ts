@@ -1,14 +1,20 @@
 import type Influx from "influx";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { SLOT_MS, type PlannerKnobs } from "./planner.ts";
-import type { DayForecast } from "./autoTraderState.ts";
+import { SLOT_MS, type PlannedWindow, type PlannerInput, type PlannerKnobs } from "./planner.ts";
+import { fetchPriceSlotsForDate } from "./priceService.ts";
+import { type AutoTraderState, type DayForecast, saveAutoTraderState } from "./autoTraderState.ts";
 
 /**
  * Closes the feedback loop: after a day has fully settled, measure what actually happened at the
- * grid meter and write it next to what the planner had predicted, so forecast bias and realized
- * P&L become queryable in Grafana (InfluxDB measurement `trading_performance`) instead of vanishing
- * into projections nobody checks. Only runs on days after the 2026-07-03 pi17 fix, since earlier
- * `ac_input_total_active_power` is firmware-corrupted (see the pi17 protocol patch).
+ * inverter's grid connection and write it next to what the planner had predicted, so forecast bias
+ * and realized P&L become queryable in Grafana (InfluxDB measurement `trading_performance`) instead
+ * of vanishing into projections nobody checks.
+ *
+ * Caveats: figures come from the inverter's own grid-side power sensor, NOT E.ON's billing meter —
+ * they'll track it closely but aren't the official settlement (E.ON's real per-15-min meter data
+ * would need authenticating against their API; a possible future refinement). Only days after the
+ * 2026-07-03 pi17 fix are meaningful, since earlier `ac_input_total_active_power` is
+ * firmware-corrupted (see the pi17 protocol patch).
  */
 
 export type RealizedDay = {
@@ -21,6 +27,14 @@ export type RealizedDay = {
 };
 
 type FeeKnobs = Pick<PlannerKnobs, "sell_bonus_sek_per_kwh" | "buy_surcharges_sek_per_kwh" | "vat_multiplier">;
+
+/** Guards against the startup catch-up and a daily run settling the same day concurrently. */
+let settlementInFlight = false;
+
+/** A local day (Europe/Stockholm) as YYYY-MM-DD. */
+export function localDateStr(ms: number): string {
+  return new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
+}
 
 /**
  * Net grid revenue from per-slot realized grid power + that slot's spot price. Pure — same fee
@@ -51,29 +65,71 @@ export function computeRealizedRevenue(
   };
 }
 
-/** Fetch one past day's 15-min spot prices directly (elprisetjustnu serves historical dates). */
-async function fetchPricesForDate(area: string, dateStr: string): Promise<{ startMs: number; spot: number }[]> {
-  const [year, month, day] = dateStr.split("-");
-  const url = `https://www.elprisetjustnu.se/api/v1/prices/${year}/${month}-${day}_${area}.json`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+/**
+ * Snapshot what the forecasts predict per local day so a settled day can later be scored against
+ * reality. Only future days are recorded: the horizon loop starts at the current hour, so today's
+ * entry would omit the already-past morning — and the full-day forecast for today was captured a
+ * day earlier anyway (the daily plan runs after tomorrow's prices publish). Pruned to a week.
+ */
+export function captureForecastLog(state: AutoTraderState, input: PlannerInput, sells: PlannedWindow[]) {
+  const log = state.forecast_log;
+  const todayStr = localDateStr(input.nowMs);
+  const horizonEndMs = input.prices.length ? input.prices[input.prices.length - 1].startMs + SLOT_MS : input.nowMs;
+  const perDay = new Map<string, { pvKwh: number; houseKwh: number; sellKwh: number }>();
+  for (let hourMs = Math.floor(input.nowMs / 3600_000) * 3600_000; hourMs < horizonEndMs; hourMs += 3600_000) {
+    const midHourMs = hourMs + 1800_000;
+    const date = localDateStr(midHourMs);
+    if (date <= todayStr) continue; // today is partial from nowMs; its full forecast was captured yesterday
+    const day = perDay.get(date) ?? { pvKwh: 0, houseKwh: 0, sellKwh: 0 };
+    day.pvKwh += Math.max(0, input.solarWattsAt(midHourMs)) / 1000;
+    day.houseKwh += Math.max(0, input.houseLoadWattsAt(midHourMs)) / 1000;
+    perDay.set(date, day);
+  }
+  for (const window of sells) {
+    const day = perDay.get(localDateStr((window.startMs + window.endMs) / 2));
+    if (day) day.sellKwh += window.expectedKwh;
+  }
+  for (const [date, day] of perDay) {
+    log[date] = {
+      predicted_pv_kwh: round1(day.pvKwh),
+      predicted_house_kwh: round1(day.houseKwh),
+      planned_sell_kwh: round1(day.sellKwh),
+    };
+  }
+  const cutoff = localDateStr(input.nowMs - 7 * 24 * 3600_000);
+  state.forecast_log = Object.fromEntries(Object.entries(log).filter(([date]) => date >= cutoff));
+}
+
+/**
+ * Settle every completed local day not yet measured (up to a few days of backlog, so a transient
+ * failure on one day is retried on the next run rather than stranded), writing each day's realized
+ * P&L + forecast error to InfluxDB. Non-fatal throughout.
+ */
+export async function settleRecentDays(
+  influxClient: Influx.InfluxDB | undefined,
+  priceArea: string,
+  fees: FeeKnobs,
+  state: AutoTraderState
+) {
+  if (!influxClient || settlementInFlight) return;
+  settlementInFlight = true;
   try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": "mpi-15k-controller/1.0" },
-      signal: controller.signal,
-    });
-    if (!response.ok) return [];
-    const entries = (await response.json()) as { SEK_per_kWh: number; time_start: string; time_end: string }[];
-    const slots: { startMs: number; spot: number }[] = [];
-    for (const entry of entries) {
-      const startMs = +new Date(entry.time_start);
-      const endMs = +new Date(entry.time_end);
-      if (!isFinite(startMs) || !isFinite(endMs)) continue;
-      for (let t = startMs; t < endMs; t += SLOT_MS) slots.push({ startMs: t, spot: entry.SEK_per_kWh });
+    const today = localDateStr(Date.now());
+    const candidates: string[] = [];
+    for (let daysAgo = 3; daysAgo >= 1; daysAgo--) {
+      const date = localDateStr(Date.now() - daysAgo * 24 * 3600_000);
+      if (date >= today) continue; // only fully-completed days
+      if (state.last_settled_date && date <= state.last_settled_date) continue;
+      candidates.push(date);
     }
-    return slots.sort((a, b) => a.startMs - b.startMs);
+    for (const date of candidates) {
+      const realized = await settleTradingDay(influxClient, date, priceArea, fees, state.forecast_log[date]);
+      if (!realized) continue; // e.g. prices not yet published / a transient hiccup — retry next run
+      state.last_settled_date = date;
+      await saveAutoTraderState(state);
+    }
   } finally {
-    clearTimeout(timeout);
+    settlementInFlight = false;
   }
 }
 
@@ -89,7 +145,7 @@ export async function settleTradingDay(
   forecast: DayForecast | undefined
 ): Promise<RealizedDay | null> {
   try {
-    const priceSlots = await fetchPricesForDate(priceArea, dateStr);
+    const priceSlots = await fetchPriceSlotsForDate(priceArea, dateStr);
     if (!priceSlots.length) {
       logLog(`Auto trader: no historical prices for ${dateStr}, skipping settlement`);
       return null;
@@ -98,26 +154,33 @@ export async function settleTradingDay(
     const dayStartMs = priceSlots[0].startMs;
     const dayEndMs = priceSlots[priceSlots.length - 1].startMs + SLOT_MS;
 
-    const rows = (await influxClient.query(
-      `SELECT mean(ac_input_total_active_power) as grid, mean(solar_input_power_1) as pv1, mean(solar_input_power_2) as pv2, mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time >= ${dayStartMs}ms AND time < ${dayEndMs}ms GROUP BY time(15m) fill(none)`
-    )) as unknown as {
-      time: { getNanoTime(): number };
-      grid: number | null;
-      pv1: number | null;
-      pv2: number | null;
-      house: number | null;
-    }[];
+    // The influx client has no timeout of its own — don't let a hung query stall settlement silently
+    const rows = await Promise.race([
+      influxClient.query<{
+        time: { getNanoTime(): number };
+        grid: number | null;
+        pv1: number | null;
+        pv2: number | null;
+        house: number | null;
+      }>(
+        `SELECT mean(ac_input_total_active_power) as grid, mean(solar_input_power_1) as pv1, mean(solar_input_power_2) as pv2, mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time >= ${dayStartMs}ms AND time < ${dayEndMs}ms GROUP BY time(15m) fill(none)`
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("InfluxDB settlement query timed out")), 60_000)
+      ),
+    ]);
 
     const revenueSlots: { gridW: number; spot: number }[] = [];
     let pvKwh = 0;
     let houseKwh = 0;
     for (const row of rows) {
       const slotStartMs = Math.round(row.time.getNanoTime() / 1e6);
+      // PV/house are independent of grid — count them even in a slot where grid data is missing
+      pvKwh += (((row.pv1 ?? 0) + (row.pv2 ?? 0)) * 0.25) / 1000;
+      houseKwh += ((row.house ?? 0) * 0.25) / 1000;
       const spot = spotByStartMs.get(slotStartMs);
       if (spot === undefined || row.grid === null) continue;
       revenueSlots.push({ gridW: row.grid, spot });
-      pvKwh += (((row.pv1 ?? 0) + (row.pv2 ?? 0)) * 0.25) / 1000;
-      houseKwh += ((row.house ?? 0) * 0.25) / 1000;
     }
     if (!revenueSlots.length) {
       logLog(`Auto trader: no inverter data for ${dateStr}, skipping settlement`);
