@@ -1,4 +1,5 @@
 import { logLog } from "../utilities/logging.ts";
+import { onCleanup } from "solid-js";
 
 const WEATHER_API_BASE = "https://api.open-meteo.com/v1/forecast";
 
@@ -38,6 +39,7 @@ export async function fetchSolarForecast(
   const controller = new AbortController();
   // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
   const timeout = setTimeout(() => controller.abort(), 60_000);
+  onCleanup(() => clearTimeout(timeout);)
   let data: any;
   try {
     const response = await fetch(url, { signal: controller.signal });
