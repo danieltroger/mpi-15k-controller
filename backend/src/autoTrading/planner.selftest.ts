@@ -3,6 +3,7 @@
  *   yarn node src/autoTrading/planner.selftest.ts
  */
 import { generatePlan, type PlannerInput, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
+import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 
 const H = 3600_000;
 const baseKnobs = {
@@ -317,6 +318,37 @@ function check(name: string, cond: boolean, detail = "") {
     "| with-ramp:",
     withRamp.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}`).join(", ")
   );
+}
+
+// ---------- Scenario 7: solar model re-fit recovers known coefficients ----------
+{
+  const samples: { direct: number; diffuse: number; pvWatts: number }[] = [];
+  let seed = 42;
+  const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+  for (let i = 0; i < 800; i++) {
+    const direct = rand() * 700;
+    const diffuse = 50 + rand() * 250;
+    const pv = 10 * direct + 16 * diffuse + (rand() - 0.5) * 400;
+    samples.push({ direct, diffuse, pvWatts: Math.max(0, pv) });
+  }
+  const fit = fitSolarModel(samples);
+  check("solarfit: fit succeeds", fit.ok);
+  if (fit.ok) {
+    check(
+      "solarfit: recovers direct coefficient",
+      Math.abs(fit.watts_per_direct_radiation - 10) < 1,
+      `(${fit.watts_per_direct_radiation})`
+    );
+    check(
+      "solarfit: recovers diffuse coefficient",
+      Math.abs(fit.watts_per_diffuse_radiation - 16) < 2,
+      `(${fit.watts_per_diffuse_radiation})`
+    );
+    check("solarfit: R² high on clean data", fit.r2 > 0.9, `(${fit.r2})`);
+    check("solarfit: >50% swing gets flagged", typeof fitIsPlausibleVsCurrent(fit, 30, 40) === "string");
+    check("solarfit: small drift passes", fitIsPlausibleVsCurrent(fit, 11, 15) === undefined);
+  }
+  check("solarfit: rejects sparse data", !fitSolarModel(samples.slice(0, 100)).ok);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");
