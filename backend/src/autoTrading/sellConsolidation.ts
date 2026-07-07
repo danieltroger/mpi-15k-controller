@@ -190,10 +190,13 @@ function tryRelocateRun(search: SearchState, run: number[], targets: number[]): 
 }
 
 /**
- * Equalize power across each chain's post-ramp body: same energy (mean rounded down), ± öre of
- * revenue, and the schedule collapses to a couple of entries instead of the power staircase
- * reduced-power fills leave behind. Slots still inside the ramp window keep their power — the
- * ramp caps their export, so averaging power away from them loses real energy.
+ * Equalize power across each chain's post-ramp body: same energy (mean rounded to the nearest
+ * 100 W, so rounding costs at most ±öre), and the schedule collapses to a couple of entries
+ * instead of the power staircase reduced-power fills leave behind. Purely cosmetic, so the
+ * accepted objective loss is capped flat at 0.1 SEK regardless of chain length — a chain whose
+ * internal price gradient makes equal power genuinely costlier keeps its staircase. Slots still
+ * inside the ramp window keep their power — the ramp caps their export, so averaging power away
+ * from them loses real energy.
  */
 function equalizeChainPower(search: SearchState) {
   for (const run of computeRuns(search)) {
@@ -206,10 +209,10 @@ function equalizeChainPower(search: SearchState) {
     if (body.length < 2 || new Set(body.map(slotIndex => search.sellW[slotIndex])).size <= 1) continue;
     if (search.trialsLeft-- <= 0) break;
     const savedWatts = body.map(slotIndex => search.sellW[slotIndex]);
-    const meanWatts = Math.floor(savedWatts.reduce((a, b) => a + b, 0) / body.length / 100) * 100;
+    const meanWatts = Math.round(savedWatts.reduce((a, b) => a + b, 0) / body.length / 100) * 100;
     for (const slotIndex of body) search.sellW[slotIndex] = meanWatts;
     const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
-    if (search.feasible(trial) && objectiveSek(trial) >= objectiveSek(search.current) - 0.1 * body.length) {
+    if (search.feasible(trial) && objectiveSek(trial) >= objectiveSek(search.current) - 0.1) {
       search.current = trial;
     } else {
       body.forEach((slotIndex, offset) => (search.sellW[slotIndex] = savedWatts[offset]));

@@ -544,6 +544,11 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
  * feasible again (the old trim-only guard stranded those until someone clicked regenerate — see
  * the 2026-07-06 incident). User windows are never touched; an active window keeps running unless
  * it alone breaches the reserve, in which case it is stubbed to end now.
+ *
+ * Unlike the old in-lock trim, the shedding lands only when the re-plan's applyPlan finishes (a
+ * few seconds later, solar/consumption fetches included). That gap is acceptable because a
+ * projected breach concerns windows hours out, and even mid-gap the runtime's own
+ * only_sell_above_soc cutoff hard-stops selling regardless of what the schedule says.
  */
 async function runGuard(ctx: TraderCtx) {
   if (ctx.flags.planInFlight) {
@@ -664,7 +669,9 @@ async function runGuard(ctx: TraderCtx) {
 /**
  * End every currently-running owned sell window in a minute (stub instead of delete so the entry
  * stays visible as history). Used when the active window itself breaches the reserve — the
- * re-plan treats active windows as immutable and could not stop it.
+ * re-plan treats active windows as immutable and could not stop it. The follow-up re-plan then
+ * deliberately keeps the ≤60s remnant as a fixed "active" window: deleting it would erase the
+ * history, and nothing new can be scheduled into a minute that is already passing.
  */
 function stubActiveSellWindows(ctx: TraderCtx, now: number) {
   const activeSelling = activeOwnedEntries(ctx, now).selling;
