@@ -3,43 +3,7 @@ import { getBackendSyncedSignal, sendBackendAction } from "~/helpers/getBackendS
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import type { Config } from "../../../backend/src/config/config.types";
-
-type StatusWindow = {
-  start: string;
-  end: string;
-  watts: number;
-  kind: "sell" | "buy";
-  reason: string;
-  expected_kwh: number;
-  avg_spot: number;
-};
-
-type AutoTraderStatus = {
-  enabled: boolean;
-  note?: string;
-  next_daily_run_at?: string;
-  last_plan?: {
-    generated_at: string;
-    trigger: string;
-    horizon_end: string;
-    notes: string[];
-    windows: StatusWindow[];
-    projection: {
-      minSocPercent: number;
-      minSocAt: string;
-      endSocPercent: number;
-      plannedSellKwh: number;
-      autoExportKwh: number;
-      unavoidableImportKwh: number;
-      plannedBuyKwh: number;
-      estimatedRevenueSek: number;
-      baselineRevenueSek: number;
-    };
-  };
-  vetoes?: { start: string; end: string; kind: string }[];
-  guard?: { last_run_at: string; last_action: string };
-  last_error?: { at: string; message: string };
-};
+import type { AutoTraderStatus } from "../../../backend/src/autoTrading/autoTraderState.types";
 
 const fmtTime = (iso: string | undefined) =>
   iso

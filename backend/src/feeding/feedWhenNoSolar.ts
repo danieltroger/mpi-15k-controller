@@ -10,6 +10,7 @@ import { useSetBuyingParameters } from "../buying/useSetBuyingParameters.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -21,7 +22,6 @@ export function feedWhenNoSolar({
   setLastChangingReason,
   exportAmountForSelling,
   chargingAmperageForBuying,
-  assumedParasiticConsumption,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
@@ -29,11 +29,11 @@ export function feedWhenNoSolar({
   setLastChangingReason: Setter<{ what: string; when: number }>;
   exportAmountForSelling: Accessor<number | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
-  assumedParasiticConsumption: Accessor<number>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
   const { mqttValues } = useFromMqttProvider();
+  const { assumedParasiticConsumption } = useBatteryValuesProvider();
 
   const { $usbValues, triggerGettingUsbValues, setCommandQueue } = useUsbInverterConfiguration();
   const acOutputPower = () => {

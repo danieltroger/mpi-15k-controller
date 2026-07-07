@@ -2,50 +2,9 @@ import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import { errorLog } from "../utilities/logging.ts";
-import type { PlanProjection } from "./planner.ts";
+import type { AutoTraderState } from "./autoTraderState.types.ts";
 
-/** What the forecasts predicted for one local day, captured at plan time for later settlement. */
-export type DayForecast = { predicted_pv_kwh: number; predicted_house_kwh: number; planned_sell_kwh: number };
-
-export type StateWindow = {
-  start: string;
-  end: string;
-  watts: number;
-  kind: "sell" | "buy";
-  reason: string;
-  expected_kwh: number;
-  avg_spot: number;
-};
-
-export type AutoTraderState = {
-  last_plan?: {
-    generated_at: string;
-    trigger: string;
-    horizon_end: string;
-    projection: PlanProjection;
-    notes: string[];
-    windows: StateWindow[];
-  };
-  /** Exactly the schedule entries the auto trader wrote (used to tell ours from the user's) */
-  owned_entries: {
-    selling: Record<string, { end_time: string; power_watts: number }>;
-    buying: Record<string, { end_time: string; charging_power: number }>;
-  };
-  /** Time ranges where the user deleted one of our windows — don't re-plan trades there until they pass */
-  vetoes: { start: string; end: string; kind: "sell" | "buy"; noticed_at: string }[];
-  last_error?: { at: string; message: string };
-  guard?: { last_run_at: string; last_action: string };
-  /**
-   * What the forecasts predicted per local day (YYYY-MM-DD), captured at plan time so a settled day
-   * can be compared against reality. Empty until the first plan; pruned to a handful of recent days.
-   */
-  forecast_log: Record<string, DayForecast>;
-  /**
-   * Most recent local date (YYYY-MM-DD) whose realized performance has been measured + written.
-   * Genuinely absent until the first day settles (distinct from any real date), so it stays optional.
-   */
-  last_settled_date?: string;
-};
+export type { AutoTraderState, AutoTraderStatus, StateWindow, DayForecast } from "./autoTraderState.types.ts";
 
 export const EMPTY_STATE: AutoTraderState = {
   owned_entries: { selling: {}, buying: {} },

@@ -14,7 +14,8 @@ import type { Config } from "../config/config.types.ts";
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { generatePlan, type PlannerInput } from "./planner.ts";
+import { generatePlan } from "./planner.ts";
+import type { PlannerInput } from "./planner.types.ts";
 
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
 const config: Config = JSON.parse(await fs_promises.readFile(configPath, { encoding: "utf-8" }));

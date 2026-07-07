@@ -1,6 +1,7 @@
 import type Influx from "influx";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { SLOT_MS, type PlannedWindow, type PlannerInput, type PlannerKnobs } from "./planner.ts";
+import { SLOT_MS } from "./planner.ts";
+import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
 import { type AutoTraderState, type DayForecast, saveAutoTraderState } from "./autoTraderState.ts";
 
