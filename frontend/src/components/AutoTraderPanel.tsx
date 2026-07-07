@@ -28,17 +28,19 @@ export function AutoTraderPanel() {
     await setConfig({ ...current, automatic_trading: { ...current.automatic_trading, ...patch } });
   };
 
-  const generateNow = async () => {
+  const runAction = async (action: string, formatResult: (result: string) => string) => {
     setBusy(true);
     try {
-      const result = await sendBackendAction(socket, "generate_trading_plan");
-      await showToastWithMessage(owner, () => `Plan: ${result}`);
+      const result = await sendBackendAction(socket, action);
+      await showToastWithMessage(owner, () => formatResult(result ?? "ok"));
     } catch (e) {
       await showToastWithMessage(owner, () => `Failed: ${e}`);
     } finally {
       setBusy(false);
     }
   };
+  const generateNow = () => runAction("generate_trading_plan", result => `Plan: ${result}`);
+  const clearVetoes = () => runAction("clear_trading_vetoes", result => result);
 
   return (
     <section class="buy-sell-config__section">
@@ -118,7 +120,15 @@ export function AutoTraderPanel() {
             Blocked ranges (you deleted planner windows there):{" "}
             {status()!
               .vetoes!.map(v => `${v.kind} ${fmtTime(v.start)}–${fmtTime(v.end)}`)
-              .join(", ")}
+              .join(", ")}{" "}
+            <button
+              type="button"
+              class="buy-sell-config__btn buy-sell-config__btn--secondary"
+              disabled={busy()}
+              onClick={() => void clearVetoes()}
+            >
+              {busy() ? "Working…" : "Unblock & replan"}
+            </button>
           </p>
         </Show>
         <Show when={status()!.guard}>

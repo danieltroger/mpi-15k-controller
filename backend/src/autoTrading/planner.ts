@@ -8,12 +8,20 @@
  * arbitrage when a later sell clears the full fee + round-trip-loss + margin stack.
  *
  * Strategy: simulate battery SOC over the price horizon (+ a constraint tail covering the following night)
- * using solar + consumption forecasts, then greedily allocate 15-min sell slots from the highest spot price
- * down, keeping every accepted plan feasible (SOC never below the planner floor + user reserve). Selling
- * energy the battery couldn't have absorbed anyway (would have auto-exported when full) is naturally handled
- * by the simulation's revenue accounting.
+ * using solar + consumption forecasts (simulate.ts), then greedily allocate 15-min sell slots from the
+ * highest spot price down, keeping every accepted plan feasible (SOC never below the planner floor + user
+ * reserve). Selling energy the battery couldn't have absorbed anyway (would have auto-exported when full)
+ * is naturally handled by the simulation's revenue accounting.
+ *
+ * Fragmented schedules are allowed when they genuinely price better (a stop/start costs nothing but the
+ * modeled ramp), but a consolidation pass (sellConsolidation.ts) repairs fragmentation the greedy's
+ * accept order created for no gain, and captures fractional leftover budget as reduced-power window
+ * extensions. The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV
+ * covers the house.
  */
 
+import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
+import { consolidateSellSlots } from "./sellConsolidation.ts";
 import type {
   FixedWindow,
   PlannedWindow,
@@ -25,191 +33,6 @@ import type {
 } from "./planner.types.ts";
 
 export const SLOT_MS = 15 * 60 * 1000;
-
-function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {
-  let max = 0;
-  for (const w of windows) {
-    if (w.startMs < endMs && w.endMs > startMs) max = Math.max(max, w.watts);
-  }
-  return max;
-}
-
-function buildSlots(input: PlannerInput): Slot[] {
-  const { prices, nowMs, constraintTailHours, solarWattsAt, houseLoadWattsAt, fixedSells, fixedBuys } = input;
-  const slots: Slot[] = [];
-  const relevantPrices = prices.filter(p => p.startMs + SLOT_MS > nowMs).sort((a, b) => a.startMs - b.startMs);
-  const pricedEndMs = relevantPrices.length ? relevantPrices[relevantPrices.length - 1].startMs + SLOT_MS : nowMs;
-  const tailEndMs = pricedEndMs + constraintTailHours * 3600 * 1000;
-
-  const pushSlot = (startMs: number, spot: number | undefined) => {
-    const endMs = startMs + SLOT_MS;
-    const effectiveStart = Math.max(startMs, nowMs);
-    const durationH = (endMs - effectiveStart) / 3600_000;
-    if (durationH <= 0) return;
-    const midMs = (effectiveStart + endMs) / 2;
-    slots.push({
-      startMs,
-      endMs,
-      durationH,
-      spot,
-      pvW: Math.max(0, input.solarWattsAt(midMs)),
-      houseW: Math.max(0, houseLoadWattsAt(midMs)),
-      fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
-      fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
-    });
-  };
-
-  for (const p of relevantPrices) pushSlot(p.startMs, p.spot);
-  for (let t = pricedEndMs; t < tailEndMs; t += SLOT_MS) pushSlot(t, undefined);
-  return slots;
-}
-
-function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: number[], tailSpot: number): SimResult {
-  const k = input.knobs;
-  const cap = input.capacityWh;
-  const floorPlannerWh = (k.planner_soc_floor_percent / 100) * cap + k.extra_reserve_kwh * 1000;
-  const floorRuntimeWh = (k.runtime_soc_floor_percent / 100) * cap;
-  const floorEmergencyWh = (k.emergency_soc_floor_percent / 100) * cap;
-
-  let socWh = (input.socPercent / 100) * cap;
-  let revenueSek = 0;
-  let violationWh = 0;
-  let minSocWh = socWh;
-  let minSocMs = input.nowMs;
-  let sellExportWh = 0;
-  let autoExportWh = 0;
-  let importWh = 0;
-  let boughtWh = 0;
-  const socAfterSlot: number[] = new Array(slots.length);
-  // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
-  // so the first sell_ramp_minutes of every (re)start deliver reduced power.
-  let sellRunMinutes = 0;
-
-  for (let i = 0; i < slots.length; i++) {
-    const s = slots[i];
-    const spot = s.spot ?? tailSpot;
-    const parasiticW = input.parasiticWatts;
-    const sellSetW = Math.max(sellW[i], s.fixedSellW);
-    const requestedBuyW = Math.max(buyW[i], s.fixedBuyW);
-    // Runtime never does both at once (feedWhenNoSolar errors out) — selling wins in our model
-    const buySetW = sellSetW > 0 ? 0 : requestedBuyW;
-
-    let exportW = 0;
-    let gridChargeW = 0;
-    let slotImportWh = 0;
-
-    if (buySetW > 0 && socWh < cap * 0.98) {
-      // AC charging: battery charges from grid, house is fed from grid too
-      gridChargeW = buySetW;
-      slotImportWh +=
-        (buySetW + s.houseW + parasiticW - Math.min(s.pvW, buySetW + s.houseW + parasiticW)) * s.durationH;
-      boughtWh += buySetW * s.durationH;
-    }
-
-    const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
-    if (sellingThisSlot) {
-      // Export is limited by what battery + PV can physically supply beyond the house
-      // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
-      exportW = Math.min(sellSetW, k.inverter_max_ac_output_watts - s.houseW);
-      exportW = Math.max(exportW, 0);
-      // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
-      const rampMin = k.sell_ramp_minutes;
-      if (rampMin > 0 && sellRunMinutes < rampMin) {
-        const slotMin = s.durationH * 60;
-        const e0 = sellRunMinutes;
-        const e1 = e0 + slotMin;
-        const rampedUntil = Math.min(e1, rampMin);
-        const avgFactor =
-          ((rampedUntil * rampedUntil - e0 * e0) / (2 * rampMin) + Math.max(0, e1 - rampedUntil)) / slotMin;
-        exportW *= avgFactor;
-      }
-      sellRunMinutes += s.durationH * 60;
-    } else {
-      sellRunMinutes = 0;
-      if (buySetW === 0 && s.pvW < s.houseW + parasiticW + 380) {
-        // Baseline "feed when no solar" that nets out the inverter's constant grid draw
-        exportW = k.baseline_feed_watts;
-      }
-    }
-
-    let netBattW: number;
-    if (gridChargeW > 0) {
-      netBattW = s.pvW + gridChargeW;
-    } else {
-      netBattW = s.pvW - s.houseW - parasiticW - exportW;
-    }
-    const deltaWh =
-      netBattW >= 0 ? netBattW * k.charge_efficiency * s.durationH : (netBattW / k.discharge_efficiency) * s.durationH;
-    socWh += deltaWh;
-
-    if (socWh > cap) {
-      // Battery full: surplus PV flows to the grid by itself (solar-mode feeding)
-      const overflowInBatteryWh = socWh - cap;
-      autoExportWh += overflowInBatteryWh / k.charge_efficiency;
-      revenueSek += (overflowInBatteryWh / k.charge_efficiency / 1000) * (spot + k.sell_bonus_sek_per_kwh);
-      socWh = cap;
-    }
-    if (socWh < floorEmergencyWh) {
-      // Battery can't go lower — the house pulls the deficit from the grid (unavoidable import)
-      const deficitWh = floorEmergencyWh - socWh;
-      const importedForHouseWh = deficitWh * k.discharge_efficiency;
-      slotImportWh += importedForHouseWh;
-      socWh = floorEmergencyWh;
-    }
-
-    const exportedWh = exportW * s.durationH;
-    sellExportWh += sellSetW > 0 ? exportedWh : 0;
-    revenueSek += (exportedWh / 1000) * (spot + k.sell_bonus_sek_per_kwh);
-    importWh += slotImportWh;
-    revenueSek -= (slotImportWh / 1000) * (spot + k.buy_surcharges_sek_per_kwh) * k.vat_multiplier;
-
-    if (socWh < floorPlannerWh) violationWh += floorPlannerWh - socWh;
-    if (socWh < minSocWh) {
-      minSocWh = socWh;
-      minSocMs = s.endMs;
-    }
-    socAfterSlot[i] = socWh;
-  }
-
-  return {
-    revenueSek,
-    violationWh,
-    minSocWh,
-    minSocMs,
-    endSocWh: socWh,
-    sellExportWh,
-    autoExportWh,
-    importWh,
-    boughtWh,
-    socAfterSlot,
-  };
-}
-
-function mergeAcceptedSlots(
-  slots: Slot[],
-  accepted: number[],
-  watts: number,
-  kind: "sell" | "buy",
-  min_window_minutes: number
-): {
-  windows: { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] }[];
-  droppedShort: number;
-} {
-  const sorted = [...accepted].sort((a, b) => a - b);
-  const windows: { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] }[] = [];
-  for (const i of sorted) {
-    const last = windows[windows.length - 1];
-    if (last && slots[i].startMs === last.endMs) {
-      last.endMs = slots[i].endMs;
-      last.slotIndexes.push(i);
-    } else {
-      windows.push({ startMs: slots[i].startMs, endMs: slots[i].endMs, watts, kind, slotIndexes: [i] });
-    }
-  }
-  const before = windows.length;
-  const kept = windows.filter(w => (w.endMs - w.startMs) / 60000 >= min_window_minutes);
-  return { windows: kept, droppedShort: before - kept.length };
-}
 
 export function generatePlan(input: PlannerInput): PlanResult {
   const k = input.knobs;
@@ -240,18 +63,9 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const feasibleVsBase = (r: SimResult) => r.violationWh <= base.violationWh + 1;
 
   // ---- Greedy sell allocation, highest spot first ----
-  const overlapsVeto = (s: Slot, vetoes: { startMs: number; endMs: number }[]) =>
-    vetoes.some(v => v.startMs < s.endMs && v.endMs > s.startMs);
   const sellCandidates = slots
     .map((s, i) => ({ s, i }))
-    .filter(
-      ({ s }) =>
-        s.spot !== undefined &&
-        s.spot >= k.min_sell_spot_sek_per_kwh &&
-        s.fixedSellW === 0 &&
-        s.fixedBuyW === 0 &&
-        !overlapsVeto(s, input.sellVetoWindows)
-    )
+    .filter(({ s }) => slotTradableForSell(s, input.sellVetoWindows) && s.spot! >= k.min_sell_spot_sek_per_kwh)
     .sort((a, b) => b.s.spot! - a.s.spot!);
 
   let current = base;
@@ -285,14 +99,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
       if (slots[after].startMs - slots[before].endMs !== gapSlots * SLOT_MS) continue;
       const fillable: number[] = [];
       for (let j = before + 1; j < after; j++) {
-        const s = slots[j];
-        if (
-          sellW[j] > 0 ||
-          s.spot === undefined ||
-          s.fixedSellW > 0 ||
-          s.fixedBuyW > 0 ||
-          overlapsVeto(s, input.sellVetoWindows)
-        ) {
+        if (sellW[j] > 0 || !slotTradableForSell(slots[j], input.sellVetoWindows)) {
           fillable.length = 0;
           break;
         }
@@ -310,6 +117,12 @@ export function generatePlan(input: PlannerInput): PlanResult {
       }
     }
   }
+
+  // Defragment what the greedy scattered (see sellConsolidation.ts) — sellW is the source of
+  // truth afterwards, so rebuild the accepted list from it
+  current = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
+  acceptedSell.length = 0;
+  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
 
   // ---- Buy allocation, pass 1: avert projected unavoidable imports, cheapest slots first ----
   const acceptedBuy: number[] = [];
@@ -431,7 +244,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
     slots,
     acceptedSell,
-    k.max_sell_power_watts,
+    sellW,
     "sell",
     k.min_window_minutes
   );
@@ -443,25 +256,13 @@ export function generatePlan(input: PlannerInput): PlanResult {
     current = simulate(input, slots, sellW, buyW, tailSpot);
   }
 
-  const { windows: buyWindows } = mergeAcceptedSlots(
-    slots,
-    acceptedBuy,
-    k.max_buy_power_watts,
-    "buy",
-    k.min_window_minutes
-  );
+  const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", k.min_window_minutes);
 
   // ---- Package result ----
   const spotsAll = pricedSlots.map(s => s.spot!).sort((a, b) => a - b);
   const percentileOf = (v: number) => Math.round((spotsAll.filter(x => x <= v).length / spotsAll.length) * 100);
 
-  const toPlanned = (w: {
-    startMs: number;
-    endMs: number;
-    watts: number;
-    kind: "sell" | "buy";
-    slotIndexes: number[];
-  }): PlannedWindow => {
+  const toPlanned = (w: MergedWindow): PlannedWindow => {
     const spots = w.slotIndexes.map(i => slots[i].spot!).filter(v => v !== undefined);
     const avgSpot = spots.reduce((a, b) => a + b, 0) / Math.max(spots.length, 1);
     const socBefore = current.socAfterSlot[Math.max(0, w.slotIndexes[0] - 1)] ?? (input.socPercent / 100) * cap;
@@ -544,6 +345,93 @@ export function projectWithFixedWindows(input: PlannerInput): {
     endSocPercent: Math.round((r.endSocWh / input.capacityWh) * 1000) / 10,
     revenueSek: Math.round(r.revenueSek * 10) / 10,
   };
+}
+
+function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {
+  let max = 0;
+  for (const w of windows) {
+    if (w.startMs < endMs && w.endMs > startMs) max = Math.max(max, w.watts);
+  }
+  return max;
+}
+
+function buildSlots(input: PlannerInput): Slot[] {
+  const { prices, nowMs, constraintTailHours, houseLoadWattsAt, fixedSells, fixedBuys } = input;
+  const slots: Slot[] = [];
+  const relevantPrices = prices.filter(p => p.startMs + SLOT_MS > nowMs).sort((a, b) => a.startMs - b.startMs);
+  const pricedEndMs = relevantPrices.length ? relevantPrices[relevantPrices.length - 1].startMs + SLOT_MS : nowMs;
+  const tailEndMs = pricedEndMs + constraintTailHours * 3600 * 1000;
+
+  const pushSlot = (startMs: number, spot: number | undefined) => {
+    const endMs = startMs + SLOT_MS;
+    const effectiveStart = Math.max(startMs, nowMs);
+    const durationH = (endMs - effectiveStart) / 3600_000;
+    if (durationH <= 0) return;
+    const midMs = (effectiveStart + endMs) / 2;
+    slots.push({
+      startMs,
+      endMs,
+      durationH,
+      spot,
+      pvW: Math.max(0, input.solarWattsAt(midMs)),
+      houseW: Math.max(0, houseLoadWattsAt(midMs)),
+      fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
+      fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
+    });
+  };
+
+  for (const p of relevantPrices) pushSlot(p.startMs, p.spot);
+  for (let t = pricedEndMs; t < tailEndMs; t += SLOT_MS) pushSlot(t, undefined);
+  return slots;
+}
+
+type MergedWindow = { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] };
+
+function mergeAcceptedSlots(
+  slots: Slot[],
+  accepted: number[],
+  wattsBySlot: number[],
+  kind: "sell" | "buy",
+  min_window_minutes: number
+): {
+  windows: MergedWindow[];
+  droppedShort: number;
+} {
+  const sorted = [...accepted].sort((a, b) => a - b);
+  // Group into time-contiguous chains first: a power step mid-chain later splits into adjacent
+  // windows that are still one continuous feed, so the minimum-length rule judges whole chains.
+  const chains: number[][] = [];
+  for (const slotIndex of sorted) {
+    const lastChain = chains[chains.length - 1];
+    const previous = lastChain?.[lastChain.length - 1];
+    if (previous !== undefined && slots[slotIndex].startMs === slots[previous].endMs) lastChain.push(slotIndex);
+    else chains.push([slotIndex]);
+  }
+  const windows: MergedWindow[] = [];
+  let droppedShort = 0;
+  for (const chain of chains) {
+    const chainMinutes = (slots[chain[chain.length - 1]].endMs - slots[chain[0]].startMs) / 60000;
+    if (chainMinutes < min_window_minutes) {
+      droppedShort++;
+      continue;
+    }
+    for (const slotIndex of chain) {
+      const last = windows[windows.length - 1];
+      if (last && slots[slotIndex].startMs === last.endMs && wattsBySlot[slotIndex] === last.watts) {
+        last.endMs = slots[slotIndex].endMs;
+        last.slotIndexes.push(slotIndex);
+      } else {
+        windows.push({
+          startMs: slots[slotIndex].startMs,
+          endMs: slots[slotIndex].endMs,
+          watts: wattsBySlot[slotIndex],
+          kind,
+          slotIndexes: [slotIndex],
+        });
+      }
+    }
+  }
+  return { windows, droppedShort };
 }
 
 function emptyProjection(input: PlannerInput): PlanProjection {

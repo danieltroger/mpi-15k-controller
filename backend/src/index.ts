@@ -216,6 +216,11 @@ function main() {
                             if (!trader) return "auto trader not running";
                             return await trader.triggerPlanNow();
                           },
+                          clear_trading_vetoes: async () => {
+                            const trader = autoTrader();
+                            if (!trader) return "auto trader not running";
+                            return await trader.clearTradingVetoes();
+                          },
                         },
                         exposedAccessors: {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),

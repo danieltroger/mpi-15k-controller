@@ -26,9 +26,11 @@ const baseKnobs = {
   sell_bonus_sek_per_kwh: 0.092,
   min_buy_saving_sek_per_kwh: 0.3,
   baseline_feed_watts: 350,
-  // Existing scenarios predate ramp modeling and arbitrage — keep them isolated
+  // Existing scenarios predate ramp modeling, arbitrage and the sunny floor — keep them
+  // isolated (sunny floor == planner floor disables the relaxation)
   sell_ramp_minutes: 0,
   allow_arbitrage_buying: false,
+  planner_soc_floor_sunny_percent: 20,
 };
 
 // t0 = a midnight-aligned "now"
@@ -415,6 +417,151 @@ function check(name: string, cond: boolean, detail = "") {
     "settle: import cost = kWh × (spot + surcharge) × VAT, negative revenue",
     Math.abs(bought.revenue_sek - -(4 * (0.5 + 1.186) * 1.25)) < 0.05,
     `(${bought.revenue_sek})`
+  );
+}
+
+// ---------- Scenario 10: tight budget + zigzagging 15-min prices → consolidation cleans up ----------
+// The 2026-07-07/08 shape: the greedy takes the top-priced quarters, which zigzag scatters, and
+// near budget exhaustion only ramp-crippled isolated slots still "fit". Combs that genuinely
+// price better are kept (a stop/start costs nothing but the ramp), but consolidation must
+// harvest what the greedy strands: ramp-recovering merges and — key — fractional leftover
+// budget as reduced-power window extensions instead of nothing.
+{
+  const sunnyDay = (h: number) => {
+    const hh = h % 24;
+    return hh >= 6 && hh <= 20 ? Math.max(0, Math.sin(((hh - 6) / 14) * Math.PI)) * 12000 : 0;
+  };
+  // Evening peak with per-quarter zigzag (öre-level, like real 15-min day-ahead prices)
+  const priceCurve = (h: number) => {
+    const hh = h % 24;
+    if (hh >= 19 && hh < 22.01) {
+      const quarter = Math.round((hh % 1) * 4) % 4;
+      return 1.0 + [0.03, 0, 0.02, -0.01][quarter] - 0.005 * (hh - 19);
+    }
+    return 0.35;
+  };
+  const input: PlannerInput = {
+    nowMs: t0 + 17 * H,
+    prices: mkPrices(36, priceCurve),
+    solarWattsAt: ms => sunnyDay((ms - t0) / H),
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent: 52,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: { ...baseKnobs, sell_ramp_minutes: 10, min_window_minutes: 15 },
+  };
+  const plan = generatePlan(input);
+  const sells = [...plan.sells].sort((a, b) => a.startMs - b.startMs);
+  check("consolidate: sells exist under tight budget", sells.length > 0, `(${sells.length} windows)`);
+  check(
+    "consolidate: fractional budget captured at reduced power",
+    sells.some(w => w.watts < baseKnobs.max_sell_power_watts),
+    `(watts: ${sells.map(w => w.watts).join(", ")})`
+  );
+  check(
+    "consolidate: floor respected",
+    plan.projection.minSocPercent >= 19.9,
+    `(min SOC ${plan.projection.minSocPercent}%)`
+  );
+  check(
+    "consolidate: budget actually used",
+    plan.projection.plannedSellKwh > 8,
+    `(${plan.projection.plannedSellKwh} kWh)`
+  );
+  console.log("  sells:", sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W`).join(", "));
+}
+
+// ---------- Scenario 11: sunny floor — morning selling may dip below the night floor ----------
+{
+  const sunnyDay = (h: number) => {
+    const hh = h % 24;
+    return hh >= 6 && hh <= 20 ? Math.max(0, Math.sin(((hh - 6) / 14) * Math.PI)) * 12000 : 0;
+  };
+  // Morning price peak while solar already covers the house
+  const priceCurve = (h: number) => {
+    const hh = h % 24;
+    if (hh >= 8 && hh <= 10) return 1.5;
+    return 0.3;
+  };
+  const mk = (sunnyFloor: number): PlannerInput => ({
+    nowMs: t0 + 6 * H,
+    prices: mkPrices(30, priceCurve),
+    solarWattsAt: ms => sunnyDay((ms - t0) / H),
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent: 35,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: {
+      ...baseKnobs,
+      planner_soc_floor_sunny_percent: sunnyFloor,
+      runtime_soc_floor_percent: 5,
+    },
+  });
+  const strict = generatePlan(mk(20)); // sunny floor == planner floor → old behavior
+  const relaxed = generatePlan(mk(5));
+  check(
+    "sunnyfloor: relaxed floor sells more at the morning peak",
+    relaxed.projection.plannedSellKwh > strict.projection.plannedSellKwh + 5,
+    `(${relaxed.projection.plannedSellKwh} vs ${strict.projection.plannedSellKwh} kWh)`
+  );
+  check(
+    "sunnyfloor: dips below the night floor but not below the sunny floor",
+    relaxed.projection.minSocPercent < 19 && relaxed.projection.minSocPercent >= 4.9,
+    `(min SOC ${relaxed.projection.minSocPercent}%)`
+  );
+  const minAtHour = (new Date(relaxed.projection.minSocAt).getTime() - t0) / H;
+  check("sunnyfloor: the dip happens while the sun is up", minAtHour >= 6 && minAtHour <= 20, `(h${minAtHour})`);
+}
+
+// ---------- Scenario 12: reconcile shape (2026-07-06 incident) — after the evening window falls, ----------
+// the planner re-fills what is feasible instead of leaving the schedule stranded
+{
+  const priceCurve = (h: number) => {
+    if (h >= 19 && h <= 21) return 1.1; // tonight's peak
+    if (h >= 29 && h <= 31) return 1.05; // tomorrow 05:00-07:00
+    return 0.4;
+  };
+  const sunnyDay = (h: number) => {
+    const hh = h % 24;
+    return hh >= 6 && hh <= 20 ? Math.max(0, Math.sin(((hh - 6) / 14) * Math.PI)) * 12000 : 0;
+  };
+  // 20:00, evening window just got dropped by the guard (SOC too low to run it): can morning
+  // windows come back? The guard now answers by re-planning — this is that re-plan.
+  const input: PlannerInput = {
+    nowMs: t0 + 20 * H,
+    prices: mkPrices(48, priceCurve),
+    solarWattsAt: ms => sunnyDay((ms - t0) / H),
+    houseLoadWattsAt: () => 800,
+    parasiticWatts: 230,
+    socPercent: 50,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: { ...baseKnobs, min_window_minutes: 15 },
+  };
+  const plan = generatePlan(input);
+  check("reconcile: re-plan finds feasible sell windows", plan.sells.length > 0, `(${plan.sells.length} windows)`);
+  check(
+    "reconcile: floor still respected",
+    plan.projection.minSocPercent >= 19.9,
+    `(min SOC ${plan.projection.minSocPercent}%)`
+  );
+  console.log(
+    "  sells:",
+    plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.avgSpot.toFixed(2)}`).join(", ")
   );
 }
 

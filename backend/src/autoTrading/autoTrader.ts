@@ -115,7 +115,12 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
         const lastPlanMs = ctx.state.last_plan ? +new Date(ctx.state.last_plan.generated_at) : 0;
         if (Date.now() - lastPlanMs < 45 * 60_000) return; // fresh plan — nothing to improve yet
         const gainGate = untrack(config).automatic_trading.opportunistic_replan_min_gain_sek ?? 5;
-        void runPlan(ctx, "opportunistic", false, gainGate).then(result => {
+        void runPlan(ctx, {
+          trigger: "opportunistic",
+          waitForTomorrow: false,
+          gainGateSek: gainGate,
+          keepActiveWindows: true,
+        }).then(result => {
           if (result.startsWith("kept existing plan")) debugLog("Auto trader opportunistic:", result);
         });
       }, replanMinutes * 60_000);
@@ -165,8 +170,33 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
 
   return {
     autoTraderStatus: status,
-    triggerPlanNow: () => runPlan(ctx, "manual", false),
+    triggerPlanNow: () => runPlan(ctx, { trigger: "manual", waitForTomorrow: false }),
+    clearTradingVetoes: () => clearTradingVetoes(ctx),
   };
+}
+
+/**
+ * Forget every veto (time ranges blocked because the user deleted planner windows there) and
+ * immediately re-plan so the freed ranges get scheduled again. Exposed as a ws action for the
+ * frontend's "unblock" button.
+ */
+async function clearTradingVetoes(ctx: TraderCtx): Promise<string> {
+  const cleared = await withScheduleLock(ctx, async () => {
+    const count = ctx.state.vetoes.length;
+    if (count) {
+      ctx.state.vetoes = [];
+      await saveAutoTraderState(ctx.state);
+    }
+    return count;
+  });
+  refreshStatus(ctx);
+  if (!cleared) return "no blocked ranges to clear";
+  const summary = await runPlan(ctx, { trigger: "veto-clear", waitForTomorrow: false });
+  if (summary === "plan already in progress") {
+    // That plan may have sampled the vetoes before the clear — be honest instead of claiming a re-plan
+    return `cleared ${cleared} blocked range(s); another plan is running — hit "Generate plan now" afterwards to re-plan the freed ranges`;
+  }
+  return `cleared ${cleared} blocked range(s); ${summary}`;
 }
 
 /**
@@ -366,33 +396,52 @@ function applyPlan(
       if (!buying[key]) buying[key] = entry;
       else if (!entriesEqual(buying[key], entry, "charging_power")) delete newOwned.buying[key];
     }
+    // Entries (ours or the user's) whose window ended over a day ago are dead weight in the UI;
+    // unparseable dates (NaN) are deliberately kept — deleting what we can't interpret is worse.
+    const pruneBeforeMs = Date.now() - 24 * 3600 * 1000;
+    const prunedSelling = pickEntries(selling, (_, entry) => !(+new Date(entry.end_time) < pruneBeforeMs));
+    const prunedBuying = pickEntries(buying, (_, entry) => !(+new Date(entry.end_time) < pruneBeforeMs));
+    // An identical regeneration must be a no-op, not config churn (delete+re-add shuffles key
+    // order, so compare with sorted keys)
+    if (
+      canonicalSchedule(prunedSelling) === canonicalSchedule(prev.scheduled_power_selling.schedule) &&
+      canonicalSchedule(prunedBuying) === canonicalSchedule(prev.scheduled_power_buying.schedule)
+    ) {
+      return prev;
+    }
     return {
       ...prev,
-      scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling },
-      scheduled_power_buying: { ...prev.scheduled_power_buying, schedule: buying },
+      scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: prunedSelling },
+      scheduled_power_buying: { ...prev.scheduled_power_buying, schedule: prunedBuying },
     };
   });
   ctx.state.owned_entries = newOwned;
 }
 
-/**
- * @param onlyIfGainSek when set, the new plan only replaces the existing windows if its projected
- * revenue beats what the currently-written windows would earn by at least this much (used by the
- * opportunistic replan so a working plan isn't churned for pennies). In this mode currently-active
- * windows are also treated as fixed so an in-progress sell is never interrupted.
- */
-async function runPlan(
-  ctx: TraderCtx,
-  trigger: string,
-  waitForTomorrow: boolean,
-  onlyIfGainSek?: number
-): Promise<string> {
+type RunPlanOptions = {
+  trigger: string;
+  /** Wait (retrying) until tomorrow's day-ahead prices are published before planning */
+  waitForTomorrow: boolean;
+  /**
+   * When set, the new plan only replaces the existing windows if its projected revenue beats what
+   * the currently-written windows would earn by at least this much (used by the opportunistic
+   * replan so a working plan isn't churned for pennies).
+   */
+  gainGateSek?: number;
+  /** Treat currently-executing owned windows as fixed so an in-progress trade is never interrupted */
+  keepActiveWindows?: boolean;
+  /** Plan with these prices instead of fetching (the guard passes its own, possibly cached, fetch) */
+  prices?: FetchedPrices;
+};
+
+async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string> {
+  const { trigger, waitForTomorrow, gainGateSek, keepActiveWindows } = options;
   if (ctx.flags.planInFlight) return "plan already in progress";
   ctx.flags.planInFlight = true;
   try {
     const tradingConfig = untrack(ctx.config).automatic_trading;
 
-    let prices = await fetchPrices(tradingConfig.price_area, trigger === "daily");
+    let prices = options.prices ?? (await fetchPrices(tradingConfig.price_area, trigger === "daily"));
     if (waitForTomorrow && !prices.coversTomorrow) {
       const retryMinutes = Math.max(2, tradingConfig.replan_retry_minutes);
       for (let attempt = 1; attempt <= 16 && !ctx.flags.aborted; attempt++) {
@@ -418,25 +467,18 @@ async function runPlan(
       const freshCfg = untrack(ctx.config);
       reconcileOwnership(ctx, freshCfg);
 
-      // During gated (opportunistic) replans, a window that is running right now must not be
-      // rewritten mid-sell — plan around it and keep it.
-      const now = Date.now();
-      const keepOwned: AutoTraderState["owned_entries"] = { selling: {}, buying: {} };
-      if (onlyIfGainSek !== undefined) {
-        for (const [key, owned] of Object.entries(ctx.state.owned_entries.selling)) {
-          if (+new Date(key) <= now && +new Date(owned.end_time) > now) keepOwned.selling[key] = owned;
-        }
-        for (const [key, owned] of Object.entries(ctx.state.owned_entries.buying)) {
-          if (+new Date(key) <= now && +new Date(owned.end_time) > now) keepOwned.buying[key] = owned;
-        }
-      }
+      // A window that is running right now must not be rewritten mid-sell — plan around it
+      // and keep it (opportunistic and guard replans; a full plan may reshape everything).
+      const keepOwned: AutoTraderState["owned_entries"] = keepActiveWindows
+        ? activeOwnedEntries(ctx, Date.now())
+        : { selling: {}, buying: {} };
 
       const input = await buildPlannerInput(ctx, freshCfg, prices, plannedSoc);
       input.fixedSells = [...input.fixedSells, ...ownedEntriesAsWindows(keepOwned.selling, "power_watts")];
       input.fixedBuys = [...input.fixedBuys, ...ownedEntriesAsWindows(keepOwned.buying, "charging_power")];
       const result = generatePlan(input);
 
-      if (onlyIfGainSek !== undefined) {
+      if (gainGateSek !== undefined) {
         // What would the windows currently in the config earn under the same live conditions?
         const existing = projectWithFixedWindows({
           ...input,
@@ -444,8 +486,8 @@ async function runPlan(
           fixedBuys: [...input.fixedBuys, ...ownedEntriesAsWindows(ctx.state.owned_entries.buying, "charging_power")],
         });
         const gain = result.projection.estimatedRevenueSek - existing.revenueSek;
-        if (gain < onlyIfGainSek) {
-          return `kept existing plan — replacement would gain ${gain.toFixed(1)} SEK (< ${onlyIfGainSek})`;
+        if (gain < gainGateSek) {
+          return `kept existing plan — replacement would gain ${gain.toFixed(1)} SEK (< ${gainGateSek})`;
         }
         logLog(`Auto trader: opportunistic replan beats current windows by ${gain.toFixed(1)} SEK — applying`);
       }
@@ -496,8 +538,17 @@ async function runPlan(
 }
 
 /**
- * Periodic safety check: with live SOC and fresh forecasts, would the remaining schedule
- * drag SOC below the reserve? If so, trim our windows (never the user's), cheapest first.
+ * Periodic safety check: with live SOC and fresh forecasts, would the remaining schedule drag SOC
+ * below the reserve? If so, re-plan the remaining horizon from live conditions instead of merely
+ * trimming: a fresh plan sheds exactly as much selling as needed AND re-adds windows that became
+ * feasible again (the old trim-only guard stranded those until someone clicked regenerate — see
+ * the 2026-07-06 incident). User windows are never touched; an active window keeps running unless
+ * it alone breaches the reserve, in which case it is stubbed to end now.
+ *
+ * Unlike the old in-lock trim, the shedding lands only when the re-plan's applyPlan finishes (a
+ * few seconds later, solar/consumption fetches included). That gap is acceptable because a
+ * projected breach concerns windows hours out, and even mid-gap the runtime's own
+ * only_sell_above_soc cutoff hard-stops selling regardless of what the schedule says.
  */
 async function runGuard(ctx: TraderCtx) {
   if (ctx.flags.planInFlight) {
@@ -514,14 +565,16 @@ async function runGuard(ctx: TraderCtx) {
     const soc = untrack(ctx.averageSOC);
     if (soc === undefined) return;
     const priceArea = untrack(ctx.config).automatic_trading.price_area;
-    // For a trim decision slightly stale prices beat no guard run at all
+    // For a breach decision slightly stale prices beat no guard run at all
     const prices = (await fetchPrices(priceArea).catch(() => undefined)) ?? getCachedPrices(priceArea);
     if (!prices) {
       debugLog("Auto trader guard: prices unavailable (fetch failed, no cache) — skipping this run");
       return;
     }
     const guardSoc = soc;
-    await withScheduleLock(ctx, async () => {
+    // Phase 1, under the lock: detect a breach and immediately stop an active window that alone
+    // causes it. The re-plan itself runs outside the lock (runPlan takes the lock internally).
+    const breach = await withScheduleLock(ctx, async () => {
       // Re-read inside the lock — a plan may have rewritten the schedules while we awaited the
       // price fetch, and reconciling against a stale snapshot would spuriously veto its windows
       const cfg = untrack(ctx.config);
@@ -534,76 +587,77 @@ async function runGuard(ctx: TraderCtx) {
       );
       if (!ourWindows.length) {
         ctx.state.guard = { last_run_at: new Date().toISOString(), last_action: "nothing to guard" };
-        return;
+        return false;
       }
 
+      // Owned buys recharge the battery — projecting the sells without them would fabricate
+      // breaches (and could stub a perfectly safe active sell)
+      const ourBuyWindows = ownedEntriesAsWindows(ctx.state.owned_entries.buying, "charging_power").filter(
+        window => window.endMs > now
+      );
       const projectionWith = (windows: typeof ourWindows) =>
-        projectWithFixedWindows({ ...baseInput, fixedSells: [...baseInput.fixedSells, ...windows] });
-
-      const kept = [...ourWindows];
-      let projection = projectionWith(kept);
-      const tolerable = projectWithFixedWindows(baseInput).violationWh + 1000; // don't blame our windows for a forecast already under water
-      let trimmed = 0;
-      while (projection.violationWh > tolerable && kept.length) {
-        // Sacrifice the least valuable window first (lowest avg spot per state notes, fallback: latest)
-        const windowValue = (window: (typeof kept)[number]) => {
-          const stateWindow = ctx.state.last_plan?.windows.find(
-            candidate => +new Date(candidate.start) === window.startMs && candidate.kind === "sell"
-          );
-          return stateWindow?.avg_spot ?? 0;
-        };
-        kept.sort((a, b) => windowValue(a) - windowValue(b));
-        const sacrificed = kept.shift()!;
-        trimmed++;
-        logLog(
-          "Auto trader guard: trimming sell window",
-          new Date(sacrificed.startMs).toISOString(),
-          "to protect reserve (projected min SOC",
-          projection.minSocPercent,
-          "% )"
-        );
-        projection = projectionWith(kept);
-      }
-
-      if (trimmed) {
-        const keptKeys = new Set(kept.map(window => new Date(window.startMs).toISOString()));
-        const shortenedStubs: Record<string, { end_time: string; power_watts: number }> = {};
-        ctx.setConfig(prev => {
-          const selling = { ...prev.scheduled_power_selling.schedule };
-          for (const [key, owned] of Object.entries(ctx.state.owned_entries.selling)) {
-            if (keptKeys.has(key)) continue;
-            if (+new Date(owned.end_time) <= now) continue;
-            if (selling[key] && entriesEqual(selling[key], owned, "power_watts")) {
-              const startMs = +new Date(key);
-              if (startMs <= now) {
-                // Active window: end it now instead of deleting so history stays visible
-                const stubEnd = new Date(now + 60_000).toISOString();
-                selling[key] = { ...selling[key], end_time: stubEnd };
-                shortenedStubs[key] = { end_time: stubEnd, power_watts: Number(owned.power_watts) };
-              } else {
-                delete selling[key];
-              }
-            }
-          }
-          return { ...prev, scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling } };
+        projectWithFixedWindows({
+          ...baseInput,
+          fixedSells: [...baseInput.fixedSells, ...windows],
+          fixedBuys: [...baseInput.fixedBuys, ...ourBuyWindows],
         });
-        // Ownership: surviving windows, already-finished windows and the just-shortened stub stay ours
-        const nextOwned: typeof ctx.state.owned_entries.selling = { ...shortenedStubs };
-        for (const key of Object.keys(ctx.state.owned_entries.selling)) {
-          if (keptKeys.has(key) || +new Date(ctx.state.owned_entries.selling[key].end_time) <= now) {
-            nextOwned[key] = ctx.state.owned_entries.selling[key];
-          }
-        }
-        ctx.state.owned_entries.selling = nextOwned;
+
+      const projection = projectionWith(ourWindows);
+      const tolerable = projectWithFixedWindows(baseInput).violationWh + 1000; // don't blame our windows for a forecast already under water
+      if (projection.violationWh <= tolerable) {
+        ctx.state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: `ok (projected min SOC ${projection.minSocPercent}% @ ${projection.minSocAt})`,
+        };
+        return false;
       }
 
+      // The re-plan keeps active windows immutable, so it can't stop one that is itself the
+      // problem — that case is handled here, before planning
+      const activeWindows = ourWindows.filter(window => window.startMs <= now);
+      if (activeWindows.length && projectionWith(activeWindows).violationWh > tolerable) {
+        stubActiveSellWindows(ctx, now);
+      }
       ctx.state.guard = {
         last_run_at: new Date().toISOString(),
-        last_action: trimmed
-          ? `trimmed ${trimmed} sell window(s), projected min SOC now ${projection.minSocPercent}%`
-          : `ok (projected min SOC ${projection.minSocPercent}% @ ${projection.minSocAt})`,
+        last_action: `projected reserve breach (min SOC ${projection.minSocPercent}% @ ${projection.minSocAt}) — re-planning`,
       };
+      return true;
     });
+
+    if (breach) {
+      const summary = await runPlan(ctx, {
+        trigger: "guard",
+        waitForTomorrow: false,
+        keepActiveWindows: true,
+        prices,
+      });
+      if (summary === "plan already in progress") {
+        // Whatever plan slipped in re-plans from live conditions anyway; don't claim success here
+        ctx.state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: "projected breach; another plan is running — re-checking next tick",
+        };
+      } else if (summary.startsWith("error:")) {
+        // No planner available (e.g. solar forecast fetch died) but the reserve is in danger —
+        // shed our future sells rather than keep selling into a projected breach. Owned buys are
+        // kept: they only add energy, i.e. help the reserve.
+        await withScheduleLock(ctx, async () => {
+          const keep = activeOwnedEntries(ctx, Date.now());
+          keep.buying = { ...ctx.state.owned_entries.buying };
+          applyPlan(ctx, [], [], keep);
+        });
+        ctx.state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: `re-plan failed (${summary}) — dropped planner sell windows to protect the reserve`,
+        };
+      } else {
+        ctx.state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: `re-planned after projected breach — ${summary}`,
+        };
+      }
+    }
     await saveAutoTraderState(ctx.state);
     refreshStatus(ctx);
     debugLog(`Auto trader guard: done in ${Date.now() - startedAt}ms — ${ctx.state.guard?.last_action}`);
@@ -613,12 +667,66 @@ async function runGuard(ctx: TraderCtx) {
 }
 
 /**
+ * End every currently-running owned sell window in a minute (stub instead of delete so the entry
+ * stays visible as history). Used when the active window itself breaches the reserve — the
+ * re-plan treats active windows as immutable and could not stop it. The follow-up re-plan then
+ * deliberately keeps the ≤60s remnant as a fixed "active" window: deleting it would erase the
+ * history, and nothing new can be scheduled into a minute that is already passing.
+ */
+function stubActiveSellWindows(ctx: TraderCtx, now: number) {
+  const activeSelling = activeOwnedEntries(ctx, now).selling;
+  const shortenedStubs: Record<string, { end_time: string; power_watts: number }> = {};
+  ctx.setConfig(prev => {
+    const selling = { ...prev.scheduled_power_selling.schedule };
+    for (const [key, owned] of Object.entries(activeSelling)) {
+      if (selling[key] && entriesEqual(selling[key], owned, "power_watts")) {
+        const stubEnd = new Date(now + 60_000).toISOString();
+        selling[key] = { ...selling[key], end_time: stubEnd };
+        shortenedStubs[key] = { end_time: stubEnd, power_watts: Number(owned.power_watts) };
+      }
+    }
+    return { ...prev, scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling } };
+  });
+  for (const [key, stub] of Object.entries(shortenedStubs)) {
+    ctx.state.owned_entries.selling[key] = stub;
+    logLog("Auto trader guard: ending active sell window", key, "now to protect the reserve");
+  }
+}
+
+/** Owned entries whose window is executing right now (start ≤ now < end). */
+function activeOwnedEntries(ctx: TraderCtx, now: number): AutoTraderState["owned_entries"] {
+  const isActive = (key: string, entry: { end_time: string }) =>
+    +new Date(key) <= now && +new Date(entry.end_time) > now;
+  return {
+    selling: pickEntries(ctx.state.owned_entries.selling, isActive),
+    buying: pickEntries(ctx.state.owned_entries.buying, isActive),
+  };
+}
+
+/** Object.fromEntries + filter over a schedule/ownership map, preserving the value type. */
+function pickEntries<EntryType extends { end_time: string }>(
+  entries: Record<string, EntryType>,
+  keep: (key: string, entry: EntryType) => boolean
+): Record<string, EntryType> {
+  return Object.fromEntries(Object.entries(entries).filter(([key, entry]) => keep(key, entry)));
+}
+
+/** Schedule serialized with sorted keys — insertion order must not defeat equality checks. */
+function canonicalSchedule(schedule: Record<string, { end_time: string }>): string {
+  return JSON.stringify(
+    Object.keys(schedule)
+      .sort()
+      .map(key => [key, schedule[key]])
+  );
+}
+
+/**
  * runPlan + retry: transient failures (undici connect timeouts while the pi is CPU-pegged,
  * upstream hiccups) reschedule another attempt instead of silently waiting for the next day.
  */
 async function runPlanWithRecovery(ctx: TraderCtx, trigger: string, waitForTomorrow: boolean): Promise<string> {
   clearTimeout(ctx.timers.recovery);
-  const result = await runPlan(ctx, trigger, waitForTomorrow);
+  const result = await runPlan(ctx, { trigger, waitForTomorrow });
   if (result.startsWith("error:") && !ctx.flags.aborted) {
     ctx.flags.consecutiveFailures++;
     const maxAttempts = 8;

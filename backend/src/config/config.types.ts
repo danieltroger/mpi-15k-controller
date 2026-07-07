@@ -15,6 +15,12 @@ export type AutomaticTradingConfig = {
   max_buy_power_watts: number;
   /** Planner keeps projected SOC above this (plus extra_reserve_kwh) at all times */
   planner_soc_floor_percent: number;
+  /**
+   * Reserve floor used instead of planner_soc_floor_percent while forecast PV covers the house —
+   * with solar flowing, a forecast miss costs minutes of grid import, not a stranded night.
+   * Keep ≤ planner_soc_floor_percent and ≥ the runtime cutoff (scheduled_power_selling.only_sell_above_soc).
+   */
+  planner_soc_floor_sunny_percent: number;
   /** Below this SOC the house effectively starts importing — used to price unavoidable imports */
   emergency_soc_floor_percent: number;
   /** Extra energy to keep in the battery on top of the floor, e.g. for charging the car. User knob. */

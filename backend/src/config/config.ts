@@ -9,7 +9,7 @@ import type { Config } from "./config.types.ts";
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
 const INVERTER_NAMEPLATE_AC_WATTS = 15000;
 
-const default_config: Config = {
+export const default_config: Config = {
   automatic_trading: {
     enabled: false,
     price_area: "SE3",
@@ -21,6 +21,7 @@ const default_config: Config = {
     inverter_max_ac_output_watts: INVERTER_NAMEPLATE_AC_WATTS,
     max_buy_power_watts: INVERTER_NAMEPLATE_AC_WATTS,
     planner_soc_floor_percent: 10,
+    planner_soc_floor_sunny_percent: 5,
     emergency_soc_floor_percent: 3,
     extra_reserve_kwh: 0,
     min_sell_spot_sek_per_kwh: 0.08,
@@ -37,7 +38,9 @@ const default_config: Config = {
     // spotpris påslag 0.02 + nätnytta 0.072
     sell_bonus_sek_per_kwh: 0.092,
     constraint_tail_hours: 18,
-    guard_interval_minutes: 30,
+    // One tick per price slot; a healthy tick is cheap (forecasts/prices are cached, only the
+    // breach projection runs) and a breach gets caught one slot sooner
+    guard_interval_minutes: 15,
     opportunistic_replan_interval_minutes: 60,
     opportunistic_replan_min_gain_sek: 5,
     replan_retry_minutes: 15,
@@ -125,6 +128,19 @@ const default_config: Config = {
   },
 };
 
+/**
+ * Top-level keys merge shallowly, but automatic_trading merges one level deeper: planner knobs get
+ * added over time, and a config.json written before a knob existed must still pick up its default
+ * (the planner does raw arithmetic on these — a missing knob would silently NaN every projection).
+ */
+function mergeWithDefaults(partial: Partial<Config>): Config {
+  return {
+    ...default_config,
+    ...partial,
+    automatic_trading: { ...default_config.automatic_trading, ...partial.automatic_trading },
+  };
+}
+
 export async function get_config_object(owner: Owner) {
   logLog("Getting config object");
   let config_writing_debounce: ReturnType<typeof setTimeout> | undefined;
@@ -144,7 +160,7 @@ export async function get_config_object(owner: Owner) {
       existing_config = {};
     }
   }
-  const initial_config = { ...default_config, ...existing_config } as const;
+  const initial_config = mergeWithDefaults(existing_config);
   const config_signal = createSignal<Config>(initial_config);
   const [get_config, set_actual_config] = config_signal;
 
@@ -177,7 +193,7 @@ export async function get_config_object(owner: Owner) {
       const set = (new_value: Config) => {
         // So that users can't accidentally delete keys
         // Use batch so that if two values update we don't run effects for both updates
-        batch(() => set_actual_config({ ...default_config, ...new_value }));
+        batch(() => set_actual_config(mergeWithDefaults(new_value)));
       };
       if (typeof new_value_or_setter === "function") {
         set(new_value_or_setter(untrack(get_config)));

@@ -12,6 +12,7 @@ export type PlannerKnobs = Pick<
   | "inverter_max_ac_output_watts"
   | "max_buy_power_watts"
   | "planner_soc_floor_percent"
+  | "planner_soc_floor_sunny_percent"
   | "emergency_soc_floor_percent"
   | "extra_reserve_kwh"
   | "min_sell_spot_sek_per_kwh"
