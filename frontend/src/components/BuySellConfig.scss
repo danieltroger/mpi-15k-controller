@@ -129,7 +129,11 @@
 }
 
 .buy-sell-config__meta {
-  white-space: nowrap;
+  // These paragraphs hold generated prose of unbounded length (plan notes joined
+  // with " · ", ISO horizons, blocked ranges). nowrap forced them onto one line
+  // that the page's overflow-x: clip then cut off; wrap instead, breaking any
+  // token too wide for the column (long ISO timestamps on narrow screens).
+  overflow-wrap: break-word;
   font-variant-numeric: tabular-nums;
   opacity: 0.92;
   font-size: 0.85rem;
