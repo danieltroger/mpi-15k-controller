@@ -10,6 +10,7 @@ import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { type AutoTraderState, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import { maybeRefitSolarModel } from "./solarCalibration.ts";
+import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import {
   type FixedWindow,
   generatePlan,
@@ -98,6 +99,12 @@ export function useAutoTrader({
       dailyTimer = setTimeout(async () => {
         await runPlanWithRecovery(ctx, "daily", true);
         void maybeRefitSolarModel(ctx.config, ctx.setConfig, ctx.influxClient);
+        void settleRecentDays(
+          ctx.influxClient(),
+          untrack(config).automatic_trading.price_area,
+          untrack(config).automatic_trading,
+          ctx.state
+        );
         scheduleDaily();
       }, ms);
     };
@@ -135,6 +142,13 @@ export function useAutoTrader({
         await saveAutoTraderState(ctx.state);
         refreshStatus(ctx, { note: "startup: existing plan still fresh" });
       }
+      // catch up any recently-completed day the last run missed
+      void settleRecentDays(
+        ctx.influxClient(),
+        untrack(config).automatic_trading.price_area,
+        untrack(config).automatic_trading,
+        ctx.state
+      );
     }, 90_000);
 
     scheduleDaily();
@@ -450,6 +464,7 @@ async function runPlan(
           avg_spot: Math.round(window.avgSpot * 1000) / 1000,
         })),
       };
+      captureForecastLog(ctx.state, input, result.sells);
       ctx.state.last_error = undefined;
       await saveAutoTraderState(ctx.state);
 
