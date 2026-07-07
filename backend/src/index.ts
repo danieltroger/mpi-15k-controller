@@ -246,7 +246,7 @@ function main() {
                         e => {
                           setElpatronSwitchingErrored(true);
                           errorLog("Elpatron switching errored", e, "restarting in 60s");
-                          setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+                          setTimeout(() => setElpatronSwitchingErrored(false), 60_000);
                         }
                       );
                     });
