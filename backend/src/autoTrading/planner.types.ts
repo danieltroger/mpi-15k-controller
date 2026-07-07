@@ -25,7 +25,6 @@ export type PlannerKnobs = Pick<
   | "sell_bonus_sek_per_kwh"
   | "min_buy_saving_sek_per_kwh"
   | "sell_ramp_minutes"
-  | "sell_restart_penalty_sek"
   | "allow_arbitrage_buying"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
@@ -92,10 +91,7 @@ export type Slot = {
   fixedBuyW: number;
 };
 export type SimResult = {
-  /** Cash revenue projection (fees included, restart penalty NOT — comparable to settled reality) */
   revenueSek: number;
-  /** Fictional churn charge per sell-run start; the optimizer maximizes revenueSek − restartPenaltySek */
-  restartPenaltySek: number;
   violationWh: number;
   minSocWh: number;
   minSocMs: number;

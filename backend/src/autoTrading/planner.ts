@@ -13,13 +13,14 @@
  * reserve). Selling energy the battery couldn't have absorbed anyway (would have auto-exported when full)
  * is naturally handled by the simulation's revenue accounting.
  *
- * Two forces keep the schedule contiguous: every sell-run start is charged sell_restart_penalty_sek in the
- * optimizer objective (objectiveSek — reported cash revenue stays clean of it), and a consolidation pass
- * (sellConsolidation.ts) defragments what the greedy scattered. The reserve floor relaxes to
- * planner_soc_floor_sunny_percent in slots where forecast PV covers the house.
+ * Fragmented schedules are allowed when they genuinely price better (a stop/start costs nothing but the
+ * modeled ramp), but a consolidation pass (sellConsolidation.ts) repairs fragmentation the greedy's
+ * accept order created for no gain, and captures fractional leftover budget as reduced-power window
+ * extensions. The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV
+ * covers the house.
  */
 
-import { objectiveSek, overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
+import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import type {
   FixedWindow,
@@ -72,7 +73,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   for (const { i } of sellCandidates) {
     sellW[i] = k.max_sell_power_watts;
     const trial = simulate(input, slots, sellW, buyW, tailSpot);
-    const gain = objectiveSek(trial) - objectiveSek(current);
+    const gain = trial.revenueSek - current.revenueSek;
     if (feasibleVsBase(trial) && gain >= k.min_gain_sek_per_slot) {
       current = trial;
       acceptedSell.push(i);
@@ -82,9 +83,9 @@ export function generatePlan(input: PlannerInput): PlanResult {
   }
 
   // Bridge short price valleys between accepted windows: every feed stop/start restarts the
-  // slow feed-in ramp and pays the restart penalty (both priced into the objective), so selling
-  // through a shallow dip is usually better than pausing — and nobody wants a schedule with a
-  // 30-min hole in it. Accept a bounded objective loss per bridged slot; the sim decides.
+  // slow feed-in ramp (which the simulation prices in), so selling through a shallow dip is
+  // usually better than pausing — and nobody wants a schedule with a 30-min hole in it.
+  // Accept a bounded revenue loss per bridged slot; the sim decides using ramp + prices.
   const maxGapSlots = 3;
   const maxSmoothingLossSekPerSlot = 1;
   for (let pass = 0, changed = true; pass < 4 && changed; pass++) {
@@ -107,10 +108,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
       if (fillable.length !== gapSlots) continue;
       for (const j of fillable) sellW[j] = k.max_sell_power_watts;
       const trial = simulate(input, slots, sellW, buyW, tailSpot);
-      if (
-        feasibleVsBase(trial) &&
-        objectiveSek(trial) - objectiveSek(current) >= -maxSmoothingLossSekPerSlot * gapSlots
-      ) {
+      if (feasibleVsBase(trial) && trial.revenueSek - current.revenueSek >= -maxSmoothingLossSekPerSlot * gapSlots) {
         current = trial;
         acceptedSell.push(...fillable);
         changed = true;
@@ -143,7 +141,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
       if (sellW[i] > 0) continue;
       buyW[i] = k.max_buy_power_watts;
       const trial = simulate(input, slots, sellW, buyW, tailSpot);
-      const gain = objectiveSek(trial) - objectiveSek(current);
+      const gain = trial.revenueSek - current.revenueSek;
       const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
       if (feasibleVsBase(trial) && extraBoughtKwh > 0 && gain / extraBoughtKwh >= k.min_buy_saving_sek_per_kwh) {
         current = trial;
@@ -209,7 +207,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
         for (const b of buyGroup) buyW[b] = k.max_buy_power_watts;
         sellW[sellIdx] = k.max_sell_power_watts;
         const trial = simulate(input, slots, sellW, buyW, tailSpot);
-        const gain = objectiveSek(trial) - objectiveSek(current);
+        const gain = trial.revenueSek - current.revenueSek;
         const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
         if (feasibleVsBase(trial) && extraBoughtKwh > 0.1 && gain / extraBoughtKwh >= k.min_buy_saving_sek_per_kwh) {
           current = trial;

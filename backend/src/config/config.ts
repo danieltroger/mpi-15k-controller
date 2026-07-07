@@ -29,7 +29,6 @@ export const default_config: Config = {
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
     sell_ramp_minutes: 10,
-    sell_restart_penalty_sek: 1,
     min_window_minutes: 15,
     charge_efficiency: 0.95,
     discharge_efficiency: 0.93,
@@ -39,7 +38,9 @@ export const default_config: Config = {
     // spotpris påslag 0.02 + nätnytta 0.072
     sell_bonus_sek_per_kwh: 0.092,
     constraint_tail_hours: 18,
-    guard_interval_minutes: 30,
+    // One tick per price slot; a healthy tick is cheap (forecasts/prices are cached, only the
+    // breach projection runs) and a breach gets caught one slot sooner
+    guard_interval_minutes: 15,
     opportunistic_replan_interval_minutes: 60,
     opportunistic_replan_min_gain_sek: 5,
     replan_retry_minutes: 15,

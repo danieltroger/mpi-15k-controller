@@ -26,11 +26,10 @@ const baseKnobs = {
   sell_bonus_sek_per_kwh: 0.092,
   min_buy_saving_sek_per_kwh: 0.3,
   baseline_feed_watts: 350,
-  // Existing scenarios predate ramp modeling, arbitrage, the restart penalty and the sunny
-  // floor — keep them isolated (sunny floor == planner floor disables the relaxation)
+  // Existing scenarios predate ramp modeling, arbitrage and the sunny floor — keep them
+  // isolated (sunny floor == planner floor disables the relaxation)
   sell_ramp_minutes: 0,
   allow_arbitrage_buying: false,
-  sell_restart_penalty_sek: 0,
   planner_soc_floor_sunny_percent: 20,
 };
 
@@ -421,10 +420,12 @@ function check(name: string, cond: boolean, detail = "") {
   );
 }
 
-// ---------- Scenario 10: tight budget + zigzagging 15-min prices → contiguous windows, not a comb ----------
-// Reproduces the 2026-07-07/08 shape: the greedy takes the top-priced quarters, which zigzag
-// scatters, and near budget exhaustion only ramp-crippled isolated slots still "fit" — 15-min
-// holes everywhere. The restart penalty + consolidation pass must merge them.
+// ---------- Scenario 10: tight budget + zigzagging 15-min prices → consolidation cleans up ----------
+// The 2026-07-07/08 shape: the greedy takes the top-priced quarters, which zigzag scatters, and
+// near budget exhaustion only ramp-crippled isolated slots still "fit". Combs that genuinely
+// price better are kept (a stop/start costs nothing but the ramp), but consolidation must
+// harvest what the greedy strands: ramp-recovering merges and — key — fractional leftover
+// budget as reduced-power window extensions instead of nothing.
 {
   const sunnyDay = (h: number) => {
     const hh = h % 24;
@@ -439,7 +440,7 @@ function check(name: string, cond: boolean, detail = "") {
     }
     return 0.35;
   };
-  const mk = (penalty: number): PlannerInput => ({
+  const input: PlannerInput = {
     nowMs: t0 + 17 * H,
     prices: mkPrices(36, priceCurve),
     solarWattsAt: ms => sunnyDay((ms - t0) / H),
@@ -452,13 +453,16 @@ function check(name: string, cond: boolean, detail = "") {
     fixedBuys: [],
     sellVetoWindows: [],
     buyVetoWindows: [],
-    knobs: { ...baseKnobs, sell_ramp_minutes: 10, min_window_minutes: 15, sell_restart_penalty_sek: penalty },
-  });
-  const plan = generatePlan(mk(1));
+    knobs: { ...baseKnobs, sell_ramp_minutes: 10, min_window_minutes: 15 },
+  };
+  const plan = generatePlan(input);
   const sells = [...plan.sells].sort((a, b) => a.startMs - b.startMs);
-  const chains = sells.filter((w, i) => i === 0 || sells[i - 1].endMs !== w.startMs).length;
   check("consolidate: sells exist under tight budget", sells.length > 0, `(${sells.length} windows)`);
-  check("consolidate: one contiguous chain, no holes", chains <= 1, `(${chains} chains)`);
+  check(
+    "consolidate: fractional budget captured at reduced power",
+    sells.some(w => w.watts < baseKnobs.max_sell_power_watts),
+    `(watts: ${sells.map(w => w.watts).join(", ")})`
+  );
   check(
     "consolidate: floor respected",
     plan.projection.minSocPercent >= 19.9,

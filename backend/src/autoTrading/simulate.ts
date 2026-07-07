@@ -28,7 +28,6 @@ export function simulate(
 
   let socWh = (input.socPercent / 100) * cap;
   let revenueSek = 0;
-  let restartPenaltySek = 0;
   let violationWh = 0;
   let minSocWh = socWh;
   let minSocMs = input.nowMs;
@@ -64,11 +63,6 @@ export function simulate(
 
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
-      // Starting a feed-in run costs more than the modeled ramp: inverter mode/relay churn, and
-      // schedules full of holes that nobody asked for. Tracked separately from revenueSek so the
-      // optimizer can charge for it (see objectiveSek) while the reported cash projection stays
-      // comparable to settled reality (tradingPerformance.ts).
-      if (sellRunMinutes === 0) restartPenaltySek += k.sell_restart_penalty_sek;
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
       exportW = Math.min(sellSetW, k.inverter_max_ac_output_watts - s.houseW);
@@ -135,7 +129,6 @@ export function simulate(
 
   return {
     revenueSek,
-    restartPenaltySek,
     violationWh,
     minSocWh,
     minSocMs,
@@ -146,14 +139,6 @@ export function simulate(
     boughtWh,
     socAfterSlot,
   };
-}
-
-/**
- * What the optimizer maximizes: cash revenue minus the (fictional) restart penalty. Every accept
- * decision compares this; every user-facing projection reports plain revenueSek instead.
- */
-export function objectiveSek(result: SimResult): number {
-  return result.revenueSek - result.restartPenaltySek;
 }
 
 export function overlapsVeto(

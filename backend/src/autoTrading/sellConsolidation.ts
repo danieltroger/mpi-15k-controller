@@ -1,25 +1,24 @@
 /**
- * Defragment the greedy's sell allocation (called by generatePlan after the bridge pass).
- *
- * Why it exists: under a binding reserve budget the greedy takes the top-priced 15-min slots,
- * which zigzagging 15-min day-ahead prices scatter into combs — and the ramp model amplifies
- * that: near budget exhaustion a full-power contiguous slot no longer fits while an isolated
- * (ramp-crippled, ~2/3 energy) slot still does, so holes win systematically (the "15 min Loch"
- * schedules of 2026-07-07/08). Local-search moves repair this; each is re-simulated and only
- * applied when feasible and the optimizer objective (revenue minus restart penalties) improves:
+ * Local-search cleanup of the greedy's sell allocation (called by generatePlan after the bridge
+ * pass). A fragmented schedule is fine when it genuinely prices better — a stop/start costs
+ * nothing but the modeled ramp — but the greedy's one-slot-at-a-time accept order also strands
+ * revenue it can't see: a hole whose fill would recover a ramp restart, a scattered slot that a
+ * relocation turns into full-power run time, and fractional leftover budget no full-power slot
+ * fits. Each move below is re-simulated and only applied when feasible and simulated revenue
+ * strictly improves (plus one öre-capped cosmetic pass):
  *   - fill a one-slot hole between runs, alone (full or reduced power) or funded by dropping the
  *     cheapest edge slot of another run. Like the pre-existing bridge pass, fills may cross a
- *     below-min-spot dip — the simulation prices that against the reclaimed restart penalty.
+ *     below-min-spot dip — the simulation prices the dip against the recovered ramp.
  *   - merge two neighbouring runs by relocating one flush against the other (covers single-slot
- *     teeth as the degenerate case) — öre of price cost against whole SEK of penalty
+ *     teeth as the degenerate case) when the ramp recovery beats the price difference
  *   - extend a run edge at reduced power, so a fractional leftover budget still gets sold instead
  *     of spawning a remote ramp-crippled tooth (pure edge adds must clear min_gain_sek_per_slot
  *     and the min sell spot, like the greedy's adds)
  * plus a final cosmetic pass that equalizes power across each chain's post-ramp body so the
- * schedule collapses to a couple of entries instead of a power staircase.
+ * schedule collapses to a couple of entries instead of a power staircase (≤ 0.1 SEK tolerated).
  */
 
-import { objectiveSek, simulate, slotTradableForSell } from "./simulate.ts";
+import { simulate, slotTradableForSell } from "./simulate.ts";
 import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 /**
@@ -142,11 +141,11 @@ function timeAdjacent(search: SearchState, earlier: number, later: number): bool
   return earlierSlot !== undefined && laterSlot !== undefined && laterSlot.startMs === earlierSlot.endMs;
 }
 
-/** Simulate the current sellW; keep it (and return true) when feasible and the objective improves enough. */
+/** Simulate the current sellW; keep it (and return true) when feasible and revenue improves enough. */
 function acceptTrial(search: SearchState, minGainSek: number): boolean {
   if (search.trialsLeft-- <= 0) return false;
   const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
-  if (search.feasible(trial) && objectiveSek(trial) > objectiveSek(search.current) + Math.max(minGainSek, 1e-6)) {
+  if (search.feasible(trial) && trial.revenueSek > search.current.revenueSek + Math.max(minGainSek, 1e-6)) {
     search.current = trial;
     return true;
   }
@@ -193,7 +192,7 @@ function tryRelocateRun(search: SearchState, run: number[], targets: number[]): 
  * Equalize power across each chain's post-ramp body: same energy (mean rounded to the nearest
  * 100 W, so rounding costs at most ±öre), and the schedule collapses to a couple of entries
  * instead of the power staircase reduced-power fills leave behind. Purely cosmetic, so the
- * accepted objective loss is capped flat at 0.1 SEK regardless of chain length — a chain whose
+ * accepted revenue loss is capped flat at 0.1 SEK regardless of chain length — a chain whose
  * internal price gradient makes equal power genuinely costlier keeps its staircase. Slots still
  * inside the ramp window keep their power — the ramp caps their export, so averaging power away
  * from them loses real energy.
@@ -212,7 +211,7 @@ function equalizeChainPower(search: SearchState) {
     const meanWatts = Math.round(savedWatts.reduce((a, b) => a + b, 0) / body.length / 100) * 100;
     for (const slotIndex of body) search.sellW[slotIndex] = meanWatts;
     const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
-    if (search.feasible(trial) && objectiveSek(trial) >= objectiveSek(search.current) - 0.1) {
+    if (search.feasible(trial) && trial.revenueSek >= search.current.revenueSek - 0.1) {
       search.current = trial;
     } else {
       body.forEach((slotIndex, offset) => (search.sellW[slotIndex] = savedWatts[offset]));

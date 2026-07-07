@@ -35,13 +35,6 @@ export type AutomaticTradingConfig = {
   allow_arbitrage_buying: boolean;
   /** The inverter ramps grid feed-in from 0 to full power over ~this many minutes (grid safety) */
   sell_ramp_minutes: number;
-  /**
-   * Charged once per sell-run start in the planning simulation. The spot curve alone often makes a
-   * fragmented schedule look marginally better (öre-level), but every stop/start costs real things
-   * the price math can't see: relay/mode churn on a quirky inverter and the ramp restart. This makes
-   * windows merge unless staying apart genuinely earns more than this.
-   */
-  sell_restart_penalty_sek: number;
   /** Generated windows shorter than this are dropped (inverter command churn isn't free) */
   min_window_minutes: number;
   charge_efficiency: number;
