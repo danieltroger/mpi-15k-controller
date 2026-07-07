@@ -12,6 +12,7 @@ export type PlannerKnobs = Pick<
   | "inverter_max_ac_output_watts"
   | "max_buy_power_watts"
   | "planner_soc_floor_percent"
+  | "planner_soc_floor_sunny_percent"
   | "emergency_soc_floor_percent"
   | "extra_reserve_kwh"
   | "min_sell_spot_sek_per_kwh"
@@ -24,6 +25,7 @@ export type PlannerKnobs = Pick<
   | "sell_bonus_sek_per_kwh"
   | "min_buy_saving_sek_per_kwh"
   | "sell_ramp_minutes"
+  | "sell_restart_penalty_sek"
   | "allow_arbitrage_buying"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */

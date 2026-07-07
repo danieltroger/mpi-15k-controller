@@ -40,6 +40,18 @@ export function AutoTraderPanel() {
     }
   };
 
+  const clearVetoes = async () => {
+    setBusy(true);
+    try {
+      const result = await sendBackendAction(socket, "clear_trading_vetoes");
+      await showToastWithMessage(owner, () => `${result}`);
+    } catch (e) {
+      await showToastWithMessage(owner, () => `Failed: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section class="buy-sell-config__section">
       <h2 class="buy-sell-config__subheading">Automatic trading</h2>
@@ -118,7 +130,15 @@ export function AutoTraderPanel() {
             Blocked ranges (you deleted planner windows there):{" "}
             {status()!
               .vetoes!.map(v => `${v.kind} ${fmtTime(v.start)}–${fmtTime(v.end)}`)
-              .join(", ")}
+              .join(", ")}{" "}
+            <button
+              type="button"
+              class="buy-sell-config__btn buy-sell-config__btn--secondary"
+              disabled={busy()}
+              onClick={() => void clearVetoes()}
+            >
+              {busy() ? "Working…" : "Unblock & replan"}
+            </button>
           </p>
         </Show>
         <Show when={status()!.guard}>

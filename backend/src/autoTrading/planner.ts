@@ -12,6 +12,10 @@
  * down, keeping every accepted plan feasible (SOC never below the planner floor + user reserve). Selling
  * energy the battery couldn't have absorbed anyway (would have auto-exported when full) is naturally handled
  * by the simulation's revenue accounting.
+ *
+ * Two forces keep the schedule contiguous: every sell-run start is charged sell_restart_penalty_sek in the
+ * simulation, and a consolidation pass (see consolidateSellSlots) defragments what the greedy scattered.
+ * The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV covers the house.
  */
 
 import type {
@@ -68,6 +72,12 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
   const k = input.knobs;
   const cap = input.capacityWh;
   const floorPlannerWh = (k.planner_soc_floor_percent / 100) * cap + k.extra_reserve_kwh * 1000;
+  // While forecast PV covers the house, a forecast miss costs minutes of import instead of a
+  // stranded night — the reserve requirement drops accordingly (never above the normal floor).
+  const floorSunnyWh = Math.min(
+    (k.planner_soc_floor_sunny_percent / 100) * cap + k.extra_reserve_kwh * 1000,
+    floorPlannerWh
+  );
   const floorRuntimeWh = (k.runtime_soc_floor_percent / 100) * cap;
   const floorEmergencyWh = (k.emergency_soc_floor_percent / 100) * cap;
 
@@ -108,6 +118,9 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
 
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
+      // Starting a feed-in run costs more than the modeled ramp: inverter mode/relay churn,
+      // and schedules full of holes that nobody asked for. Charge each run start for it.
+      if (sellRunMinutes === 0) revenueSek -= k.sell_restart_penalty_sek;
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
       exportW = Math.min(sellSetW, k.inverter_max_ac_output_watts - s.houseW);
@@ -163,7 +176,8 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
     importWh += slotImportWh;
     revenueSek -= (slotImportWh / 1000) * (spot + k.buy_surcharges_sek_per_kwh) * k.vat_multiplier;
 
-    if (socWh < floorPlannerWh) violationWh += floorPlannerWh - socWh;
+    const floorWh = s.pvW > s.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
+    if (socWh < floorWh) violationWh += floorWh - socWh;
     if (socWh < minSocWh) {
       minSocWh = socWh;
       minSocMs = s.endMs;
@@ -185,30 +199,225 @@ function simulate(input: PlannerInput, slots: Slot[], sellW: number[], buyW: num
   };
 }
 
+type MergedWindow = { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] };
+
 function mergeAcceptedSlots(
   slots: Slot[],
   accepted: number[],
-  watts: number,
+  wattsBySlot: number[],
   kind: "sell" | "buy",
   min_window_minutes: number
 ): {
-  windows: { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] }[];
+  windows: MergedWindow[];
   droppedShort: number;
 } {
   const sorted = [...accepted].sort((a, b) => a - b);
-  const windows: { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] }[] = [];
+  const windows: MergedWindow[] = [];
   for (const i of sorted) {
     const last = windows[windows.length - 1];
-    if (last && slots[i].startMs === last.endMs) {
+    if (last && slots[i].startMs === last.endMs && wattsBySlot[i] === last.watts) {
       last.endMs = slots[i].endMs;
       last.slotIndexes.push(i);
     } else {
-      windows.push({ startMs: slots[i].startMs, endMs: slots[i].endMs, watts, kind, slotIndexes: [i] });
+      windows.push({ startMs: slots[i].startMs, endMs: slots[i].endMs, watts: wattsBySlot[i], kind, slotIndexes: [i] });
     }
   }
-  const before = windows.length;
-  const kept = windows.filter(w => (w.endMs - w.startMs) / 60000 >= min_window_minutes);
-  return { windows: kept, droppedShort: before - kept.length };
+  // A power step mid-run splits into adjacent windows that are still one continuous feed —
+  // the minimum-length rule judges the whole contiguous chain, not each window.
+  const chains: MergedWindow[][] = [];
+  for (const w of windows) {
+    const lastChain = chains[chains.length - 1];
+    if (lastChain && lastChain[lastChain.length - 1].endMs === w.startMs) lastChain.push(w);
+    else chains.push([w]);
+  }
+  const kept: MergedWindow[] = [];
+  let droppedShort = 0;
+  for (const chain of chains) {
+    const chainMinutes = (chain[chain.length - 1].endMs - chain[0].startMs) / 60000;
+    if (chainMinutes >= min_window_minutes) kept.push(...chain);
+    else droppedShort += chain.length;
+  }
+  return { windows: kept, droppedShort };
+}
+
+/**
+ * Defragment the greedy's sell allocation. Under a binding reserve budget the greedy takes the
+ * top-priced 15-min slots, which zigzagging 15-min prices scatter into combs — and the ramp model
+ * amplifies that: near budget exhaustion a full-power contiguous slot no longer fits while an
+ * isolated (ramp-crippled, ~2/3 energy) slot still does, so holes win systematically. Local-search
+ * moves repair this, each re-simulated and only applied when feasible and simulated revenue
+ * improves (the restart penalty is what tips consolidation into "improves"):
+ *   - fill a one-slot hole between runs, alone (full or reduced power) or funded by dropping the
+ *     cheapest edge slot of another run
+ *   - merge two neighbouring runs by relocating the smaller flush against the larger (covers
+ *     single-slot teeth as the degenerate case) — öre of price cost against whole SEK of penalty
+ *   - extend a run edge at reduced power, so a fractional leftover budget still gets sold instead
+ *     of spawning a remote ramp-crippled tooth (pure adds must clear min_gain_sek_per_slot and the
+ *     min sell spot, like the greedy's adds)
+ * Mutates sellW in place; returns the simulation state it converged on.
+ */
+function consolidateSellSlots(
+  input: PlannerInput,
+  slots: Slot[],
+  sellW: number[],
+  buyW: number[],
+  tailSpot: number,
+  feasible: (r: SimResult) => boolean,
+  current: SimResult
+): SimResult {
+  const k = input.knobs;
+  const fillable = (j: number) =>
+    j >= 0 &&
+    j < slots.length &&
+    sellW[j] === 0 &&
+    buyW[j] === 0 &&
+    slots[j].spot !== undefined &&
+    slots[j].fixedSellW === 0 &&
+    slots[j].fixedBuyW === 0 &&
+    !input.sellVetoWindows.some(v => v.startMs < slots[j].endMs && v.endMs > slots[j].startMs);
+  const timeAdjacent = (i: number, j: number) =>
+    slots[i] !== undefined && slots[j] !== undefined && slots[j].startMs === slots[i].endMs;
+
+  const computeRuns = () => {
+    const runs: number[][] = [];
+    for (let i = 0; i < slots.length; i++) {
+      if (sellW[i] <= 0) continue;
+      const lastRun = runs[runs.length - 1];
+      const prev = lastRun?.[lastRun.length - 1];
+      if (prev !== undefined && timeAdjacent(prev, i)) lastRun.push(i);
+      else runs.push([i]);
+    }
+    return runs;
+  };
+
+  let trialsLeft = 400;
+  const accept = (minGainSek: number): boolean => {
+    if (trialsLeft-- <= 0) return false;
+    const trial = simulate(input, slots, sellW, buyW, tailSpot);
+    if (feasible(trial) && trial.revenueSek > current.revenueSek + Math.max(minGainSek, 1e-6)) {
+      current = trial;
+      return true;
+    }
+    return false;
+  };
+
+  // Add one slot (full power first, reduced captures fractional budgets), optionally funded by
+  // dropping another. Funded moves are ~energy-neutral and need no extra gain; pure adds clear
+  // the same min-gain bar as the greedy's.
+  const tryFill = (dropIdx: number | undefined, addIdx: number): boolean => {
+    const savedDrop = dropIdx !== undefined ? sellW[dropIdx] : 0;
+    if (dropIdx !== undefined) sellW[dropIdx] = 0;
+    for (const factor of [1, 2 / 3, 1 / 2, 1 / 3]) {
+      sellW[addIdx] = Math.round(k.max_sell_power_watts * factor);
+      if (accept(dropIdx === undefined ? k.min_gain_sek_per_slot : 0)) return true;
+    }
+    sellW[addIdx] = 0;
+    if (dropIdx !== undefined) sellW[dropIdx] = savedDrop;
+    return false;
+  };
+
+  // Relocate a whole run onto a target position. The move changes ramp state (e.g. a crippled
+  // isolated slot becomes a full-power run member), so scaled-down watts are also tried — that
+  // lets an energy-equivalent relocation through a binding budget.
+  const tryRelocateRun = (run: number[], targets: number[]): boolean => {
+    const savedWatts = run.map(i => sellW[i]);
+    for (const i of run) sellW[i] = 0;
+    if (targets.every(fillable)) {
+      for (const factor of [1, 2 / 3, 1 / 2, 1 / 3]) {
+        targets.forEach((j, idx) => (sellW[j] = Math.round(savedWatts[idx] * factor)));
+        if (accept(0)) return true;
+      }
+      for (const j of targets) sellW[j] = 0;
+    }
+    run.forEach((i, idx) => (sellW[i] = savedWatts[idx]));
+    return false;
+  };
+
+  let movesLeft = 24;
+  outer: while (movesLeft-- > 0 && trialsLeft > 0) {
+    const runs = computeRuns();
+    if (!runs.length) break;
+
+    // 1. One-slot holes between consecutive runs: fill, else fund by dropping the cheapest edge
+    //    slot of some run (never a slot adjacent to the hole — that just moves it)
+    const edges = runs
+      .flatMap(run => (run.length === 1 ? [run[0]] : [run[0], run[run.length - 1]]))
+      .sort((a, b) => (slots[a].spot ?? 0) - (slots[b].spot ?? 0));
+    for (let runIdx = 0; runIdx + 1 < runs.length; runIdx++) {
+      const hole = runs[runIdx][runs[runIdx].length - 1] + 1;
+      if (runs[runIdx + 1][0] !== hole + 1 || !fillable(hole)) continue;
+      if (!timeAdjacent(hole - 1, hole) || !timeAdjacent(hole, hole + 1)) continue;
+      if (tryFill(undefined, hole)) continue outer;
+      for (const edge of edges) {
+        if (Math.abs(edge - hole) <= 1) continue;
+        if (tryFill(edge, hole)) continue outer;
+      }
+    }
+
+    // 2. Merge neighbouring runs by relocating one flush against the other. Try the cheaper
+    //    relocation (fewer slots moved) first, then the reverse.
+    for (let runIdx = 0; runIdx + 1 < runs.length; runIdx++) {
+      const before = runs[runIdx];
+      const after = runs[runIdx + 1];
+      if (after[0] - before[before.length - 1] < 2) continue;
+      // A run relocated flush against the other: target indexes + the anchor slot they must touch
+      const flushRight = (moved: number[]) => ({
+        moved,
+        targets: moved.map((_, idx) => after[0] - moved.length + idx),
+        anchor: after[0],
+      });
+      const flushLeft = (moved: number[]) => ({
+        moved,
+        targets: moved.map((_, idx) => before[before.length - 1] + 1 + idx),
+        anchor: before[before.length - 1],
+      });
+      const attempts =
+        before.length <= after.length ? [flushRight(before), flushLeft(after)] : [flushLeft(after), flushRight(before)];
+      for (const { moved, targets, anchor } of attempts) {
+        const chain = [...targets, anchor].sort((a, b) => a - b);
+        if (!chain.every((idx, pos) => pos === 0 || timeAdjacent(chain[pos - 1], idx))) continue;
+        if (tryRelocateRun(moved, targets)) continue outer;
+      }
+    }
+
+    // 3. Extend run edges at reduced power — mops up a leftover budget fraction
+    for (const run of runs) {
+      const first = run[0];
+      const last = run[run.length - 1];
+      for (const target of [first - 1, last + 1]) {
+        if (!fillable(target)) continue;
+        if (!(target < first ? timeAdjacent(target, first) : timeAdjacent(last, target))) continue;
+        if ((slots[target].spot ?? 0) < k.min_sell_spot_sek_per_kwh) continue;
+        if (tryFill(undefined, target)) continue outer;
+      }
+    }
+    break;
+  }
+
+  // Finally, equalize power across each chain's post-ramp body: same energy (mean rounded down),
+  // ± öre of revenue, and the schedule collapses to a couple of entries instead of the power
+  // staircase reduced-power fills leave behind. Slots still inside the ramp window keep their
+  // power — the ramp caps their export, so averaging power away from them loses real energy.
+  for (const run of computeRuns()) {
+    let offsetMinutes = 0;
+    const body: number[] = [];
+    for (const i of run) {
+      if (offsetMinutes >= k.sell_ramp_minutes) body.push(i);
+      offsetMinutes += slots[i].durationH * 60;
+    }
+    if (body.length < 2 || new Set(body.map(i => sellW[i])).size <= 1) continue;
+    if (trialsLeft-- <= 0) break;
+    const savedWatts = body.map(i => sellW[i]);
+    const meanWatts = Math.floor(savedWatts.reduce((a, b) => a + b, 0) / body.length / 100) * 100;
+    for (const i of body) sellW[i] = meanWatts;
+    const trial = simulate(input, slots, sellW, buyW, tailSpot);
+    if (feasible(trial) && trial.revenueSek >= current.revenueSek - 0.1 * body.length) {
+      current = trial;
+    } else {
+      body.forEach((i, idx) => (sellW[i] = savedWatts[idx]));
+    }
+  }
+  return current;
 }
 
 export function generatePlan(input: PlannerInput): PlanResult {
@@ -310,6 +519,12 @@ export function generatePlan(input: PlannerInput): PlanResult {
       }
     }
   }
+
+  // Defragment what the greedy scattered (see consolidateSellSlots) — sellW is the source of
+  // truth afterwards, so rebuild the accepted list from it
+  current = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
+  acceptedSell.length = 0;
+  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
 
   // ---- Buy allocation, pass 1: avert projected unavoidable imports, cheapest slots first ----
   const acceptedBuy: number[] = [];
@@ -431,7 +646,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
     slots,
     acceptedSell,
-    k.max_sell_power_watts,
+    sellW,
     "sell",
     k.min_window_minutes
   );
@@ -443,13 +658,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     current = simulate(input, slots, sellW, buyW, tailSpot);
   }
 
-  const { windows: buyWindows } = mergeAcceptedSlots(
-    slots,
-    acceptedBuy,
-    k.max_buy_power_watts,
-    "buy",
-    k.min_window_minutes
-  );
+  const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", k.min_window_minutes);
 
   // ---- Package result ----
   const spotsAll = pricedSlots.map(s => s.spot!).sort((a, b) => a - b);

@@ -10,6 +10,7 @@ import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import Influx from "influx";
+import { default_config } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
@@ -71,6 +72,8 @@ const input: PlannerInput = {
   sellVetoWindows: [],
   buyVetoWindows: [],
   knobs: {
+    // Backfill knobs the config file predates, same as the live config merge does
+    ...default_config.automatic_trading,
     ...at,
     runtime_soc_floor_percent: Number(config.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: config.feed_from_battery_when_no_solar.feed_amount_watts,
