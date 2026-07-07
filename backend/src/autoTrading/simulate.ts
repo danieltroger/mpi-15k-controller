@@ -14,17 +14,17 @@ export function simulate(
   buyW: number[],
   tailSpot: number
 ): SimResult {
-  const k = input.knobs;
+  const knobs = input.knobs;
   const cap = input.capacityWh;
-  const floorPlannerWh = (k.planner_soc_floor_percent / 100) * cap + k.extra_reserve_kwh * 1000;
+  const floorPlannerWh = (knobs.planner_soc_floor_percent / 100) * cap + knobs.extra_reserve_kwh * 1000;
   // While forecast PV covers the house, a forecast miss costs minutes of import instead of a
   // stranded night — the reserve requirement drops accordingly (never above the normal floor).
   const floorSunnyWh = Math.min(
-    (k.planner_soc_floor_sunny_percent / 100) * cap + k.extra_reserve_kwh * 1000,
+    (knobs.planner_soc_floor_sunny_percent / 100) * cap + knobs.extra_reserve_kwh * 1000,
     floorPlannerWh
   );
-  const floorRuntimeWh = (k.runtime_soc_floor_percent / 100) * cap;
-  const floorEmergencyWh = (k.emergency_soc_floor_percent / 100) * cap;
+  const floorRuntimeWh = (knobs.runtime_soc_floor_percent / 100) * cap;
+  const floorEmergencyWh = (knobs.emergency_soc_floor_percent / 100) * cap;
 
   let socWh = (input.socPercent / 100) * cap;
   let revenueSek = 0;
@@ -41,11 +41,11 @@ export function simulate(
   let sellRunMinutes = 0;
 
   for (let i = 0; i < slots.length; i++) {
-    const s = slots[i];
-    const spot = s.spot ?? tailSpot;
+    const slot = slots[i];
+    const spot = slot.spot ?? tailSpot;
     const parasiticW = input.parasiticWatts;
-    const sellSetW = Math.max(sellW[i], s.fixedSellW);
-    const requestedBuyW = Math.max(buyW[i], s.fixedBuyW);
+    const sellSetW = Math.max(sellW[i], slot.fixedSellW);
+    const requestedBuyW = Math.max(buyW[i], slot.fixedBuyW);
     // Runtime never does both at once (feedWhenNoSolar errors out) — selling wins in our model
     const buySetW = sellSetW > 0 ? 0 : requestedBuyW;
 
@@ -57,72 +57,76 @@ export function simulate(
       // AC charging: battery charges from grid, house is fed from grid too
       gridChargeW = buySetW;
       slotImportWh +=
-        (buySetW + s.houseW + parasiticW - Math.min(s.pvW, buySetW + s.houseW + parasiticW)) * s.durationH;
-      boughtWh += buySetW * s.durationH;
+        (buySetW + slot.houseW + parasiticW - Math.min(slot.pvW, buySetW + slot.houseW + parasiticW)) * slot.durationH;
+      boughtWh += buySetW * slot.durationH;
     }
 
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
-      exportW = Math.min(sellSetW, k.inverter_max_ac_output_watts - s.houseW);
+      exportW = Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW);
       exportW = Math.max(exportW, 0);
       // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
-      const rampMin = k.sell_ramp_minutes;
+      const rampMin = knobs.sell_ramp_minutes;
       if (rampMin > 0 && sellRunMinutes < rampMin) {
-        const slotMin = s.durationH * 60;
-        const e0 = sellRunMinutes;
-        const e1 = e0 + slotMin;
-        const rampedUntil = Math.min(e1, rampMin);
+        const slotMin = slot.durationH * 60;
+        const rampedFrom = sellRunMinutes;
+        const rampedTo = rampedFrom + slotMin;
+        const rampedUntil = Math.min(rampedTo, rampMin);
         const avgFactor =
-          ((rampedUntil * rampedUntil - e0 * e0) / (2 * rampMin) + Math.max(0, e1 - rampedUntil)) / slotMin;
+          ((rampedUntil * rampedUntil - rampedFrom * rampedFrom) / (2 * rampMin) +
+            Math.max(0, rampedTo - rampedUntil)) /
+          slotMin;
         exportW *= avgFactor;
       }
-      sellRunMinutes += s.durationH * 60;
+      sellRunMinutes += slot.durationH * 60;
     } else {
       sellRunMinutes = 0;
-      if (buySetW === 0 && s.pvW < s.houseW + parasiticW + 380) {
+      if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + 380) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw
-        exportW = k.baseline_feed_watts;
+        exportW = knobs.baseline_feed_watts;
       }
     }
 
     let netBattW: number;
     if (gridChargeW > 0) {
-      netBattW = s.pvW + gridChargeW;
+      netBattW = slot.pvW + gridChargeW;
     } else {
-      netBattW = s.pvW - s.houseW - parasiticW - exportW;
+      netBattW = slot.pvW - slot.houseW - parasiticW - exportW;
     }
     const deltaWh =
-      netBattW >= 0 ? netBattW * k.charge_efficiency * s.durationH : (netBattW / k.discharge_efficiency) * s.durationH;
+      netBattW >= 0
+        ? netBattW * knobs.charge_efficiency * slot.durationH
+        : (netBattW / knobs.discharge_efficiency) * slot.durationH;
     socWh += deltaWh;
 
     if (socWh > cap) {
       // Battery full: surplus PV flows to the grid by itself (solar-mode feeding)
       const overflowInBatteryWh = socWh - cap;
-      autoExportWh += overflowInBatteryWh / k.charge_efficiency;
-      revenueSek += (overflowInBatteryWh / k.charge_efficiency / 1000) * (spot + k.sell_bonus_sek_per_kwh);
+      autoExportWh += overflowInBatteryWh / knobs.charge_efficiency;
+      revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
       socWh = cap;
     }
     if (socWh < floorEmergencyWh) {
       // Battery can't go lower — the house pulls the deficit from the grid (unavoidable import)
       const deficitWh = floorEmergencyWh - socWh;
-      const importedForHouseWh = deficitWh * k.discharge_efficiency;
+      const importedForHouseWh = deficitWh * knobs.discharge_efficiency;
       slotImportWh += importedForHouseWh;
       socWh = floorEmergencyWh;
     }
 
-    const exportedWh = exportW * s.durationH;
+    const exportedWh = exportW * slot.durationH;
     sellExportWh += sellSetW > 0 ? exportedWh : 0;
-    revenueSek += (exportedWh / 1000) * (spot + k.sell_bonus_sek_per_kwh);
+    revenueSek += (exportedWh / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
     importWh += slotImportWh;
-    revenueSek -= (slotImportWh / 1000) * (spot + k.buy_surcharges_sek_per_kwh) * k.vat_multiplier;
+    revenueSek -= (slotImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
 
-    const floorWh = s.pvW > s.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
+    const floorWh = slot.pvW > slot.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
     if (socWh < floorWh) violationWh += floorWh - socWh;
     if (socWh < minSocWh) {
       minSocWh = socWh;
-      minSocMs = s.endMs;
+      minSocMs = slot.endMs;
     }
     socAfterSlot[i] = socWh;
   }
