@@ -192,6 +192,10 @@ async function clearTradingVetoes(ctx: TraderCtx): Promise<string> {
   refreshStatus(ctx);
   if (!cleared) return "no blocked ranges to clear";
   const summary = await runPlan(ctx, { trigger: "veto-clear", waitForTomorrow: false });
+  if (summary === "plan already in progress") {
+    // That plan may have sampled the vetoes before the clear — be honest instead of claiming a re-plan
+    return `cleared ${cleared} blocked range(s); another plan is running — hit "Generate plan now" afterwards to re-plan the freed ranges`;
+  }
   return `cleared ${cleared} blocked range(s); ${summary}`;
 }
 
@@ -395,23 +399,20 @@ function applyPlan(
     // Entries (ours or the user's) whose window ended over a day ago are dead weight in the UI;
     // unparseable dates (NaN) are deliberately kept — deleting what we can't interpret is worse.
     const pruneBeforeMs = Date.now() - 24 * 3600 * 1000;
-    for (const [key, entry] of Object.entries(selling)) {
-      if (+new Date(entry.end_time) < pruneBeforeMs) delete selling[key];
-    }
-    for (const [key, entry] of Object.entries(buying)) {
-      if (+new Date(entry.end_time) < pruneBeforeMs) delete buying[key];
-    }
-    // An identical regeneration must be a no-op, not config churn
+    const prunedSelling = pickEntries(selling, (_, entry) => !(+new Date(entry.end_time) < pruneBeforeMs));
+    const prunedBuying = pickEntries(buying, (_, entry) => !(+new Date(entry.end_time) < pruneBeforeMs));
+    // An identical regeneration must be a no-op, not config churn (delete+re-add shuffles key
+    // order, so compare with sorted keys)
     if (
-      JSON.stringify(selling) === JSON.stringify(prev.scheduled_power_selling.schedule) &&
-      JSON.stringify(buying) === JSON.stringify(prev.scheduled_power_buying.schedule)
+      canonicalSchedule(prunedSelling) === canonicalSchedule(prev.scheduled_power_selling.schedule) &&
+      canonicalSchedule(prunedBuying) === canonicalSchedule(prev.scheduled_power_buying.schedule)
     ) {
       return prev;
     }
     return {
       ...prev,
-      scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: selling },
-      scheduled_power_buying: { ...prev.scheduled_power_buying, schedule: buying },
+      scheduled_power_selling: { ...prev.scheduled_power_selling, schedule: prunedSelling },
+      scheduled_power_buying: { ...prev.scheduled_power_buying, schedule: prunedBuying },
     };
   });
   ctx.state.owned_entries = newOwned;
@@ -584,8 +585,17 @@ async function runGuard(ctx: TraderCtx) {
         return false;
       }
 
+      // Owned buys recharge the battery — projecting the sells without them would fabricate
+      // breaches (and could stub a perfectly safe active sell)
+      const ourBuyWindows = ownedEntriesAsWindows(ctx.state.owned_entries.buying, "charging_power").filter(
+        window => window.endMs > now
+      );
       const projectionWith = (windows: typeof ourWindows) =>
-        projectWithFixedWindows({ ...baseInput, fixedSells: [...baseInput.fixedSells, ...windows] });
+        projectWithFixedWindows({
+          ...baseInput,
+          fixedSells: [...baseInput.fixedSells, ...windows],
+          fixedBuys: [...baseInput.fixedBuys, ...ourBuyWindows],
+        });
 
       const projection = projectionWith(ourWindows);
       const tolerable = projectWithFixedWindows(baseInput).violationWh + 1000; // don't blame our windows for a forecast already under water
@@ -617,15 +627,24 @@ async function runGuard(ctx: TraderCtx) {
         keepActiveWindows: true,
         prices,
       });
-      if (summary.startsWith("error:")) {
+      if (summary === "plan already in progress") {
+        // Whatever plan slipped in re-plans from live conditions anyway; don't claim success here
+        ctx.state.guard = {
+          last_run_at: new Date().toISOString(),
+          last_action: "projected breach; another plan is running — re-checking next tick",
+        };
+      } else if (summary.startsWith("error:")) {
         // No planner available (e.g. solar forecast fetch died) but the reserve is in danger —
-        // shed all our future windows rather than keep selling into a projected breach.
+        // shed our future sells rather than keep selling into a projected breach. Owned buys are
+        // kept: they only add energy, i.e. help the reserve.
         await withScheduleLock(ctx, async () => {
-          applyPlan(ctx, [], [], activeOwnedEntries(ctx, Date.now()));
+          const keep = activeOwnedEntries(ctx, Date.now());
+          keep.buying = { ...ctx.state.owned_entries.buying };
+          applyPlan(ctx, [], [], keep);
         });
         ctx.state.guard = {
           last_run_at: new Date().toISOString(),
-          last_action: `re-plan failed (${summary}) — dropped all planner windows to protect the reserve`,
+          last_action: `re-plan failed (${summary}) — dropped planner sell windows to protect the reserve`,
         };
       } else {
         ctx.state.guard = {
@@ -648,11 +667,11 @@ async function runGuard(ctx: TraderCtx) {
  * re-plan treats active windows as immutable and could not stop it.
  */
 function stubActiveSellWindows(ctx: TraderCtx, now: number) {
+  const activeSelling = activeOwnedEntries(ctx, now).selling;
   const shortenedStubs: Record<string, { end_time: string; power_watts: number }> = {};
   ctx.setConfig(prev => {
     const selling = { ...prev.scheduled_power_selling.schedule };
-    for (const [key, owned] of Object.entries(ctx.state.owned_entries.selling)) {
-      if (+new Date(key) > now || +new Date(owned.end_time) <= now) continue;
+    for (const [key, owned] of Object.entries(activeSelling)) {
       if (selling[key] && entriesEqual(selling[key], owned, "power_watts")) {
         const stubEnd = new Date(now + 60_000).toISOString();
         selling[key] = { ...selling[key], end_time: stubEnd };
@@ -669,14 +688,29 @@ function stubActiveSellWindows(ctx: TraderCtx, now: number) {
 
 /** Owned entries whose window is executing right now (start ≤ now < end). */
 function activeOwnedEntries(ctx: TraderCtx, now: number): AutoTraderState["owned_entries"] {
-  const active: AutoTraderState["owned_entries"] = { selling: {}, buying: {} };
-  for (const [key, owned] of Object.entries(ctx.state.owned_entries.selling)) {
-    if (+new Date(key) <= now && +new Date(owned.end_time) > now) active.selling[key] = owned;
-  }
-  for (const [key, owned] of Object.entries(ctx.state.owned_entries.buying)) {
-    if (+new Date(key) <= now && +new Date(owned.end_time) > now) active.buying[key] = owned;
-  }
-  return active;
+  const isActive = (key: string, entry: { end_time: string }) =>
+    +new Date(key) <= now && +new Date(entry.end_time) > now;
+  return {
+    selling: pickEntries(ctx.state.owned_entries.selling, isActive),
+    buying: pickEntries(ctx.state.owned_entries.buying, isActive),
+  };
+}
+
+/** Object.fromEntries + filter over a schedule/ownership map, preserving the value type. */
+function pickEntries<EntryType extends { end_time: string }>(
+  entries: Record<string, EntryType>,
+  keep: (key: string, entry: EntryType) => boolean
+): Record<string, EntryType> {
+  return Object.fromEntries(Object.entries(entries).filter(([key, entry]) => keep(key, entry)));
+}
+
+/** Schedule serialized with sorted keys — insertion order must not defeat equality checks. */
+function canonicalSchedule(schedule: Record<string, { end_time: string }>): string {
+  return JSON.stringify(
+    Object.keys(schedule)
+      .sort()
+      .map(key => [key, schedule[key]])
+  );
 }
 
 /**

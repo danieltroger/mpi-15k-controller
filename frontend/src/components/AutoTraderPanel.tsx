@@ -28,29 +28,19 @@ export function AutoTraderPanel() {
     await setConfig({ ...current, automatic_trading: { ...current.automatic_trading, ...patch } });
   };
 
-  const generateNow = async () => {
+  const runAction = async (action: string, formatResult: (result: string) => string) => {
     setBusy(true);
     try {
-      const result = await sendBackendAction(socket, "generate_trading_plan");
-      await showToastWithMessage(owner, () => `Plan: ${result}`);
+      const result = await sendBackendAction(socket, action);
+      await showToastWithMessage(owner, () => formatResult(result ?? "ok"));
     } catch (e) {
       await showToastWithMessage(owner, () => `Failed: ${e}`);
     } finally {
       setBusy(false);
     }
   };
-
-  const clearVetoes = async () => {
-    setBusy(true);
-    try {
-      const result = await sendBackendAction(socket, "clear_trading_vetoes");
-      await showToastWithMessage(owner, () => `${result}`);
-    } catch (e) {
-      await showToastWithMessage(owner, () => `Failed: ${e}`);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const generateNow = () => runAction("generate_trading_plan", result => `Plan: ${result}`);
+  const clearVetoes = () => runAction("clear_trading_vetoes", result => result);
 
   return (
     <section class="buy-sell-config__section">

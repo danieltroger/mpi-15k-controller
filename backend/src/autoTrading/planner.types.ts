@@ -92,7 +92,10 @@ export type Slot = {
   fixedBuyW: number;
 };
 export type SimResult = {
+  /** Cash revenue projection (fees included, restart penalty NOT — comparable to settled reality) */
   revenueSek: number;
+  /** Fictional churn charge per sell-run start; the optimizer maximizes revenueSek − restartPenaltySek */
+  restartPenaltySek: number;
   violationWh: number;
   minSocWh: number;
   minSocMs: number;
