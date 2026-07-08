@@ -131,6 +131,7 @@ function main() {
                   assumedParasiticConsumption,
                   assumedCapacity,
                   clampedAverageSOC,
+                  socAh,
                 } = batteryValues;
 
                 return BatteryValuesProvider({
@@ -245,6 +246,8 @@ function main() {
                           socSinceFull,
                           // Frontend-facing SOC is clamped to [0,100]; the unclamped drift only goes to InfluxDB.
                           averageSOC: clampedAverageSOC,
+                          // Shadow Ah ledger, unclamped — diagnostics display only, nothing consumes it.
+                          socAh,
                           assumedCapacity,
                           assumedParasiticConsumption,
                           isCharging: () => isChargingOuterScope()?.()?.(),
