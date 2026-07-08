@@ -102,7 +102,10 @@ export function anchorDetection({
 }
 
 function publishAnchorMarker(client: AsyncMqttClient | undefined, type: AnchorType) {
-  if (!client || !client.connected) return;
+  if (!client || !client.connected) {
+    warnLog("MQTT not connected — soc_anchors marker lost; restore will fall back to the voltage queries", type);
+    return;
+  }
   // Line protocol with a tag so Grafana can split by kind; markers are rare, so a failure is worth a log.
   const line = `soc_anchors,type=${type} value=1`;
   client.publish("soc_anchors", line).catch(error => warnLog("Failed to publish soc_anchors marker", type, error));

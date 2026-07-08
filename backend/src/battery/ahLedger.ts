@@ -98,6 +98,10 @@ export function ahLedger({
   }, undefined);
 
   const socAh = createMemo(() => {
+    // While a re-anchor's DB refetch is in flight, totalAh() still holds the OLD span's integral (the
+    // re-anchor effect needs that stale read for parameter tracking) — but against the NEW anchor it
+    // would compute a wild one-off spike, so hold the output until the fresh integral lands.
+    if (databaseAh.loading) return undefined;
     const anchor = activeAnchor();
     const integralAh = totalAh();
     if (!anchor || integralAh == undefined) return undefined;
