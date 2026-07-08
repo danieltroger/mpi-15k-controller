@@ -140,6 +140,35 @@ export type Config = {
       parasitic_consumption: number;
       capacity: number;
     };
+    /**
+     * Coulomb-counting (Ah) SOC ledger — the Phase 1 shadow of the Wh system above. Anchored at the
+     * latest full/empty/soft-empty event and integrated from hall sensor 2 amps:
+     *   SOC = anchor_soc + (∫amps·dt − drain_a·elapsed_h) / capacity_ah · 100
+     * `drain_a` (sensor zero-bias + parasitic, seasonal) and `capacity_ah` are tracked online (EMA)
+     * and persisted here across restarts, exactly like `current_state` above.
+     */
+    ah_ledger: {
+      /** Usable pack capacity in amp-hours (16S LiFePO4). Online-tracked from deep full↔empty spans. */
+      capacity_ah: number;
+      /** Constant amp offset subtracted each hour (hall zero-bias + parasitic). Online-tracked, seasonal. */
+      drain_a: number;
+      /** Mean discharge-branch terminal voltage (Phase 0 V-bar). Recorded for reference; unused in Phase 1. */
+      v_discharge: number;
+      /** Mean charge-branch terminal voltage (Phase 0 V-bar). Recorded for reference; unused in Phase 1. */
+      v_charge: number;
+      /** EMA time constant (days) for the drain update weight w = 1 − exp(−dt_days / tau). */
+      drain_ema_tau_days: number;
+      /**
+       * Soft-empty anchor — the pack often only drains to ~49 V, not the 46 V hard empty. A downward
+       * crossing of `voltage` while nearly at rest (|amps| < max_abs_amps) anchors the Ah ledger (only)
+       * at `soc_percent`.
+       */
+      soft_empty: {
+        voltage: number;
+        max_abs_amps: number;
+        soc_percent: number;
+      };
+    };
   };
   elpatron_switching: {
     /** Let this controller gate the water heater element by solar (write-gpio to the heating pi) */
