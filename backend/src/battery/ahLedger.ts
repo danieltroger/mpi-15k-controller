@@ -7,7 +7,7 @@ import { applyParameterTracking } from "./ahLedgerParameterTracking.ts";
 import { computeSocAh, type AnchorType } from "./ahLedgerMath.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { useNow } from "../utilities/useNow.ts";
-import { warnLog } from "../utilities/logging.ts";
+import { logLog, warnLog } from "../utilities/logging.ts";
 
 type LedgerAnchor = { at: number; soc: number; type: AnchorType };
 type ActiveAnchor = LedgerAnchor & { drainA: number; capacityAh: number };
@@ -36,6 +36,8 @@ export function ahLedger({
 }) {
   const [activeAnchor, setActiveAnchor] = createSignal<ActiveAnchor | undefined>(undefined);
   const [accumulationToggle, setAccumulationToggle] = createSignal(false);
+  // Anchors older than this are restore-time reconstructions, not live events — see the tracking gate below.
+  const ledgerStartedAt = +new Date();
   let localAh = 0;
   let lastAmps: { value: number; time: number } | undefined;
 
@@ -82,7 +84,14 @@ export function ahLedger({
       const previous = activeAnchor();
       const spanIntegralAh = totalAh(); // ∫amps since the previous anchor (DB resource still holds its old value)
       if (previous && spanIntegralAh != undefined) {
-        applyParameterTracking({ previousAnchor: previous, nextAnchor: anchor, spanIntegralAh, config, setConfig });
+        if (anchor.at > ledgerStartedAt) {
+          applyParameterTracking({ previousAnchor: previous, nextAnchor: anchor, spanIntegralAh, config, setConfig });
+        } else {
+          // Restored (pre-start) anchor: totalAh() measures previous→NOW, not previous→anchor, so hours of
+          // post-anchor flow would corrupt the estimate (seen on first deploy: a 6 h-stale full→empty span
+          // implied 949 Ah). Live events fire within seconds of the condition, where now ≈ anchor time.
+          logLog("Ah ledger: skipping parameter tracking for restored span", previous.type, "→", anchor.type);
+        }
       }
       localAh = 0; // keep lastAmps so the first post-anchor sample still bridges (mirrors the Wh ledger)
       const ahLedgerConfig = config().soc_calculations.ah_ledger; // read AFTER the update above → forward-only
