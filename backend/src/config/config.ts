@@ -74,6 +74,11 @@ export const default_config: Config = {
   elpatron_switching: {
     enabled: false,
     min_solar_input: 6000,
+    heating_pi_ip: "192.168.1.100",
+    element_watts: 6200,
+    tank_wh_per_degree: 480,
+    tank_cooling_degrees_per_hour: 1,
+    tank_max_temperature: 50,
   },
   soc_calculations: {
     recalculate_parameters_interval_seconds: 1800,
@@ -129,15 +134,17 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but automatic_trading merges one level deeper: planner knobs get
- * added over time, and a config.json written before a knob existed must still pick up its default
- * (the planner does raw arithmetic on these — a missing knob would silently NaN every projection).
+ * Top-level keys merge shallowly, but automatic_trading and elpatron_switching merge one level
+ * deeper: knobs get added over time, and a config.json written before a knob existed must still
+ * pick up its default (the planner and the elpatron load model do raw arithmetic on these — a
+ * missing knob would silently NaN projections).
  */
 function mergeWithDefaults(partial: Partial<Config>): Config {
   return {
     ...default_config,
     ...partial,
     automatic_trading: { ...default_config.automatic_trading, ...partial.automatic_trading },
+    elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
   };
 }
 

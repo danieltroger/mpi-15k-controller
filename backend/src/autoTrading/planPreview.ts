@@ -15,6 +15,7 @@ import type { Config } from "../config/config.types.ts";
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
+import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { generatePlan } from "./planner.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
@@ -49,7 +50,21 @@ const solar = await fetchSolarForecast(
   at.solar_model.watts_per_direct_radiation,
   at.solar_model.watts_per_diffuse_radiation
 );
-const consumption = await fetchConsumptionForecast(influxClient, at.fallback_house_load_watts);
+const elpatronConfig = { ...default_config.elpatron_switching, ...config.elpatron_switching };
+const elpatron = await fetchElpatronForecast({
+  elpatronConfig,
+  influxClient,
+  solarWattsAt: solar.wattsAt,
+  nowMs: Date.now(),
+});
+console.log(
+  `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}\n`
+);
+const consumption = await fetchConsumptionForecast(
+  influxClient,
+  at.fallback_house_load_watts,
+  elpatron.armed ? elpatronConfig : undefined
+);
 
 const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
   .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))
@@ -62,7 +77,7 @@ const input: PlannerInput = {
   nowMs: Date.now(),
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
-  houseLoadWattsAt: consumption.wattsAt,
+  houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
   parasiticWatts: config.soc_calculations.current_state.parasitic_consumption,
   socPercent: soc,
   capacityWh: config.soc_calculations.current_state.capacity,
