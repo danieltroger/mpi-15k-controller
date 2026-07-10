@@ -1,26 +1,24 @@
 import { type Accessor, createEffect, createMemo, createResource } from "solid-js";
-import { WebSocket } from "ws";
-import { DepictAPIWS, random_string, wait } from "./vendor/depictUtilishared.ts";
+import { random_string, wait } from "./vendor/depictUtilishared.ts";
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower.ts";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers.ts";
+import { getHeatingPiSocket } from "./utilities/heatingPi.ts";
 import type { Config } from "./config/config.types.ts";
 
-// @ts-ignore
-globalThis.WebSocket = WebSocket;
-
-let socket: DepictAPIWS | undefined;
 let lastSwitch = 0;
 
 export function elpatronSwitching(config: Accessor<Config>) {
   const { mqttValues } = useFromMqttProvider();
   const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
+  // Memo so the effect doesn't rebuild (and re-send gpio writes) on unrelated config writes
+  const heatingPiIp = createMemo(() => config().elpatron_switching.heating_pi_ip);
   const fromSolar = createMemo(() => useTotalSolarPower());
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
 
   createEffect(() => {
     if (!functionalityEnabled()) return;
-    socket ||= new DepictAPIWS("ws://192.168.1.100:9321");
+    const socket = getHeatingPiSocket(heatingPiIp());
     const elpatronShouldBeEnabled = createMemo<boolean | undefined>(() => {
       const solar = fromSolar();
       const powerDirection = getPowerDirection();

@@ -9,6 +9,7 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
+import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import {
   type AutoTraderState,
   type AutoTraderStatus,
@@ -313,19 +314,32 @@ async function buildPlannerInput(
   soc: number
 ): Promise<PlannerInput> {
   const tradingConfig = cfg.automatic_trading;
+  const nowMs = Date.now();
   const solar = await fetchSolarForecast(
     tradingConfig.latitude,
     tradingConfig.longitude,
     tradingConfig.solar_model.watts_per_direct_radiation,
     tradingConfig.solar_model.watts_per_diffuse_radiation
   );
-  const consumption = await fetchConsumptionForecast(ctx.influxClient(), tradingConfig.fallback_house_load_watts);
+  // The water heater element is our own scheduled load, not a forecastable one: model it forward
+  // and strip its share out of the learned baseline so it isn't counted twice
+  const elpatron = await fetchElpatronForecast({
+    elpatronConfig: cfg.elpatron_switching,
+    influxClient: ctx.influxClient(),
+    solarWattsAt: solar.wattsAt,
+    nowMs,
+  });
+  const consumption = await fetchConsumptionForecast(
+    ctx.influxClient(),
+    tradingConfig.fallback_house_load_watts,
+    elpatron.armed ? cfg.elpatron_switching : undefined
+  );
   const { sells, buys } = userWindows(ctx, cfg);
   return {
-    nowMs: Date.now(),
+    nowMs,
     prices: prices.slots,
     solarWattsAt: solar.wattsAt,
-    houseLoadWattsAt: consumption.wattsAt,
+    houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
     parasiticWatts: ctx.assumedParasiticConsumption() || cfg.soc_calculations.current_state.parasitic_consumption,
     socPercent: soc,
     capacityWh: cfg.soc_calculations.current_state.capacity,

@@ -5,6 +5,7 @@
 import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
+import { buildElpatronLoadModel } from "./elpatronForecast.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
 const H = 3600_000;
@@ -563,6 +564,45 @@ function check(name: string, cond: boolean, detail = "") {
     "  sells:",
     plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.avgSpot.toFixed(2)}`).join(", ")
   );
+}
+
+// ---------- Scenario 13: elpatron load model — dawn burn, thermostat top-ups, off at night ----------
+// The water heater is our own switched load (solar-gated for airbnb-guest morning showers):
+// the model must predict the ~6 kW recovery burn at first light, decay to standing-loss top-ups
+// once the tank thermostat band is reached, and nothing outside heating-allowed hours.
+{
+  const elpatronKnobs = {
+    element_watts: 6200,
+    tank_wh_per_degree: 480,
+    tank_cooling_degrees_per_hour: 1,
+    tank_max_temperature: 50,
+  };
+  // Solar-gated: heating allowed h1..h15 (first light to sunset), tank cooled to 37°C overnight
+  const gated = buildElpatronLoadModel({
+    nowMs: t0,
+    startTempC: 37,
+    heatingAllowedAt: ms => (ms - t0) / H >= 1 && (ms - t0) / H <= 15,
+    ...elpatronKnobs,
+  });
+  check("elpatron: no draw before first light", gated(t0 + 0.5 * H) === 0);
+  check("elpatron: full burn at first light", gated(t0 + 1.5 * H) === 6200, `(${gated(t0 + 1.5 * H)} W)`);
+  check("elpatron: thermostat reached → standing-loss top-ups", gated(t0 + 4 * H) === 480, `(${gated(t0 + 4 * H)} W)`);
+  check("elpatron: off after sunset", gated(t0 + 16 * H) === 0);
+  let dayKwh = 0;
+  for (let ms = t0; ms < t0 + 24 * H; ms += SLOT_MS) dayKwh += (gated(ms) * 0.25) / 1000;
+  check(
+    "elpatron: daily energy in the observed 8-16 kWh band",
+    dayKwh > 8 && dayKwh < 16,
+    `(${dayKwh.toFixed(1)} kWh)`
+  );
+  // GPIO on without solar switching: only the thermostat limits it — top-ups continue at night
+  const ungated = buildElpatronLoadModel({
+    nowMs: t0,
+    startTempC: 50,
+    heatingAllowedAt: () => true,
+    ...elpatronKnobs,
+  });
+  check("elpatron: manual-on holds the band around the clock", ungated(t0 + 20 * H) === 480);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");

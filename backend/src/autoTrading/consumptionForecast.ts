@@ -9,7 +9,14 @@ export type ConsumptionForecast = {
   profile: number[];
 };
 
-let cache: ConsumptionForecast | undefined;
+/** Constants for stripping water-heater consumption out of the learned history (see below) */
+export type ElpatronHistoryKnobs = {
+  element_watts: number;
+  tank_wh_per_degree: number;
+  tank_cooling_degrees_per_hour: number;
+};
+
+let cache: (ConsumptionForecast & { elpatronSubtracted: boolean }) | undefined;
 
 function localHour(ms: number): number {
   return parseInt(
@@ -22,29 +29,56 @@ function localHour(ms: number): number {
  * Learn the house's typical consumption per local hour-of-day from the last 14 days of inverter data.
  * Median over days is used so that rare heavy loads (EV charging sessions) don't inflate the baseline —
  * those are exactly what the user handles manually via the extra-reserve knob.
+ *
+ * When `subtractElpatron` is set (the water heater element is currently armed — see
+ * elpatronForecast.ts), the element's share is stripped from each historical hour first, using the
+ * tank sensor: energy into the tank ≈ heat capacity × (ΔT + standing loss). The planner adds the
+ * element back as a modeled forward load, so leaving it in the baseline would double-count it.
+ * Not applied in stove season (element unarmed), where tank warming is the pellet stove's doing.
  */
 export async function fetchConsumptionForecast(
   influxClient: Influx.InfluxDB | undefined,
-  fallbackWatts: number
+  fallbackWatts: number,
+  subtractElpatron?: ElpatronHistoryKnobs
 ): Promise<ConsumptionForecast> {
   const maxAgeMs = 12 * 3600 * 1000;
-  if (cache && Date.now() - cache.fetchedAtMs < maxAgeMs && cache.source === "influx") return cache;
+  if (
+    cache &&
+    Date.now() - cache.fetchedAtMs < maxAgeMs &&
+    cache.source === "influx" &&
+    cache.elpatronSubtracted === !!subtractElpatron
+  ) {
+    return cache;
+  }
 
   let profile: number[] | undefined;
   if (influxClient) {
     try {
       // The influx client has no timeout of its own — don't let a hung connection stall callers forever
-      const rows = (await Promise.race([
+      const withTimeout = <T>(promise: Promise<T>) =>
+        Promise.race([
+          promise,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("InfluxDB query timed out")), 45_000)),
+        ]);
+      const rows = (await withTimeout(
         influxClient.query(
           `SELECT mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time > now() - 14d GROUP BY time(1h)`
-        ),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("InfluxDB query timed out")), 45_000)),
-      ])) as unknown as { time: { getNanoTime(): number }; house: number | null }[];
+        )
+      )) as unknown as { time: { getNanoTime(): number }; house: number | null }[];
+
+      const elpatronWByHourMs = subtractElpatron
+        ? await estimateElpatronHistory(influxClient, subtractElpatron, withTimeout)
+        : undefined;
+
       const byHour: number[][] = Array.from({ length: 24 }, () => []);
       for (const row of rows) {
         if (row.house == null) continue;
         const ms = Math.round(row.time.getNanoTime() / 1e6);
-        byHour[localHour(ms)].push(row.house);
+        const elpatronW = elpatronWByHourMs?.get(ms) ?? 0;
+        // When the element dominates the hour (a burn, or night top-ups over a small base), the
+        // residual is unmeasurable — drop the sample instead of feeding a fake 0 into the median
+        if (elpatronW > row.house * 0.9) continue;
+        byHour[localHour(ms)].push(row.house - elpatronW);
       }
       if (byHour.some(bucket => bucket.length >= 3)) {
         profile = byHour.map(bucket => {
@@ -52,7 +86,10 @@ export async function fetchConsumptionForecast(
           const sorted = [...bucket].sort((a, b) => a - b);
           return sorted[Math.floor(sorted.length / 2)];
         });
-        logLog("Learned consumption profile (W by local hour):", profile.map(w => Math.round(w)).join(","));
+        logLog(
+          `Learned consumption profile (W by local hour${subtractElpatron ? ", elpatron share removed" : ""}):`,
+          profile.map(w => Math.round(w)).join(",")
+        );
       }
     } catch (e) {
       errorLog("Failed to learn consumption profile from InfluxDB, using fallback", e);
@@ -65,6 +102,40 @@ export async function fetchConsumptionForecast(
     source: profile ? "influx" : "fallback",
     fetchedAtMs: Date.now(),
     profile: finalProfile,
+    elpatronSubtracted: !!subtractElpatron,
   };
   return cache;
+}
+
+/**
+ * Estimate the element's average watts for each historical hour from the tank sensor: energy in ≈
+ * tank_wh_per_degree × (temperature rise + what standing loss ate). Hot-water usage hours show a
+ * steep temperature DROP and clamp to 0; hours holding the thermostat band land near the standing
+ * loss — both are what actually happened electrically, to within the calibration.
+ */
+async function estimateElpatronHistory(
+  influxClient: Influx.InfluxDB,
+  knobs: ElpatronHistoryKnobs,
+  withTimeout: <T>(promise: Promise<T>) => Promise<T>
+): Promise<Map<number, number>> {
+  const rows = (await withTimeout(
+    influxClient.query(
+      `SELECT mean(akkumulator) as tank FROM "frendebo_thermometers" WHERE time > now() - 14d GROUP BY time(1h)`
+    )
+  )) as unknown as { time: { getNanoTime(): number }; tank: number | null }[];
+  const hourMs = 3600 * 1000;
+  const tankByMs = new Map<number, number>();
+  for (const row of rows) {
+    if (row.tank == null) continue;
+    tankByMs.set(Math.round(row.time.getNanoTime() / 1e6), row.tank);
+  }
+  const elpatronWByMs = new Map<number, number>();
+  for (const [ms, tank] of tankByMs) {
+    const nextTank = tankByMs.get(ms + hourMs);
+    if (nextTank === undefined) continue;
+    const deltaDegrees = nextTank - tank;
+    const estimatedW = knobs.tank_wh_per_degree * (deltaDegrees + knobs.tank_cooling_degrees_per_hour);
+    elpatronWByMs.set(ms, Math.min(knobs.element_watts, Math.max(0, estimatedW)));
+  }
+  return elpatronWByMs;
 }

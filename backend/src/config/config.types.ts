@@ -142,8 +142,23 @@ export type Config = {
     };
   };
   elpatron_switching: {
+    /** Let this controller gate the water heater element by solar (write-gpio to the heating pi) */
     enabled: boolean;
+    /** Solar watts above which the element is allowed on */
     min_solar_input: number;
+    /** The pi running github.com/danieltroger/heating (ws server on :9321 owns the element GPIO) */
+    heating_pi_ip: string;
+    /** Measured element draw when on: ~2.05 kW × 3 phases (2026-07 measurement, ~7 kW nameplate) */
+    element_watts: number;
+    /**
+     * Effective heat capacity at the tank sensor (Wh per °C) — calibrated from a 2026-07-10 burn:
+     * 6.2 kW × 0.7 h moved the sensor +9.1 °C. Used to predict burn length and standing losses.
+     */
+    tank_wh_per_degree: number;
+    /** Observed tank cooling rate with the element off (standing loss, °C per hour) */
+    tank_cooling_degrees_per_hour: number;
+    /** The tank thermostat cuts the element around this temperature (kept low — the room warms up) */
+    tank_max_temperature: number;
   };
   stop_charging_below_current: number;
   full_battery_voltage: number;
