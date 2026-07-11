@@ -72,7 +72,7 @@ export function BatteryCard() {
             <small>%</small>
           </div>
           <div class="battery-card__kwh">
-            {dashUnless(storedWh(), stored => `${formatWhAsKwh(stored)} of ${formatWhAsKwh(assumedCapacity()!)}`)}
+            {dashUnless(storedWh(), stored => `${formatWhAsKwh(stored)} / ${formatWhAsKwh(assumedCapacity()!)}`)}
           </div>
         </div>
       </div>

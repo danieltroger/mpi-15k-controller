@@ -79,6 +79,11 @@
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--ink-2);
+  /* The line is wider than the ring's inner hole, so at mid SOC it crosses the arc —
+     a card-colored pill keeps it readable wherever it lands */
+  background: var(--card);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
 .battery-card__eta {
