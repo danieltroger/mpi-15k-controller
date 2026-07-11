@@ -1,5 +1,7 @@
 export type CurrentBatteryPowerBroadcast = { time: number; value: number };
 export type MqttValue = { time: number; value: number };
+/** Wire shape of the `elpatronState` ws accessor — whether the water heater element is powered. */
+export type ElpatronDisplayState = { heating: boolean | undefined; time: number };
 
 export const mqttValueKeys = [
   "solar_input_power_1",
