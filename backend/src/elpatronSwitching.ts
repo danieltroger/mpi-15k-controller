@@ -23,10 +23,16 @@ export function elpatronSwitching(config: Accessor<Config>) {
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
   // What the frontend's water-heater card shows; primed by our own writes, kept current by the
   // heating pi's own change broadcasts
-  const [elpatronHeating, setElpatronHeating] = createSignal<ElpatronDisplayState>({
+  const [elpatronHeating, setElpatronHeatingRaw] = createSignal<ElpatronDisplayState>({
     heating: undefined,
     time: Date.now(),
   });
+  // `time` marks the last state CHANGE (the card renders it as "since HH:MM"), so confirmations
+  // of an unchanged state keep the old timestamp
+  const setElpatronHeating = (elementIsOn: boolean | undefined) =>
+    setElpatronHeatingRaw(previous =>
+      previous.heating === elementIsOn ? previous : { heating: elementIsOn, time: Date.now() }
+    );
 
   const writeElement = async (socket: DepictAPIWS, turnOn: boolean, why: string) => {
     const [result] = (await socket.ensure_sent({
@@ -42,7 +48,7 @@ export function elpatronSwitching(config: Accessor<Config>) {
     }
     logLog(`Elpatron: element ${turnOn ? "on" : "off"} (${why})`);
     primeElpatronGpioCache(heatingPiIp(), turnOn);
-    setElpatronHeating({ heating: turnOn, time: Date.now() });
+    setElpatronHeating(turnOn);
   };
 
   // "Always on" is a standing instruction: when something else (a hand on the heating pi's own
@@ -71,7 +77,7 @@ export function elpatronSwitching(config: Accessor<Config>) {
     const socket = getHeatingPiSocket(ip);
     const applyState = (elementIsOn: boolean | undefined) => {
       if (elementIsOn !== undefined) primeElpatronGpioCache(ip, elementIsOn);
-      setElpatronHeating({ heating: elementIsOn, time: Date.now() });
+      setElpatronHeating(elementIsOn);
       if (elementIsOn !== undefined) enforceAlwaysOnAfterExternalOff(elementIsOn);
     };
     const readNow = () =>
@@ -89,12 +95,17 @@ export function elpatronSwitching(config: Accessor<Config>) {
         warnLog("Elpatron: couldn't parse heating pi broadcast", e);
       }
     };
+    // A dead link means we can't know the state — show "unknown" instead of freezing the last
+    // value (reconnect + readNow restores it)
+    const onClose = () => setElpatronHeating(undefined);
     socket.addEventListener("message", onMessage);
     socket.addEventListener("open", readNow);
+    socket.addEventListener("close", onClose);
     readNow();
     onCleanup(() => {
       socket.removeEventListener("message", onMessage);
       socket.removeEventListener("open", readNow);
+      socket.removeEventListener("close", onClose);
     });
   });
 

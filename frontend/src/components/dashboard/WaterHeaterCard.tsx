@@ -1,7 +1,7 @@
 import { getOwner, Show } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
-import { dashUnless, formatRelativeTime, formatWatts, useNowMs } from "~/helpers/format";
+import { formatClockTime, formatShortDateTime, formatWatts, useNowMs } from "~/helpers/format";
 import { resolveElpatronMode, type ElpatronMode } from "../../../../backend/src/sharedTypes";
 import type { Config } from "../../../../backend/src/config/config.types";
 import type { ElpatronDisplayState } from "../../../../backend/src/sharedTypes";
@@ -48,9 +48,17 @@ export function WaterHeaterCard() {
     <section class="card wh-card" aria-label="Water heater">
       <div class="card-head">
         <span class="eyebrow">Water heater</span>
-        <span class="card-meta">
-          {dashUnless(elpatronState()?.time, time => `checked ${formatRelativeTime(now(), time)}`)}
-        </span>
+        {/* state is pushed from the heating pi; `time` is the last observed change, not a poll age */}
+        <Show when={elpatronState()?.heating !== undefined && elpatronState()}>
+          {state => (
+            <span class="card-meta" title={new Date(state().time).toLocaleString()}>
+              since{" "}
+              {now() - state().time < 24 * 3600 * 1000
+                ? formatClockTime(state().time)
+                : formatShortDateTime(state().time)}
+            </span>
+          )}
+        </Show>
       </div>
       <Show when={switching()} fallback={<p class="wh-card__hint">Waiting for controller…</p>}>
         {elpatron => (
