@@ -3317,7 +3317,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "example-basic@workspace:frontend"
   dependencies:
-    "@depict-ai/plp-styling": "npm:^4.4.20"
     "@depict-ai/ui": "npm:^4.8.22"
     "@depict-ai/utilishared": "npm:^2.4.7"
     "@modular-forms/solid": "npm:^0.25.1"
@@ -5615,7 +5614,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "root-workspace-0b6124@workspace:."
   dependencies:
-    "@depict-ai/plp-styling": "npm:^4.4.20"
     "@depict-ai/ui": "npm:^4.8.22"
     "@depict-ai/utilishared": "npm:^2.4.7"
     "@types/node": "npm:^20.12.7"

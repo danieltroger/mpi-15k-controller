@@ -23,7 +23,9 @@ export async function sendBackendAction(
 export function getBackendSyncedSignal<T, default_value_was_provided extends boolean = false>(
   key: string,
   default_value?: T,
-  refetchOnVisibilityChange = true
+  refetchOnVisibilityChange = true,
+  /** Log read failures to the console instead of toasting — for keys an older backend may not expose yet. */
+  silentReadErrors = false
 ) {
   const socket = useWebSocket();
   const signal = createSignal<T>(default_value!);
@@ -56,6 +58,8 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
     ];
     if (response.status === "ok") {
       set_actual_signal(response.value);
+    } else if (silentReadErrors) {
+      console.warn(`Backend can't provide ${key} (yet?):`, response_json);
     } else {
       console.error(response);
       await showToastWithMessage(owner, () => `Error reading ${key}: ${response_json}`);

@@ -10,7 +10,6 @@
     "build-and-start": "nodemon -e scss,tsx,ts -x 'yarn build && PORT=3003 yarn start' -w src/"
   },
   "dependencies": {
-    "@depict-ai/plp-styling": "^4.4.20",
     "@depict-ai/ui": "^4.8.22",
     "@depict-ai/utilishared": "^2.4.7",
     "@modular-forms/solid": "^0.25.1",
