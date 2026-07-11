@@ -217,6 +217,18 @@ function main() {
                       return isCharging;
                     });
                     const { mqttValues } = useFromMqttProvider();
+                    // Memo (not effect) so the returned live heater state can be exposed over the ws
+                    const elpatronReturn = createMemo(() => {
+                      if (elpatronSwitchingErrored()) return;
+                      return catchError(
+                        () => elpatronSwitching(config),
+                        e => {
+                          setElpatronSwitchingErrored(true);
+                          errorLog("Elpatron switching errored", e, "restarting in 60s");
+                          setTimeout(() => setElpatronSwitchingErrored(false), 60_000);
+                        }
+                      );
+                    });
                     createResource(() =>
                       wsMessaging({
                         config_signal: configResourceValue,
@@ -256,23 +268,12 @@ function main() {
                           assumedCapacity,
                           assumedParasiticConsumption,
                           isCharging: () => isChargingOuterScope()?.()?.(),
+                          elpatronState: () => elpatronReturn()?.elpatronHeating(),
                           totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
                           ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
                         },
                       })
                     );
-                    createEffect(() => {
-                      if (elpatronSwitchingErrored()) return;
-                      catchError(
-                        () => elpatronSwitching(config),
-                        e => {
-                          setElpatronSwitchingErrored(true);
-                          errorLog("Elpatron switching errored", e, "restarting in 60s");
-                          setTimeout(() => setElpatronSwitchingErrored(false), 60_000);
-                        }
-                      );
-                    });
-
                     return undefined;
                   },
                 });
