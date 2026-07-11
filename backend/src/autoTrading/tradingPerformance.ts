@@ -3,7 +3,7 @@ import { errorLog, logLog } from "../utilities/logging.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
-import { type AutoTraderState, type DayForecast, saveAutoTraderState } from "./autoTraderState.ts";
+import { type AutoTraderState, type DayForecast, type RealizedDay, saveAutoTraderState } from "./autoTraderState.ts";
 
 /**
  * Closes the feedback loop: after a day has fully settled, measure what actually happened at the
@@ -18,14 +18,7 @@ import { type AutoTraderState, type DayForecast, saveAutoTraderState } from "./a
  * firmware-corrupted (see the pi17 protocol patch).
  */
 
-export type RealizedDay = {
-  date: string;
-  export_kwh: number;
-  import_kwh: number;
-  realized_revenue_sek: number;
-  pv_kwh: number;
-  house_kwh: number;
-};
+export type { RealizedDay } from "./autoTraderState.ts";
 
 type FeeKnobs = Pick<PlannerKnobs, "sell_bonus_sek_per_kwh" | "buy_surcharges_sek_per_kwh" | "vat_multiplier">;
 
@@ -127,6 +120,7 @@ export async function settleRecentDays(
       const realized = await settleTradingDay(influxClient, date, priceArea, fees, state.forecast_log[date]);
       if (!realized) continue; // e.g. prices not yet published / a transient hiccup — retry next run
       state.last_settled_date = date;
+      state.last_settlement = { ...realized, settled_at: new Date().toISOString() };
       await saveAutoTraderState(state);
     }
   } finally {

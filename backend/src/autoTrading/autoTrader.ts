@@ -101,7 +101,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
           untrack(config).automatic_trading.price_area,
           untrack(config).automatic_trading,
           ctx.state
-        );
+        ).then(() => refreshStatus(ctx));
         scheduleDaily();
       }, ms);
     };
@@ -150,7 +150,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
         untrack(config).automatic_trading.price_area,
         untrack(config).automatic_trading,
         ctx.state
-      );
+      ).then(() => refreshStatus(ctx));
     }, 90_000);
 
     scheduleDaily();
@@ -230,6 +230,7 @@ function refreshStatus(ctx: TraderCtx, extra?: Partial<AutoTraderStatus>) {
       vetoes: ctx.state.vetoes,
       guard: ctx.state.guard,
       last_error: ctx.state.last_error,
+      last_settlement: ctx.state.last_settlement,
       owned_selling_windows: Object.keys(ctx.state.owned_entries.selling).length,
       owned_buying_windows: Object.keys(ctx.state.owned_entries.buying).length,
       ...extra,

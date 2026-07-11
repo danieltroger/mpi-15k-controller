@@ -1,20 +1,24 @@
+import { type Accessor, createSignal } from "solid-js";
 import { logLog } from "../utilities/logging.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PriceSlot15 } from "./planner.types.ts";
+import type { FetchedPrices } from "./priceService.types.ts";
+
+export type { FetchedPrices } from "./priceService.types.ts";
 
 const PRICE_API_BASE = "https://www.elprisetjustnu.se/api/v1/prices";
 
 type ApiEntry = { SEK_per_kWh: number; time_start: string; time_end: string };
 
-export type FetchedPrices = {
-  slots: PriceSlot15[];
-  /** Whether the last fetched day extends past ~22:00 local tomorrow (i.e. tomorrow's prices are in) */
-  coversTomorrow: boolean;
-  fetchedAtMs: number;
-  horizonEndMs: number;
-};
-
 let cache: { area: string; value: FetchedPrices } | undefined;
+
+const [getLatestSpotPrices, setLatestSpotPrices] = createSignal<FetchedPrices | undefined>();
+/**
+ * Latest successful fetch as a reactive signal so wsMessaging's per-key broadcast effect fires when
+ * new prices land (the plain module cache above isn't reactive). Exposed to the frontend as
+ * `spotPrices` for the price/plan chart.
+ */
+export const latestSpotPrices: Accessor<FetchedPrices | undefined> = getLatestSpotPrices;
 
 function dateInStockholm(msOffsetDays: number): { year: string; month: string; day: string } {
   const d = new Date(Date.now() + msOffsetDays * 24 * 3600 * 1000);
@@ -94,6 +98,7 @@ export async function fetchPrices(area: string, forceRefresh = false): Promise<F
     horizonEndMs,
   };
   cache = { area, value };
+  setLatestSpotPrices(value);
   logLog(
     "Fetched electricity prices:",
     slots.length,
