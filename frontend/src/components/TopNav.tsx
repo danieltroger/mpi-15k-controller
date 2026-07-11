@@ -1,4 +1,4 @@
-import { A, useLocation } from "@solidjs/router";
+import { A } from "@solidjs/router";
 import { createMemo, For } from "solid-js";
 import { useConnection } from "~/components/WebSocketProvider";
 import { useNowMs } from "~/helpers/format";
@@ -17,11 +17,8 @@ const NAV_LINKS = [
 const QUIET_AFTER_MS = 20_000;
 
 export function TopNav() {
-  const location = useLocation();
   const { status, lastMessageAt } = useConnection();
   const now = useNowMs(1000);
-
-  const isActive = (href: string) => (href === "/" ? location.pathname === "/" : location.pathname.startsWith(href));
 
   const connection = createMemo(() => {
     const currentStatus = status();
@@ -46,7 +43,9 @@ export function TopNav() {
         <nav class="topbar__nav" aria-label="Sections">
           <For each={NAV_LINKS}>
             {link => (
-              <A href={link.href} class={isActive(link.href) ? "active" : ""}>
+              // `end` stops href="/" from prefix-matching every route; the router's own
+              // activeClass ("active") does the highlighting.
+              <A href={link.href} end={link.href === "/"}>
                 {link.label}
               </A>
             )}
