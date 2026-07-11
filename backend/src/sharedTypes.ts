@@ -3,6 +3,16 @@ export type MqttValue = { time: number; value: number };
 /** Wire shape of the `elpatronState` ws accessor — whether the water heater element is powered. */
 export type ElpatronDisplayState = { heating: boolean | undefined; time: number };
 
+export type ElpatronMode = "off" | "always_on" | "solar";
+
+/**
+ * Legacy configs only carry `enabled`; `mode` wins when present. Shared so the backend switcher,
+ * the planner's load model and the frontend card all resolve the three-way mode identically.
+ */
+export function resolveElpatronMode(elpatronConfig: { mode?: ElpatronMode; enabled: boolean }): ElpatronMode {
+  return elpatronConfig.mode ?? (elpatronConfig.enabled ? "solar" : "off");
+}
+
 export const mqttValueKeys = [
   "solar_input_power_1",
   "solar_input_power_2",

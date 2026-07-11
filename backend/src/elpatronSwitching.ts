@@ -1,27 +1,28 @@
-import { type Accessor, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { type Accessor, createEffect, createMemo, createResource, createSignal, onCleanup, untrack } from "solid-js";
 import { random_string, wait } from "./vendor/depictUtilishared.ts";
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower.ts";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers.ts";
 import { getHeatingPiSocket, primeElpatronGpioCache, readElpatronGpioIsOn } from "./utilities/heatingPi.ts";
 import { logLog, warnLog } from "./utilities/logging.ts";
+import { type ElpatronDisplayState, type ElpatronMode, resolveElpatronMode } from "./sharedTypes.ts";
 import type { DepictAPIWS } from "./vendor/depictUtilishared.ts";
 import type { Config } from "./config/config.types.ts";
-import type { ElpatronDisplayState } from "./sharedTypes.ts";
 
-/** Contactor protection: the solar logic never flips the element more often than this. */
+/** Contactor protection: nothing flips the element more often than this. */
 const MAX_SWITCH_EVERY_MS = 1000 * 60 * 5;
 
 let lastSwitch = 0;
 
 export function elpatronSwitching(config: Accessor<Config>) {
   const { mqttValues } = useFromMqttProvider();
-  const functionalityEnabled = createMemo(() => config().elpatron_switching.enabled);
-  // Memo so the effect doesn't rebuild (and re-send gpio writes) on unrelated config writes
+  const mode = createMemo(() => resolveElpatronMode(config().elpatron_switching));
+  // Memo so effects don't rebuild (and re-send gpio writes) on unrelated config writes
   const heatingPiIp = createMemo(() => config().elpatron_switching.heating_pi_ip);
   const fromSolar = createMemo(() => useTotalSolarPower());
   const getPowerDirection = () => mqttValues.line_power_direction?.value;
-  // What the frontend's water-heater card shows; primed by our own writes, refreshed by the poll
+  // What the frontend's water-heater card shows; primed by our own writes, kept current by the
+  // heating pi's own change broadcasts
   const [elpatronHeating, setElpatronHeating] = createSignal<ElpatronDisplayState>({
     heating: undefined,
     time: Date.now(),
@@ -44,37 +45,92 @@ export function elpatronSwitching(config: Accessor<Config>) {
     setElpatronHeating({ heating: turnOn, time: Date.now() });
   };
 
-  // Live state for the frontend card — poll the GPIO once a minute while an ip is configured
+  // "Always on" is a standing instruction: when something else (a hand on the heating pi's own
+  // controls) switches the element off, re-assert it — contactor-guarded so two automations can
+  // never fast-cycle the relay against each other.
+  let alwaysOnReassertInFlight = false;
+  const enforceAlwaysOnAfterExternalOff = (elementIsOn: boolean) => {
+    if (elementIsOn || untrack(mode) !== "always_on" || alwaysOnReassertInFlight) return;
+    alwaysOnReassertInFlight = true;
+    void (async () => {
+      const sinceLastSwitch = Date.now() - lastSwitch;
+      if (sinceLastSwitch < MAX_SWITCH_EVERY_MS) await wait(MAX_SWITCH_EVERY_MS - sinceLastSwitch);
+      if (untrack(mode) !== "always_on") return; // mode changed while we waited
+      await writeElement(getHeatingPiSocket(untrack(heatingPiIp)), true, "always-on re-assert after external off");
+    })()
+      .catch(e => warnLog("Elpatron: always-on re-assert failed", e))
+      .finally(() => (alwaysOnReassertInFlight = false));
+  };
+
+  // Live element state: the heating pi's wsMessaging broadcasts {type:"change", key:"gpio"} on
+  // every flip, so subscribe instead of polling. Broadcasts don't replay, hence one read now and
+  // on every (re)connect — DepictAPIWS re-dispatches "open" across reconnects.
   createEffect(() => {
     const ip = heatingPiIp();
     if (!ip) return;
-    const poll = () =>
-      void readElpatronGpioIsOn(ip, 55_000)
-        .then(isOn => setElpatronHeating({ heating: isOn, time: Date.now() }))
-        .catch(e => warnLog("Elpatron: state poll failed", e));
-    poll();
-    const timer = setInterval(poll, 60_000);
-    onCleanup(() => clearInterval(timer));
+    const socket = getHeatingPiSocket(ip);
+    const applyState = (elementIsOn: boolean | undefined) => {
+      if (elementIsOn !== undefined) primeElpatronGpioCache(ip, elementIsOn);
+      setElpatronHeating({ heating: elementIsOn, time: Date.now() });
+      if (elementIsOn !== undefined) enforceAlwaysOnAfterExternalOff(elementIsOn);
+    };
+    const readNow = () =>
+      void readElpatronGpioIsOn(ip, 0)
+        .then(applyState)
+        .catch(e => warnLog("Elpatron: gpio state read failed", e));
+    const onMessage = (event: Event) => {
+      try {
+        const decoded = JSON.parse(String((event as MessageEvent).data));
+        if (decoded?.type !== "change" || decoded.key !== "gpio") return;
+        const rawState = decoded.value?.outputs?.electric_heating_element;
+        if (rawState === undefined) return;
+        applyState(rawState === 0); // active-low
+      } catch (e) {
+        warnLog("Elpatron: couldn't parse heating pi broadcast", e);
+      }
+    };
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("open", readNow);
+    readNow();
+    onCleanup(() => {
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("open", readNow);
+    });
   });
 
-  // undefined = process just started: booting while disabled must NOT write the gpio — in pellet
-  // season the heating system owns the element and we have no business touching it.
-  let previouslyEnabled: boolean | undefined;
+  // undefined = process just started. Booting into "off" must NOT write the gpio — in pellet
+  // season the heating system owns the element and we have no business touching it on startup.
+  // Booting into "always_on" DOES re-assert: that mode exists to be durable.
+  let previousMode: ElpatronMode | undefined;
   createEffect(() => {
-    if (!functionalityEnabled()) {
-      // Turning solar switching off in the UI means "heater off", so write that — the old code
-      // only stopped controlling, silently leaving the element in whatever state it last had.
-      if (previouslyEnabled) {
-        void writeElement(getHeatingPiSocket(heatingPiIp()), false, "solar-based switching turned off").catch(e =>
-          warnLog("Elpatron: failed to switch off after disable", e)
+    const currentMode = mode();
+    const cameFrom = previousMode;
+    previousMode = currentMode;
+
+    if (currentMode === "off") {
+      // Off means off — write it, don't just stop controlling (the pre-2026-07 behavior left the
+      // element in whatever state it last had)
+      if (cameFrom !== undefined && cameFrom !== "off") {
+        void writeElement(getHeatingPiSocket(heatingPiIp()), false, "switched to off mode").catch(e =>
+          warnLog("Elpatron: failed to switch off", e)
         );
       }
-      previouslyEnabled = false;
       return;
     }
-    previouslyEnabled = true;
-    const socket = getHeatingPiSocket(heatingPiIp());
 
+    if (currentMode === "always_on") {
+      if (cameFrom !== "always_on") {
+        void writeElement(
+          getHeatingPiSocket(heatingPiIp()),
+          true,
+          cameFrom === undefined ? "always-on mode (startup re-assert)" : "switched to always-on mode"
+        ).catch(e => warnLog("Elpatron: failed to switch on", e));
+      }
+      return;
+    }
+
+    // Solar-gated mode
+    const socket = getHeatingPiSocket(heatingPiIp());
     const elpatronShouldBeEnabled = createMemo<boolean | undefined>(() => {
       const solar = fromSolar();
       const powerDirection = getPowerDirection();
