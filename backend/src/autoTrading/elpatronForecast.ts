@@ -14,6 +14,7 @@
 import Influx from "influx";
 import { warnLog } from "../utilities/logging.ts";
 import { readElpatronGpioIsOn } from "../utilities/heatingPi.ts";
+import { resolveElpatronMode } from "../sharedTypes.ts";
 import type { Config } from "../config/config.types.ts";
 
 export type ElpatronForecast = {
@@ -36,9 +37,10 @@ export async function fetchElpatronForecast({
   solarWattsAt: (ms: number) => number;
   nowMs: number;
 }): Promise<ElpatronForecast> {
-  // Armed = we actively switch it by solar, or someone left the element GPIO on manually.
-  // The gpio read is skipped when switching is enabled — armed either way.
-  let armed = elpatronConfig.enabled;
+  // Armed = we actively switch it (solar or always-on mode), or someone left the element GPIO on
+  // manually. The gpio read is skipped when a mode is active — armed either way.
+  const elpatronMode = resolveElpatronMode(elpatronConfig);
+  let armed = elpatronMode !== "off";
   if (!armed) {
     armed = (await readElpatronGpioIsOn(elpatronConfig.heating_pi_ip)) === true;
   }
@@ -50,8 +52,9 @@ export async function fetchElpatronForecast({
   const wattsAt = buildElpatronLoadModel({
     nowMs,
     startTempC,
-    // With switching disabled but the GPIO on, only the tank thermostat limits the element
-    heatingAllowedAt: elpatronConfig.enabled ? ms => solarWattsAt(ms) > elpatronConfig.min_solar_input : () => true,
+    // In always-on mode — or off mode with the GPIO left on by hand — only the tank thermostat
+    // limits the element
+    heatingAllowedAt: elpatronMode === "solar" ? ms => solarWattsAt(ms) > elpatronConfig.min_solar_input : () => true,
     element_watts: elpatronConfig.element_watts,
     tank_wh_per_degree: elpatronConfig.tank_wh_per_degree,
     tank_cooling_degrees_per_hour: elpatronConfig.tank_cooling_degrees_per_hour,
