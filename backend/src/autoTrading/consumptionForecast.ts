@@ -1,5 +1,5 @@
 import Influx from "influx";
-import { errorLog, logLog } from "../utilities/logging.ts";
+import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 
 export type ConsumptionForecast = {
   /** Expected house load (AC output) in watts at a given time, excluding inverter parasitic draw */
@@ -16,7 +16,7 @@ export type ElpatronHistoryKnobs = {
   tank_cooling_degrees_per_hour: number;
 };
 
-let cache: (ConsumptionForecast & { elpatronSubtracted: boolean }) | undefined;
+let cache: (ConsumptionForecast & { elpatronKey: string }) | undefined;
 
 function localHour(ms: number): number {
   return parseInt(
@@ -42,11 +42,13 @@ export async function fetchConsumptionForecast(
   subtractElpatron?: ElpatronHistoryKnobs
 ): Promise<ConsumptionForecast> {
   const maxAgeMs = 12 * 3600 * 1000;
+  // Key the cache on the knob values too, so recalibrating them doesn't serve a stale profile
+  const elpatronKey = JSON.stringify(subtractElpatron ?? null);
   if (
     cache &&
     Date.now() - cache.fetchedAtMs < maxAgeMs &&
     cache.source === "influx" &&
-    cache.elpatronSubtracted === !!subtractElpatron
+    cache.elpatronKey === elpatronKey
   ) {
     return cache;
   }
@@ -71,14 +73,24 @@ export async function fetchConsumptionForecast(
         : undefined;
 
       const byHour: number[][] = Array.from({ length: 24 }, () => []);
+      let hoursWithTankData = 0;
       for (const row of rows) {
         if (row.house == null) continue;
         const ms = Math.round(row.time.getNanoTime() / 1e6);
-        const elpatronW = elpatronWByHourMs?.get(ms) ?? 0;
+        const elpatronW = elpatronWByHourMs?.get(ms);
+        if (elpatronW !== undefined) hoursWithTankData++;
         // When the element dominates the hour (a burn, or night top-ups over a small base), the
         // residual is unmeasurable — drop the sample instead of feeding a fake 0 into the median
-        if (elpatronW > row.house * 0.9) continue;
-        byHour[localHour(ms)].push(row.house - elpatronW);
+        if (elpatronW !== undefined && elpatronW > row.house * 0.9) continue;
+        byHour[localHour(ms)].push(row.house - (elpatronW ?? 0));
+      }
+      if (elpatronWByHourMs && hoursWithTankData === 0) {
+        // The subtraction silently doing nothing would double-count the element: it stays in this
+        // learned baseline AND gets added by the forward model. Over-provisions the reserve
+        // (the safe direction), but must be loud so a dead tank sensor gets noticed.
+        warnLog(
+          "Elpatron history subtraction found no usable tank data — learned baseline still contains the element and the forward model adds it again (over-forecast until the akkumulator sensor is back)"
+        );
       }
       if (byHour.some(bucket => bucket.length >= 3)) {
         profile = byHour.map(bucket => {
@@ -102,7 +114,7 @@ export async function fetchConsumptionForecast(
     source: profile ? "influx" : "fallback",
     fetchedAtMs: Date.now(),
     profile: finalProfile,
-    elpatronSubtracted: !!subtractElpatron,
+    elpatronKey,
   };
   return cache;
 }
@@ -112,6 +124,11 @@ export async function fetchConsumptionForecast(
  * tank_wh_per_degree × (temperature rise + what standing loss ate). Hot-water usage hours show a
  * steep temperature DROP and clamp to 0; hours holding the thermostat band land near the standing
  * loss — both are what actually happened electrically, to within the calibration.
+ *
+ * Assumes the element is the ONLY thing heating the tank, which holds when this runs (armed ⇒
+ * summer, pellet stove cold). Turning the element GPIO on manually DURING stove season would
+ * misattribute stove heat to the element here and under-provision the baseline — if that ever
+ * becomes a real combination, gate this on the stove being off (readable from the heating pi).
  */
 async function estimateElpatronHistory(
   influxClient: Influx.InfluxDB,
