@@ -2,13 +2,11 @@ import { createSignal, For, getOwner, Show } from "solid-js";
 import { getBackendSyncedSignal, sendBackendAction } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
+import { formatKwh, formatSek, formatShortDateTime } from "~/helpers/format";
 import type { Config } from "../../../backend/src/config/config.types";
 import type { AutoTraderStatus } from "../../../backend/src/autoTrading/autoTraderState.types";
 
-const fmtTime = (iso: string | undefined) =>
-  iso
-    ? new Date(iso).toLocaleString("sv-SE", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-    : "—";
+const fmtTime = (iso: string | undefined) => (iso ? formatShortDateTime(iso) : "—");
 
 export function AutoTraderPanel() {
   const [status] = getBackendSyncedSignal<AutoTraderStatus>("autoTraderStatus");
@@ -130,6 +128,16 @@ export function AutoTraderPanel() {
               {busy() ? "Working…" : "Unblock & replan"}
             </button>
           </p>
+        </Show>
+        <Show when={status()!.last_settlement}>
+          {settlement => (
+            <p class="buy-sell-config__meta">
+              Realized {settlement().date}: exported {formatKwh(settlement().export_kwh)}, imported{" "}
+              {formatKwh(settlement().import_kwh)} —{" "}
+              <b class="buy-sell-config__earn">{formatSek(settlement().realized_revenue_sek, { signed: true })}</b> net
+              from the grid (inverter-meter estimate, settled {fmtTime(settlement().settled_at)}).
+            </p>
+          )}
         </Show>
         <Show when={status()!.guard}>
           <p class="buy-sell-config__meta">

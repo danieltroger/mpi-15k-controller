@@ -5,7 +5,7 @@ import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 
 export function ConfigEditor() {
   let textarea: HTMLTextAreaElement;
-  let button: HTMLButtonElement;
+  let button: HTMLButtonElement | undefined;
   const [get_config, set_config] = getBackendSyncedSignal<{
     [key: string]: any;
   }>("config", undefined, false);
@@ -42,7 +42,7 @@ export function ConfigEditor() {
             await showToastWithMessage(owner, () => "Error parsing JSON: " + e);
           }
           const success = object_contents === undefined ? false : await set_config(object_contents);
-          button.animate(
+          button?.animate(
             [
               { backgroundColor: success ? "green" : "red", offset: 0.2 },
               { backgroundColor: success ? "green" : "red", offset: 0.8 },

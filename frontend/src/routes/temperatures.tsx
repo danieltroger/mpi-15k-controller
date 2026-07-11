@@ -63,7 +63,7 @@ export default function Temperatures() {
 
   return (
     <main>
-      <Title>Temperatures</Title>
+      <Title>Temperatures — Kraftverket</Title>
       <h1>Temperatures</h1>
       <h4 onClick={catchify(() => set_show_current_time_fractional(old => !old))}>
         Current time: {get_current_time()}
