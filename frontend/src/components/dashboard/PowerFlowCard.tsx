@@ -45,6 +45,19 @@ export function PowerFlowCard() {
     return Math.round(solar - battery - house + grid);
   });
 
+  // A positive residual within ~12% of what flows into the inverter is conversion loss (≈90%
+  // efficiency at full 15 kW tilt), not a broken sensor — label it as such instead of warning.
+  const balanceDisplay = createMemo(() => {
+    const residual = balanceWatts();
+    if (residual === undefined) return undefined;
+    if (Math.abs(residual) <= BALANCE_TOLERANCE_WATTS) return { text: "balance ✓", warn: false };
+    const inflow = (solarWatts() ?? 0) + Math.max(0, -(batteryWatts() ?? 0)) + Math.max(0, gridWatts() ?? 0);
+    if (residual > 0 && residual < inflow * 0.12) {
+      return { text: `~${formatWatts(residual)} conversion loss`, warn: false };
+    }
+    return { text: `balance off by ${formatWatts(residual)}`, warn: true };
+  });
+
   const batteryState = createMemo(() => {
     const watts = batteryWatts();
     if (watts === undefined) return "unknown";
@@ -69,12 +82,10 @@ export function PowerFlowCard() {
         <span class="eyebrow">Power flow</span>
         <span
           class="card-meta"
-          classList={{ "flow-card__balance-off": (balanceWatts() ?? 0) > BALANCE_TOLERANCE_WATTS }}
-          title="Solar minus battery charge minus house load plus grid import — should be near zero when every sensor is live"
+          classList={{ "flow-card__balance-off": balanceDisplay()?.warn }}
+          title="Solar minus battery charge minus house load plus grid import — near zero when idle; a positive residual under load is inverter conversion loss"
         >
-          {dashUnless(balanceWatts(), balance =>
-            Math.abs(balance) <= BALANCE_TOLERANCE_WATTS ? "balance ✓" : `balance off by ${formatWatts(balance)}`
-          )}
+          {balanceDisplay()?.text ?? "—"}
         </span>
       </div>
       <svg
