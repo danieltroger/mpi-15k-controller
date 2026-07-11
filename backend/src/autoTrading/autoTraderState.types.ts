@@ -9,6 +9,19 @@ import type { PlanProjection } from "./planner.types.ts";
 /** What the forecasts predicted for one local day, captured at plan time for later settlement. */
 export type DayForecast = { predicted_pv_kwh: number; predicted_house_kwh: number; planned_sell_kwh: number };
 
+/**
+ * Realized figures for one settled local day, measured from the inverter's grid-side sensor
+ * (see tradingPerformance.ts for the caveats vs the official billing meter).
+ */
+export type RealizedDay = {
+  date: string;
+  export_kwh: number;
+  import_kwh: number;
+  realized_revenue_sek: number;
+  pv_kwh: number;
+  house_kwh: number;
+};
+
 export type StateWindow = {
   start: string;
   end: string;
@@ -47,6 +60,8 @@ export type AutoTraderState = {
    * Genuinely absent until the first day settles (distinct from any real date), so it stays optional.
    */
   last_settled_date?: string;
+  /** The most recently settled day's realized figures — the frontend's "earned yesterday" display. */
+  last_settlement?: RealizedDay & { settled_at: string };
 };
 
 /**
@@ -64,6 +79,7 @@ export type AutoTraderStatus = {
   vetoes?: AutoTraderState["vetoes"];
   guard?: AutoTraderState["guard"];
   last_error?: AutoTraderState["last_error"];
+  last_settlement?: AutoTraderState["last_settlement"];
   owned_selling_windows?: number;
   owned_buying_windows?: number;
 };

@@ -28,6 +28,8 @@ import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
 import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
 import { InfluxClientProvider } from "./utilities/InfluxClientProvider.ts";
 import { useAutoTrader } from "./autoTrading/autoTrader.ts";
+import { latestSpotPrices } from "./autoTrading/priceService.ts";
+import { pollSpotPricesForFrontend } from "./autoTrading/spotPricePolling.ts";
 
 while (true) {
   await new Promise<void>(r => {
@@ -140,6 +142,8 @@ function main() {
                     const temperatures = useTemperatures(config);
                     saveTemperatures({ config, temperatures });
 
+                    pollSpotPricesForFrontend(config);
+
                     const [autoTraderErrored, setAutoTraderErrored] = createSignal(false);
                     const autoTrader = createMemo(() => {
                       if (autoTraderErrored()) return;
@@ -232,6 +236,7 @@ function main() {
                         },
                         exposedAccessors: {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
+                          spotPrices: latestSpotPrices,
                           energyAddedSinceEmpty,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,

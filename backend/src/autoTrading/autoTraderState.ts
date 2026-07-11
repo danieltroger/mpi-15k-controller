@@ -4,7 +4,13 @@ import process from "process";
 import { errorLog } from "../utilities/logging.ts";
 import type { AutoTraderState } from "./autoTraderState.types.ts";
 
-export type { AutoTraderState, AutoTraderStatus, StateWindow, DayForecast } from "./autoTraderState.types.ts";
+export type {
+  AutoTraderState,
+  AutoTraderStatus,
+  StateWindow,
+  DayForecast,
+  RealizedDay,
+} from "./autoTraderState.types.ts";
 
 export const EMPTY_STATE: AutoTraderState = {
   owned_entries: { selling: {}, buying: {} },
