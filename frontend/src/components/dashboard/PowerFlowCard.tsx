@@ -5,8 +5,12 @@ import type { CurrentBatteryPowerBroadcast, MqttValue } from "../../../../backen
 
 /** Below this a connector renders idle — sensor noise, not a real flow. */
 const IDLE_BAND_WATTS = 50;
-/** The four power readings never sum to exactly zero; beyond this something is off (or a sensor is stale). */
-const BALANCE_TOLERANCE_WATTS = 300;
+/**
+ * The four power readings never sum to exactly zero — the hall sensor's zero bias alone is
+ * ~150 W and the mqtt values sample at different instants. Beyond this, something is genuinely
+ * off (or a sensor is stale).
+ */
+const BALANCE_TOLERANCE_WATTS = 500;
 
 /**
  * The classic energy-app flow figure: solar and grid on the left, house and battery on the right,
@@ -74,7 +78,7 @@ export function PowerFlowCard() {
         </span>
       </div>
       <svg
-        viewBox="0 0 380 196"
+        viewBox="0 0 380 212"
         role="img"
         aria-label={`Solar ${dashUnless(solarWatts(), formatWatts)}, house ${dashUnless(houseWatts(), formatWatts)}, battery ${batteryState()}, grid ${gridState()}`}
       >
@@ -128,11 +132,11 @@ export function PowerFlowCard() {
             <path d="M52 154V136l6-4 6 4v18M52 141h12M52 147h12" />
           </g>
           {/* single expression: mixed static+dynamic text in SVG <text> crashes the solid babel plugin */}
-          <text class="flow-card__label" x="58" y="185" text-anchor="middle">
-            {`Grid${gridState() === "exporting" ? " · exporting" : gridState() === "importing" ? " · importing" : ""}`}
-          </text>
-          <text class="flow-card__value" x="58" y="118" text-anchor="middle">
+          <text class="flow-card__value" x="58" y="187" text-anchor="middle">
             {dashUnless(gridWatts(), watts => formatWatts(Math.abs(watts)))}
+          </text>
+          <text class="flow-card__label" x="58" y="204" text-anchor="middle">
+            {`Grid${gridState() === "exporting" ? " · exporting" : gridState() === "importing" ? " · importing" : ""}`}
           </text>
         </g>
         {/* House */}
@@ -156,11 +160,11 @@ export function PowerFlowCard() {
             <path d="M331 142v4" />
             <path d="M320 137l-3 5h5l-3 5" stroke-width="1.4" />
           </g>
-          <text class="flow-card__label" x="322" y="185" text-anchor="middle">
-            {`Battery${batteryState() === "charging" ? " · charging" : batteryState() === "discharging" ? " · discharging" : ""}`}
-          </text>
-          <text class="flow-card__value" x="322" y="118" text-anchor="middle">
+          <text class="flow-card__value" x="322" y="187" text-anchor="middle">
             {dashUnless(batteryWatts(), watts => formatWatts(Math.abs(watts)))}
+          </text>
+          <text class="flow-card__label" x="322" y="204" text-anchor="middle">
+            {`Battery${batteryState() === "charging" ? " · charging" : batteryState() === "discharging" ? " · discharging" : ""}`}
           </text>
         </g>
       </svg>
