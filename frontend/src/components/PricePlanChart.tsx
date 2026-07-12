@@ -157,7 +157,12 @@ export function PricePlanChart() {
         y: Math.max(PAD_T + 10, ySoc(visible[0].socPercent)),
         socPercent: visible[0].socPercent,
       },
-      min: { x: geo.x(minPoint.startMs + SLOT_MS / 2), y: ySoc(minPoint.socPercent), socPercent: minPoint.socPercent },
+      min: {
+        // clamp so the label never clips at the plot edges
+        x: Math.min(VIEW_W - PAD_R - 30, Math.max(PAD_L + 30, geo.x(minPoint.startMs + SLOT_MS / 2))),
+        y: ySoc(minPoint.socPercent),
+        socPercent: minPoint.socPercent,
+      },
       pointAtSlotStart: new Map(series.map(point => [point.startMs, point])),
     };
   });
