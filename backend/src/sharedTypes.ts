@@ -3,6 +3,14 @@ export type MqttValue = { time: number; value: number };
 /** Wire shape of the `elpatronState` ws accessor — whether the water heater element is powered. */
 export type ElpatronDisplayState = { heating: boolean | undefined; time: number };
 
+/** One thermometer's entry in the `temperatures` ws record (keyed by device id). */
+export type TemperatureReadingBroadcast = {
+  value: number;
+  time: number;
+  thermometer_device_id: string;
+  label: string;
+};
+
 export type ElpatronMode = "off" | "always_on" | "solar";
 
 /**

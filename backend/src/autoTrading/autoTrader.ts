@@ -1,7 +1,7 @@
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
-import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
+import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import { wait } from "../vendor/depictUtilishared.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
@@ -101,7 +101,9 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
           untrack(config).automatic_trading.price_area,
           untrack(config).automatic_trading,
           ctx.state
-        ).then(() => refreshStatus(ctx));
+        )
+          .then(() => refreshStatus(ctx))
+          .catch(e => warnLog("Settling recent days after the daily run failed", e));
         scheduleDaily();
       }, ms);
     };
@@ -150,7 +152,9 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
         untrack(config).automatic_trading.price_area,
         untrack(config).automatic_trading,
         ctx.state
-      ).then(() => refreshStatus(ctx));
+      )
+        .then(() => refreshStatus(ctx))
+        .catch(e => warnLog("Startup settlement catch-up failed", e));
     }, 90_000);
 
     scheduleDaily();

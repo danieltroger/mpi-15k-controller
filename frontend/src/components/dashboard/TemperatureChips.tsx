@@ -3,13 +3,13 @@ import { createMemo, For, Show } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { formatRelativeTime, useNowMs } from "~/helpers/format";
 
-type TemperatureReading = { value: number; time: number; thermometer_device_id: string; label: string };
+import type { TemperatureReadingBroadcast } from "../../../../backend/src/sharedTypes";
 
 /** A thermometer that hasn't reported for this long gets a gray dot — its value may be stale. */
 const STALE_AFTER_MS = 3 * 60_000;
 
 export function TemperatureChips() {
-  const [temperatures] = getBackendSyncedSignal<Record<string, TemperatureReading>>("temperatures");
+  const [temperatures] = getBackendSyncedSignal<Record<string, TemperatureReadingBroadcast>>("temperatures");
   const now = useNowMs(5000);
   const readings = createMemo(() => Object.values(temperatures() ?? {}).sort((a, b) => a.label.localeCompare(b.label)));
   const newestTime = createMemo(() => Math.max(0, ...readings().map(reading => reading.time)));

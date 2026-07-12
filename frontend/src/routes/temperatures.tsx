@@ -3,20 +3,11 @@ import { catchify } from "@depict-ai/utilishared/latest";
 import { isServer } from "solid-js/web";
 import { Title } from "@solidjs/meta";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
+import type { TemperatureReadingBroadcast } from "../../../backend/src/sharedTypes";
 import "./temperatures.scss";
 
 export default function Temperatures() {
-  const [get_temperatures] = getBackendSyncedSignal<
-    {
-      [key: string]: {
-        value: number;
-        time: number;
-        thermometer_device_id: string;
-        label: string;
-      };
-    },
-    true
-  >("temperatures", {
+  const [get_temperatures] = getBackendSyncedSignal<Record<string, TemperatureReadingBroadcast>, true>("temperatures", {
     loading: {
       value: 0,
       time: 0,
