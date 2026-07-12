@@ -1,4 +1,4 @@
-import type { PlanProjection } from "./planner.types.ts";
+import type { PlanProjection, SocSeriesPoint } from "./planner.types.ts";
 
 /**
  * Pure type declarations for the auto trader's persisted state and its published status. Kept free
@@ -40,6 +40,8 @@ export type AutoTraderState = {
     projection: PlanProjection;
     notes: string[];
     windows: StateWindow[];
+    /** Projected SOC per 15-min slot — the price/plan chart's battery line. Absent on old plans. */
+    soc_series?: SocSeriesPoint[];
   };
   /** Exactly the schedule entries the auto trader wrote (used to tell ours from the user's) */
   owned_entries: {

@@ -119,13 +119,35 @@ export function PricePlanChart() {
     return ticks;
   });
 
-  const minSocMarker = createMemo(() => {
+  // The plan's projected battery trajectory. SOC has its own natural 0–100% scale mapped to the
+  // plot height — direct labels on the line instead of a second printed axis.
+  const socLine = createMemo(() => {
     const geo = geometry();
-    const projection = status()?.last_plan?.projection;
-    if (!geo || !projection) return undefined;
-    const ms = +new Date(projection.minSocAt);
-    if (!isFinite(ms) || ms < geo.domainStart || ms > geo.domainEnd) return undefined;
-    return { x: geo.x(ms), label: `min SOC ${projection.minSocPercent}%` };
+    const series = status()?.last_plan?.soc_series;
+    if (!geo || !series || series.length < 2) return undefined;
+    const ySoc = (socPercent: number) => PAD_T + PLOT_H - (socPercent / 100) * PLOT_H;
+    const visible = series.filter(
+      point => point.startMs >= geo.domainStart && point.startMs + SLOT_MS <= geo.domainEnd
+    );
+    if (visible.length < 2) return undefined;
+    const path = visible
+      .map(
+        (point, index) =>
+          `${index === 0 ? "M" : "L"}${geo.x(point.startMs + SLOT_MS / 2).toFixed(1)} ${ySoc(point.socPercent).toFixed(1)}`
+      )
+      .join(" ");
+    let minPoint = visible[0];
+    for (const point of visible) if (point.socPercent < minPoint.socPercent) minPoint = point;
+    return {
+      path,
+      start: {
+        x: geo.x(visible[0].startMs + SLOT_MS / 2),
+        y: Math.max(PAD_T + 10, ySoc(visible[0].socPercent)),
+        socPercent: visible[0].socPercent,
+      },
+      min: { x: geo.x(minPoint.startMs + SLOT_MS / 2), y: ySoc(minPoint.socPercent), socPercent: minPoint.socPercent },
+      socAtSlotStart: new Map(series.map(point => [point.startMs, point.socPercent])),
+    };
   });
 
   const nowX = createMemo(() => {
@@ -148,9 +170,19 @@ export function PricePlanChart() {
       y: geo.y(slot.spot * 100),
       timeLabel: `${formatDayWord(slot.startMs, now())} ${formatClockTime(slot.startMs)}–${formatClockTime(slot.startMs + SLOT_MS)}`,
       priceLabel: `${formatSpotOre(slot.spot)}/kWh`,
+      socPercent: socLine()?.socAtSlotStart.get(slot.startMs),
       band,
     };
   });
+
+  // Band shade encodes the scheduled power — full inverter power renders darkest
+  const bandFillOpacity = (band: { kind: "sell" | "buy"; watts: number }) => {
+    const maxWatts =
+      (band.kind === "sell"
+        ? config()?.automatic_trading?.max_sell_power_watts
+        : config()?.automatic_trading?.max_buy_power_watts) ?? 15000;
+    return Math.min(0.5, 0.08 + 0.4 * (band.watts / Math.max(1, maxWatts)));
+  };
 
   const handlePointerMove = (event: PointerEvent) => {
     const geo = geometry();
@@ -169,6 +201,7 @@ export function PricePlanChart() {
         <span class="price-chart__legend" aria-hidden="true">
           <i class="price-chart__swatch price-chart__swatch--sell"></i> sell
           <i class="price-chart__swatch price-chart__swatch--buy"></i> buy
+          <span class="price-chart__legend-hint">darker = more power</span>
         </span>
         <span class="card-meta">
           <Show when={spotPrices()} fallback="öre/kWh">
@@ -206,7 +239,8 @@ export function PricePlanChart() {
                       width={band.width}
                       height={PLOT_H}
                       rx="3"
-                      class={`price-chart__band price-chart__band--${band.kind}`}
+                      fill={band.kind === "sell" ? "var(--battery)" : "var(--grid)"}
+                      fill-opacity={bandFillOpacity(band)}
                     />
                     <Show when={band.width > 55}>
                       <text
@@ -271,13 +305,22 @@ export function PricePlanChart() {
               />
               <path d={pricePath()!} class="price-chart__line" />
 
-              {/* min-SOC marker on the baseline */}
-              <Show when={minSocMarker()}>
-                {marker => (
+              {/* projected SOC trajectory (own 0–100% scale over the plot height, direct-labeled) */}
+              <Show when={socLine()}>
+                {soc => (
                   <g>
-                    <path d={`M${marker().x} ${PAD_T + PLOT_H + 2} l -4 6 h 8 Z`} fill="var(--ink-3)" />
-                    <text x={marker().x - 6} y={PAD_T + PLOT_H - 6} text-anchor="end" class="price-chart__minsoc">
-                      {marker().label}
+                    <path d={soc().path} class="price-chart__soc-casing" />
+                    <path d={soc().path} class="price-chart__soc" />
+                    <text
+                      x={soc().start.x + 5}
+                      y={soc().start.y - 7}
+                      class="price-chart__soc-label"
+                      text-anchor="start"
+                    >
+                      {`SOC ${Math.round(soc().start.socPercent)}%`}
+                    </text>
+                    <text x={soc().min.x} y={soc().min.y - 7} class="price-chart__soc-label" text-anchor="middle">
+                      {`min ${Math.round(soc().min.socPercent)}%`}
                     </text>
                   </g>
                 )}
@@ -318,6 +361,9 @@ export function PricePlanChart() {
                 >
                   <div class="price-chart__tooltip-time">{hover().timeLabel}</div>
                   <div class="price-chart__tooltip-price">{hover().priceLabel}</div>
+                  <Show when={hover().socPercent !== undefined}>
+                    <div class="price-chart__tooltip-soc">SOC {hover().socPercent}%</div>
+                  </Show>
                   <Show when={hover().band}>
                     {band => (
                       <div class={`price-chart__tooltip-plan price-chart__tooltip-plan--${band().kind}`}>

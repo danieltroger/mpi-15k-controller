@@ -76,7 +76,10 @@ function SocLedgers() {
       />
       <Show when={ahLedgerConfig()}>
         {ledger => (
-          <DiagRow label="Ah ledger parameters" value={`${ledger().capacity_ah} Ah · drain ${ledger().drain_a} A`} />
+          <DiagRow
+            label="Ah ledger parameters"
+            value={`${ledger().capacity_ah.toFixed(1)} Ah · drain ${ledger().drain_a.toFixed(2)} A`}
+          />
         )}
       </Show>
       <DiagRow label="Assumed capacity" value={dashUnless(assumedCapacity(), formatWhAsKwh)} />
