@@ -73,6 +73,16 @@
   font-size: 0.9rem;
 }
 
+.buy-sell-config__unit {
+  color: var(--ink-3);
+}
+
+.buy-sell-config__help {
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
 .buy-sell-config__input {
   padding: 0.45rem 0.5rem;
   border: 1px solid var(--line);
@@ -199,6 +209,75 @@
 .buy-sell-config__earn {
   color: var(--ok-text);
   font-variant-numeric: tabular-nums;
+}
+
+.buy-sell-config__td-kind {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.buy-sell-config__kind {
+  display: inline-block;
+  font-weight: 650;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.buy-sell-config__kind--sell {
+  background: var(--chip-ok-bg);
+  color: var(--ok-text);
+}
+
+.buy-sell-config__kind--buy {
+  background: var(--band-buy);
+  color: var(--buy-text);
+}
+
+.buy-sell-config__kind-inline {
+  margin: 0 0.3em;
+  font-size: 0.8em;
+  color: var(--ok-text);
+  white-space: nowrap;
+}
+
+.buy-sell-config__planned {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--ok-text);
+  white-space: nowrap;
+}
+
+.buy-sell-config__add-btns {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.buy-sell-config__savebar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--battery);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+}
+
+.buy-sell-config__savebar-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.buy-sell-config__savebar-actions {
+  display: flex;
+  gap: 0.6rem;
 }
 
 .buy-sell-config__sr-only {
