@@ -30,6 +30,8 @@ import { InfluxClientProvider } from "./utilities/InfluxClientProvider.ts";
 import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 import { latestSpotPrices } from "./autoTrading/priceService.ts";
 import { pollSpotPricesForFrontend } from "./autoTrading/spotPricePolling.ts";
+import { alertOnMainCrash, createAlertManager } from "./alerting/alertManager.ts";
+import { startAlertRules } from "./alerting/alertRules.ts";
 
 while (true) {
   await new Promise<void>(r => {
@@ -44,6 +46,8 @@ while (true) {
         },
         e => {
           errorLog("Main crashed, restarting in 10s", e);
+          // Also escalates: a second crash within 30 min pages as P1 (crash loop = controller down)
+          alertOnMainCrash(e);
           dispose();
           r();
         }
@@ -56,7 +60,6 @@ while (true) {
 function main() {
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
-  // TODO: Alerts when battery overheats / program restarts
   // TODO: add typecheck CI pipeline
   // TODO: when battery completely empty and essentially disconnected for everything except charging, don't count inverter idle consumption as coming from the battery
   const owner = getOwner()!;
@@ -157,6 +160,24 @@ function main() {
                       );
                     });
 
+                    const { mqttValues } = useFromMqttProvider();
+                    const alertManager = createAlertManager(config);
+                    catchError(
+                      () =>
+                        startAlertRules({
+                          config,
+                          manager: alertManager,
+                          temperatures,
+                          mqttValues,
+                          averageSOC: clampedAverageSOC,
+                          currentBatteryPower: currentPower,
+                          autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
+                        }),
+                      // Alerting going down must never take the controller with it — and this failure
+                      // is itself worth a push, which the errorLog hook provides.
+                      e => errorLog("Alert rules crashed — alerting rules disabled until restart", e)
+                    );
+
                     const isChargingOuterScope = createMemo(() => {
                       if (!hasCredentials()) {
                         return errorLog(
@@ -216,7 +237,6 @@ function main() {
 
                       return isCharging;
                     });
-                    const { mqttValues } = useFromMqttProvider();
                     // Memo (not effect) so the returned live heater state can be exposed over the ws
                     const elpatronReturn = createMemo(() => {
                       if (elpatronSwitchingErrored()) return;
@@ -245,10 +265,21 @@ function main() {
                             if (!trader) return "auto trader not running";
                             return await trader.clearTradingVetoes();
                           },
+                          send_test_alert: async () => {
+                            const record = await alertManager.raise({
+                              key: "test-alert",
+                              severity: "P2",
+                              title: "Test alert",
+                              message:
+                                "Manual test from the dashboard — if you can read this on your phone, alerting works",
+                            });
+                            return `delivery: ${record.delivery}${record.detail ? ` (${record.detail})` : ""}`;
+                          },
                         },
                         exposedAccessors: {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                           spotPrices: latestSpotPrices,
+                          recentAlerts: alertManager.recentAlerts,
                           energyAddedSinceEmpty,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,
