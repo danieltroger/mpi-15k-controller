@@ -24,5 +24,8 @@ jobs:
       - name: Install dependencies
         run: yarn install
 
-      - name: Run typecheck
+      - name: Typecheck backend
         run: yarn typecheck
+
+      - name: Typecheck frontend
+        run: yarn tsc -p frontend/tsconfig.json --noEmit

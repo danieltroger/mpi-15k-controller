@@ -60,7 +60,6 @@ while (true) {
 function main() {
   // TODO: consider how much sun is shining in when full current if-statement
   // TODO: limit discharge current as voltage gets lower and limit charge current as voltage gets higher
-  // TODO: add typecheck CI pipeline
   // TODO: when battery completely empty and essentially disconnected for everything except charging, don't count inverter idle consumption as coming from the battery
   const owner = getOwner()!;
   const [configResource] = createResource(() => get_config_object(owner));
