@@ -317,6 +317,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const socSeries = slots.map((slot, index) => ({
     startMs: slot.startMs,
     socPercent: Math.round((current.socAfterSlot[index] / cap) * 1000) / 10,
+    autoExportW: current.autoExportWPerSlot[index],
   }));
 
   return { sells, buys, notes, projection, socSeries };

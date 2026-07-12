@@ -33,6 +33,11 @@
   border: 1px solid var(--grid);
 }
 
+.price-chart__swatch--auto {
+  background: transparent;
+  border: 1.5px dashed var(--solar);
+}
+
 .price-chart__legend-hint {
   margin-left: 9px;
   color: var(--ink-3);
@@ -126,6 +131,14 @@
   stroke-linecap: round;
 }
 
+.price-chart__soc-auto {
+  fill: none;
+  stroke: var(--solar);
+  stroke-width: 2.2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+}
+
 .price-chart__soc-label {
   font-family: var(--mono);
   font-size: 10px;
@@ -188,6 +201,12 @@
 .price-chart__tooltip-soc {
   font-size: 11.5px;
   color: var(--ok-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.price-chart__tooltip-auto {
+  font-size: 11.5px;
+  color: var(--warn-text);
   font-variant-numeric: tabular-nums;
 }
 
