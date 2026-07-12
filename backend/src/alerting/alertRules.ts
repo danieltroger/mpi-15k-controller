@@ -90,6 +90,28 @@ export function startAlertRules(ctx: {
     );
   });
 
+  // ——— cooling outlet air: the early ventilation alarm (see cooling_outlet_temp_p2_celsius docs) ———
+  const coolingOutletProbes = createMemo(() =>
+    Object.values(ctx.temperatures())
+      .map(reading => reading())
+      .filter(
+        (reading): reading is NonNullable<typeof reading> => !!reading && reading.label.startsWith("cooling_outlet")
+      )
+  );
+  const ventilationAlert = edgeAlert("ventilation", "P2", { resolveNotice: true });
+  createEffect(() => {
+    const probes = coolingOutletProbes();
+    if (!probes.length) return;
+    const hottest = probes.reduce((a, b) => (a.value >= b.value ? a : b));
+    const threshold = alerting().cooling_outlet_temp_p2_celsius;
+    ventilationAlert.update(
+      thresholdState(hottest.value, threshold, threshold - 3),
+      "Inverter room getting hot",
+      () =>
+        `${hottest.label} at ${round1(hottest.value)}°C (P2 threshold ${threshold}°C, normal peak ~34°C) — check the door/ventilation before it reaches the 100°C cutoff`
+    );
+  });
+
   // ——— battery voltage window (16s LiFePO4: cells tolerate down to 2.5 V/cell = 40 V) ———
   const undervoltAlert = edgeAlert("battery-undervoltage", "P2", { resolveNotice: true });
   const overvoltAlert = edgeAlert("battery-overvoltage", "P1", { resolveNotice: true });

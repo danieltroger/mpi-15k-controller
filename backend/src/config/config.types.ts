@@ -85,6 +85,13 @@ export type AlertingConfig = {
   battery_temp_p1_celsius: number;
   /** P1 when component_max_temperature reaches this — the inverter hard-shuts-off at 100 °C */
   inverter_temp_p1_celsius: number;
+  /**
+   * P2 when the hottest cooling_outlet_* probe reaches this — the early ventilation alarm. In the
+   * 2025-06-30 shutdown (door + ventilation accidentally closed) outlets hit 39–41 °C vs a 34 °C
+   * normal-summer peak, and would have crossed 36 °C ~80 min before the 100 °C cutoff. The
+   * external-inlet probe sat flat at 24.5 °C through it, so it can't be the signal.
+   */
+  cooling_outlet_temp_p2_celsius: number;
   /** P2 below this pack voltage (16s LiFePO4 tolerates down to 2.5 V/cell = 40 V) */
   battery_undervoltage_p2_volts: number;
   /** P1 above this pack voltage (3.65 V/cell = 58.4 V is the charge ceiling) */

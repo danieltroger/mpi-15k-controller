@@ -18,6 +18,7 @@ export const default_config: Config = {
     site_name: "",
     battery_temp_p1_celsius: 45,
     inverter_temp_p1_celsius: 97,
+    cooling_outlet_temp_p2_celsius: 36,
     battery_undervoltage_p2_volts: 46,
     battery_overvoltage_p1_volts: 58.8,
     charging_battery_temp_p1_celsius: 1,
