@@ -10,6 +10,27 @@ import type { Config } from "./config.types.ts";
 const INVERTER_NAMEPLATE_AC_WATTS = 15000;
 
 export const default_config: Config = {
+  alerting: {
+    enabled: true,
+    dry_run: true,
+    pushover_app_token: "",
+    pushover_recipient_key: "",
+    site_name: "",
+    battery_temp_p1_celsius: 45,
+    inverter_temp_p1_celsius: 97,
+    battery_undervoltage_p2_volts: 46,
+    battery_overvoltage_p1_volts: 58.8,
+    charging_battery_temp_p1_celsius: 1,
+    stale_mqtt_p2_minutes: 5,
+    stale_temperatures_p2_minutes: 10,
+    grid_out_below_volts: 100,
+    grid_out_p2_seconds: 60,
+    error_log_p2: true,
+    digest_p3: true,
+    cooldown_minutes: 30,
+    max_pushes_per_hour: 20,
+    startup_grace_seconds: 180,
+  },
   automatic_trading: {
     enabled: false,
     price_area: "SE3",
@@ -148,17 +169,17 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but automatic_trading, elpatron_switching and soc_calculations
- * merge one level deeper: knobs get added over time, and a config.json written before a knob
- * existed must still pick up its default (the planner, the elpatron load model and the SOC
- * ledgers do raw arithmetic on these — a missing knob would silently NaN every projection).
- * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
- * predating it still boots with the validated defaults.
+ * Top-level keys merge shallowly, but alerting, automatic_trading, elpatron_switching and
+ * soc_calculations merge one level deeper: knobs get added over time, and a config.json written
+ * before a knob existed must still pick up its default (the planner, the elpatron load model and
+ * the SOC ledgers do raw arithmetic on these — a missing knob would silently NaN every
+ * projection; a missing alerting threshold would silently never alert).
  */
 function mergeWithDefaults(partial: Partial<Config>): Config {
   return {
     ...default_config,
     ...partial,
+    alerting: { ...default_config.alerting, ...partial.alerting },
     automatic_trading: { ...default_config.automatic_trading, ...partial.automatic_trading },
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
     soc_calculations: {
