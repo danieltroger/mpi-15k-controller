@@ -36,7 +36,9 @@ async function queryLastAnchorMarker(
 ): Promise<number | undefined> {
   if (!database) return undefined;
   try {
-    const [response] = await database.query(`SELECT last("value") FROM "${SOC_ANCHORS_MEASUREMENT}" WHERE "type" = '${type}'`);
+    const [response] = await database.query(
+      `SELECT last("value") FROM "${SOC_ANCHORS_MEASUREMENT}" WHERE "type" = '${type}'`
+    );
     const timeOfLastMarker = (response as { time?: { getNanoTime: () => number } })?.time?.getNanoTime?.();
     if (timeOfLastMarker !== undefined && !isNaN(timeOfLastMarker)) {
       return Math.round(timeOfLastMarker / 1000 / 1000);

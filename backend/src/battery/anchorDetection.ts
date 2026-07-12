@@ -108,5 +108,7 @@ function publishAnchorMarker(client: AsyncMqttClient | undefined, type: AnchorTy
   }
   // Line protocol with a tag so Grafana can split by kind; markers are rare, so a failure is worth a log.
   const line = `${SOC_ANCHORS_MEASUREMENT},type=${type} value=1`;
-  client.publish(SOC_ANCHORS_MEASUREMENT, line).catch(error => warnLog("Failed to publish soc_anchors marker", type, error));
+  client
+    .publish(SOC_ANCHORS_MEASUREMENT, line)
+    .catch(error => warnLog("Failed to publish soc_anchors marker", type, error));
 }

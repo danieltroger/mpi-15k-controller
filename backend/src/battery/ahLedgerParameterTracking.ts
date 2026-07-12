@@ -3,7 +3,6 @@ import type { get_config_object } from "../config/config.ts";
 import { computeParameterUpdates, type LedgerAnchor } from "./ahLedgerMath.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 
-
 /**
  * Feeds a just-completed anchor→anchor span to the pure EMA logic, emits its log lines, and persists any
  * accepted drain/capacity update into config (like the Wh fitter persists current_state). Updates apply

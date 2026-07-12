@@ -6,7 +6,6 @@ import { socAnchorRestore } from "./socAnchorRestore.ts";
 import { ahLedger } from "./ahLedger.ts";
 import type { LedgerAnchor } from "./ahLedgerMath.ts";
 
-
 /**
  * Wires the Ah ledger together: live edge detection + marker publishing, cross-restart restore from
  * soc_anchors (voltage-based fallback for full/empty), the single "latest anchor of any type" the ledger
