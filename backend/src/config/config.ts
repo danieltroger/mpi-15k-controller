@@ -93,6 +93,20 @@ export const default_config: Config = {
       capacity: 19.2 * 12 * 3 * 16,
       parasitic_consumption: 315,
     },
+    // Validated offline on 3 months of hall-sensor-2 data (Phase 0). drain_a is seasonal (~0.7 A in
+    // spring, ~2.8 A in summer) which is why it is tracked online rather than hard-coded.
+    ah_ledger: {
+      capacity_ah: 1240,
+      drain_a: 2.8,
+      v_discharge: 51.63,
+      v_charge: 53.79,
+      drain_ema_tau_days: 7,
+      soft_empty: {
+        voltage: 49,
+        max_abs_amps: 30,
+        soc_percent: 0.4,
+      },
+    },
   },
   current_measuring: {
     table: "current_values",
@@ -134,10 +148,12 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but automatic_trading and elpatron_switching merge one level
- * deeper: knobs get added over time, and a config.json written before a knob existed must still
- * pick up its default (the planner and the elpatron load model do raw arithmetic on these — a
- * missing knob would silently NaN projections).
+ * Top-level keys merge shallowly, but automatic_trading, elpatron_switching and soc_calculations
+ * merge one level deeper: knobs get added over time, and a config.json written before a knob
+ * existed must still pick up its default (the planner, the elpatron load model and the SOC
+ * ledgers do raw arithmetic on these — a missing knob would silently NaN every projection).
+ * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
+ * predating it still boots with the validated defaults.
  */
 function mergeWithDefaults(partial: Partial<Config>): Config {
   return {
@@ -145,6 +161,22 @@ function mergeWithDefaults(partial: Partial<Config>): Config {
     ...partial,
     automatic_trading: { ...default_config.automatic_trading, ...partial.automatic_trading },
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
+    soc_calculations: {
+      ...default_config.soc_calculations,
+      ...partial.soc_calculations,
+      current_state: {
+        ...default_config.soc_calculations.current_state,
+        ...partial.soc_calculations?.current_state,
+      },
+      ah_ledger: {
+        ...default_config.soc_calculations.ah_ledger,
+        ...partial.soc_calculations?.ah_ledger,
+        soft_empty: {
+          ...default_config.soc_calculations.ah_ledger.soft_empty,
+          ...partial.soc_calculations?.ah_ledger?.soft_empty,
+        },
+      },
+    },
   };
 }
 

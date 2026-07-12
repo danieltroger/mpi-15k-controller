@@ -8,7 +8,7 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
 
 export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
-  const { averageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
+  const { clampedAverageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_buying.schedule),
@@ -49,7 +49,7 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
   let hitSOCLimit = false;
 
   const powerFromSchedule = createMemo(() => {
-    const soc = averageSOC();
+    const soc = clampedAverageSOC();
     if (soc === undefined) return;
     const { only_buy_below_soc, start_buying_again_below_soc } = config().scheduled_power_buying;
     const limitToUse = hitSOCLimit ? start_buying_again_below_soc : only_buy_below_soc;

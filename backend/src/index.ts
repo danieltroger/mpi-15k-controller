@@ -114,7 +114,13 @@ function main() {
                   );
                 });
                 const currentPower = createMemo(() => currentReturn()?.sensor2.calculatedPowerFromAmpMeter?.());
-                const batteryValues = useBatteryValues(configResourceValue, currentPower);
+                const batteryCurrentAmps = createMemo(() => currentReturn()?.sensor2.calculatedCurrentFromAmpMeter?.());
+                const smoothedBatteryCurrentAmps = createMemo(() => currentReturn()?.sensor2.smoothedCurrent?.());
+                const batteryValues = useBatteryValues(configResourceValue, {
+                  currentPower,
+                  batteryCurrentAmps,
+                  smoothedBatteryCurrentAmps,
+                });
                 const {
                   totalLastEmpty,
                   totalLastFull,
@@ -124,6 +130,8 @@ function main() {
                   socSinceFull,
                   assumedParasiticConsumption,
                   assumedCapacity,
+                  clampedAverageSOC,
+                  socAh,
                 } = batteryValues;
 
                 return BatteryValuesProvider({
@@ -236,6 +244,10 @@ function main() {
                           voltageSagMillivoltsAveraged2: () => currentReturn()?.sensor2.voltageSagMillivoltsAveraged(),
                           socSinceEmpty,
                           socSinceFull,
+                          // Frontend-facing SOC is clamped to [0,100]; the unclamped drift only goes to InfluxDB.
+                          averageSOC: clampedAverageSOC,
+                          // Shadow Ah ledger, unclamped — diagnostics display only, nothing consumes it.
+                          socAh,
                           assumedCapacity,
                           assumedParasiticConsumption,
                           isCharging: () => isChargingOuterScope()?.()?.(),

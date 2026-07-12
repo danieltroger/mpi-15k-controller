@@ -14,6 +14,7 @@ export default function Home() {
   const [hasHydrated, setHasHydrated] = createSignal(false);
   const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
   const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
+  const [socAh] = getBackendSyncedSignal<number>("socAh");
   const [voltageSagMillivoltsRaw] = getBackendSyncedSignal<{ value: number; time: number }>("voltageSagMillivoltsRaw");
   const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
   const [voltageSagMillivoltsRaw2] = getBackendSyncedSignal<{ value: number; time: number }>(
@@ -74,6 +75,10 @@ export default function Home() {
         </h4>
         Since full: {socSinceFull()}%<br />
         Since empty: {socSinceEmpty()}%<br />
+        <h4>Ah ledger (shadow, diagnostics)</h4>
+        SOC: {socAh()?.toFixed(2)}%<br />
+        capacity_ah: {config()?.soc_calculations?.ah_ledger?.capacity_ah}Ah, drain_a:{" "}
+        {config()?.soc_calculations?.ah_ledger?.drain_a}A<br />
         <br />
         <h4>Battery current measuring</h4>
         Raw: {voltageSagMillivoltsRaw()?.value}mv

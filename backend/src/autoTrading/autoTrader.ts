@@ -30,7 +30,8 @@ import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.t
 type TraderCtx = {
   config: Accessor<Config>;
   setConfig: Awaited<ReturnType<typeof get_config_object>>[1];
-  averageSOC: Accessor<number | undefined>;
+  /** SOC clamped to [0,100] — the planner must never project from a nonsensical <0 / >100 start. */
+  clampedAverageSOC: Accessor<number | undefined>;
   assumedParasiticConsumption: Accessor<number>;
   influxClient: ReturnType<typeof useInfluxClient>;
   enabled: Accessor<boolean>;
@@ -50,7 +51,7 @@ type TraderCtx = {
 
 export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnType<typeof get_config_object>> }) {
   const [config, setConfig] = configSignal;
-  const { averageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
+  const { clampedAverageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
   const [status, setStatus] = createSignal<AutoTraderStatus>({ enabled: false, note: "starting" });
   const [nextDailyRunAt, setNextDailyRunAt] = createSignal<string | undefined>();
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
@@ -58,7 +59,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
   const ctx: TraderCtx = {
     config,
     setConfig,
-    averageSOC,
+    clampedAverageSOC,
     assumedParasiticConsumption,
     influxClient: useInfluxClient(),
     enabled,
@@ -467,10 +468,10 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
     }
     if (ctx.flags.aborted) return "aborted";
 
-    let soc = untrack(ctx.averageSOC);
+    let soc = untrack(ctx.clampedAverageSOC);
     for (let i = 0; i < 30 && soc === undefined && !ctx.flags.aborted; i++) {
       await wait(10_000);
-      soc = untrack(ctx.averageSOC);
+      soc = untrack(ctx.clampedAverageSOC);
     }
     if (soc === undefined) throw new Error("SOC not available — cannot plan");
     if (ctx.flags.aborted) return "aborted";
@@ -576,7 +577,7 @@ async function runGuard(ctx: TraderCtx) {
   const startedAt = Date.now();
   debugLog("Auto trader guard: tick");
   try {
-    const soc = untrack(ctx.averageSOC);
+    const soc = untrack(ctx.clampedAverageSOC);
     if (soc === undefined) return;
     const priceArea = untrack(ctx.config).automatic_trading.price_area;
     // For a breach decision slightly stale prices beat no guard run at all

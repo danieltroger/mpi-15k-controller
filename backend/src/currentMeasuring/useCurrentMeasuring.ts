@@ -3,6 +3,7 @@ import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type 
 import { errorLog } from "../utilities/logging.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { useAverageCurrent } from "./useAverageCurrent.ts";
+import { useSmoothedCurrent } from "./useSmoothedCurrent.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import type { Config } from "../config/config.types.ts";
 
@@ -27,23 +28,39 @@ export function useCurrentMeasuring(config: Accessor<Config>, sensor2: boolean) 
   );
 
   const averagedMeasurement = useAverageCurrent({ rawMeasurement, config });
-  const calculatedPowerFromAmpMeter = createMemo(() => {
+  // Calibrated amps (positive = charging). Split out of the power calc so the Ah ledger and anchor
+  // detection can consume the current directly instead of dividing power back by voltage.
+  const calculatedCurrentFromAmpMeter = createMemo(() => {
     const measurementValue = rawMeasurement();
-    const batteryVoltage = reactiveBatteryVoltage();
-    if (!measurementValue || batteryVoltage == undefined) return;
+    if (!measurementValue) return;
     const calculatedCurrent = (measurementValue.value - zeroCurrentMillivolts()) / milliVoltsPerAmpere();
-    return { value: calculatedCurrent * batteryVoltage, time: measurementValue.time };
+    return { value: calculatedCurrent, time: measurementValue.time };
+  });
+  const calculatedPowerFromAmpMeter = createMemo(() => {
+    const current = calculatedCurrentFromAmpMeter();
+    const batteryVoltage = reactiveBatteryVoltage();
+    if (!current || batteryVoltage == undefined) return;
+    return { value: current.value * batteryVoltage, time: current.time };
   });
   const averagedPower = useAverageCurrent({ rawMeasurement: calculatedPowerFromAmpMeter, config });
+  const averagedCurrent = useAverageCurrent({ rawMeasurement: calculatedCurrentFromAmpMeter, config });
+  // 1-min trailing mean for anchor detection (full/soft-empty), immune to single-sample ADC noise.
+  const smoothedCurrent = useSmoothedCurrent({ rawCurrent: calculatedCurrentFromAmpMeter });
 
   createEffect(() => reportToMqtt(rawMeasurement()?.value, config, `raw_voltage_mv${sensor2 ? "_2" : ""}`));
   createEffect(() => reportToMqtt(averagedMeasurement(), config, `voltage_mv_averaged${sensor2 ? "_2" : ""}`));
   createEffect(() => reportToMqtt(averagedPower(), config, `calculated_power${sensor2 ? "_2" : ""}`));
+  // Sensor 1 is unchanged — only sensor 2 (the battery current truth source) publishes calculated_current_2.
+  if (sensor2) {
+    createEffect(() => reportToMqtt(averagedCurrent(), config, "calculated_current_2"));
+  }
 
   return {
     voltageSagMillivoltsRaw: rawMeasurement,
     voltageSagMillivoltsAveraged: averagedMeasurement,
     calculatedPowerFromAmpMeter,
+    calculatedCurrentFromAmpMeter,
+    smoothedCurrent,
   };
 }
 
