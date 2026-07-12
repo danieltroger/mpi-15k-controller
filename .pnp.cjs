@@ -38,7 +38,6 @@ const RAW_RUNTIME_STATE =
       [null, {\
         "packageLocation": "./",\
         "packageDependencies": [\
-          ["@depict-ai/plp-styling", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20"],\
           ["@depict-ai/ui", "npm:4.8.22"],\
           ["@depict-ai/utilishared", "npm:2.4.7"],\
           ["@types/node", "npm:20.12.8"],\
@@ -656,19 +655,6 @@ const RAW_RUNTIME_STATE =
           ["@depict-ai/plp-styling", "virtual:7e0f5cd52b446e0d3993fef7eaa323a29bf7f81768c583a8e6b580548d30bca57911bc7361b0493feb49f7a06eeb0655133f00a377e644aaf822309aa8ddfe4b#npm:4.4.20"],\
           ["@types/sass", null],\
           ["sass", null]\
-        ],\
-        "packagePeers": [\
-          "@types/sass",\
-          "sass"\
-        ],\
-        "linkType": "HARD"\
-      }],\
-      ["virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20", {\
-        "packageLocation": "./.yarn/__virtual__/@depict-ai-plp-styling-virtual-7c1be80ce2/0/cache/@depict-ai-plp-styling-npm-4.4.20-344c125ff2-8ddce69896.zip/node_modules/@depict-ai/plp-styling/",\
-        "packageDependencies": [\
-          ["@depict-ai/plp-styling", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20"],\
-          ["@types/sass", null],\
-          ["sass", "npm:1.76.0"]\
         ],\
         "packagePeers": [\
           "@types/sass",\
@@ -4123,7 +4109,6 @@ const RAW_RUNTIME_STATE =
       ["workspace:frontend", {\
         "packageLocation": "./frontend/",\
         "packageDependencies": [\
-          ["@depict-ai/plp-styling", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20"],\
           ["@depict-ai/ui", "npm:4.8.22"],\
           ["@depict-ai/utilishared", "npm:2.4.7"],\
           ["@modular-forms/solid", "virtual:7ea5ab069f58e19052311c7632591afb7765aee54f33e8de66fb39138d81e1eb0ce8d121908be110b37ba8a69cc50c43ba49ed08c6143c7d2abd7ec8c65da564#npm:0.25.1"],\
@@ -6595,7 +6580,6 @@ const RAW_RUNTIME_STATE =
       ["workspace:.", {\
         "packageLocation": "./",\
         "packageDependencies": [\
-          ["@depict-ai/plp-styling", "virtual:dc3fc578bfa5e06182a4d2be39ede0bc5b74940b1ffe0d70c26892ab140a4699787750fba175dc306292e80b4aa2c8c5f68c2a821e69b2c37e360c0dff36ff66#npm:4.4.20"],\
           ["@depict-ai/ui", "npm:4.8.22"],\
           ["@depict-ai/utilishared", "npm:2.4.7"],\
           ["@types/node", "npm:20.12.8"],\

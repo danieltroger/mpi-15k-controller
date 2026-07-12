@@ -47,6 +47,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
       buys: [],
       notes: ["No price data in the future — nothing to plan"],
       projection: emptyProjection(input),
+      socSeries: [],
     };
   }
   // Conservative valuation for the unpriced constraint tail: median of the last priced day
@@ -313,7 +314,13 @@ export function generatePlan(input: PlannerInput): PlanResult {
     baselineRevenueSek: Math.round(base.revenueSek * 10) / 10,
   };
 
-  return { sells, buys, notes, projection };
+  const socSeries = slots.map((slot, index) => ({
+    startMs: slot.startMs,
+    socPercent: Math.round((current.socAfterSlot[index] / cap) * 1000) / 10,
+    autoExportW: current.autoExportWPerSlot[index],
+  }));
+
+  return { sells, buys, notes, projection, socSeries };
 }
 
 /**

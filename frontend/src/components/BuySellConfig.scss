@@ -1,16 +1,20 @@
 .buy-sell-page {
-  box-sizing: border-box;
-  max-width: 1280px;
-  width: 100%;
   min-width: 0;
-  padding: 0 1rem 2rem;
   overflow-x: clip;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  h1 {
+    margin-bottom: 0;
+  }
 }
 
 .buy-sell-config {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
 .buy-sell-config__loading {
@@ -27,10 +31,11 @@
 .buy-sell-config__section {
   box-sizing: border-box;
   min-width: 0;
-  border: 1px solid light-dark(#ccc, #444);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   padding: 1rem 1.25rem;
-  background: light-dark(#fafafa, #111);
+  background: var(--card);
 }
 
 .buy-sell-config__section h2 {
@@ -70,12 +75,17 @@
 
 .buy-sell-config__input {
   padding: 0.45rem 0.5rem;
-  border: 1px solid light-dark(#333, #ccc);
-  border-radius: 4px;
-  background: light-dark(white, black);
-  color: light-dark(black, white);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
   font: inherit;
+  font-variant-numeric: tabular-nums;
   max-width: 100%;
+
+  &:hover {
+    border-color: var(--ink-3);
+  }
 }
 
 .buy-sell-config__table-wrap {
@@ -96,7 +106,7 @@
 
 .buy-sell-config__table th,
 .buy-sell-config__table td {
-  border: 1px solid light-dark(#ddd, #333);
+  border: 1px solid var(--line-soft);
   padding: 0.4rem 0.5rem;
   vertical-align: top;
   min-width: 0;
@@ -125,7 +135,9 @@
 
 .buy-sell-config__table th {
   text-align: left;
-  background: light-dark(#eee, #1a1a1a);
+  background: var(--line-soft);
+  font-size: 0.8rem;
+  color: var(--ink-2);
 }
 
 .buy-sell-config__meta {
@@ -141,21 +153,30 @@
 
 .buy-sell-config__btn {
   padding: 0.5rem 1rem;
-  border-radius: 4px;
+  border-radius: 6px;
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
-  border: 1px solid light-dark(black, white);
+  border: 1px solid var(--line);
 }
 
 .buy-sell-config__btn--primary {
-  background: light-dark(#1a5f1a, #3d8c3d);
-  color: light-dark(white, white);
+  background: var(--battery);
+  color: white;
   border-color: transparent;
+
+  &:hover {
+    filter: brightness(1.06);
+  }
 }
 
 .buy-sell-config__btn--secondary {
-  background: light-dark(white, black);
-  color: light-dark(black, white);
+  background: var(--card);
+  color: var(--ink);
+
+  &:hover {
+    border-color: var(--ink-3);
+  }
 }
 
 .buy-sell-config__btn--small {
@@ -165,14 +186,19 @@
 
 .buy-sell-config__field-error {
   display: block;
-  color: light-dark(#a40000, #ff6b6b);
+  color: var(--crit);
   font-size: 0.8rem;
   margin-top: 0.25rem;
 }
 
 .buy-sell-config__form-error {
-  color: light-dark(#a40000, #ff6b6b);
+  color: var(--crit);
   margin: 0;
+}
+
+.buy-sell-config__earn {
+  color: var(--ok-text);
+  font-variant-numeric: tabular-nums;
 }
 
 .buy-sell-config__sr-only {

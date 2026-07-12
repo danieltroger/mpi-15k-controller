@@ -29,15 +29,21 @@ let gpioReadCache: { heatingPiIp: string; atMs: number; value: boolean | undefin
  * Whether the element GPIO is currently on (the pin is active-low: raw 0 = element powered).
  * Returns undefined when the heating pi doesn't answer in time — ensure_sent retries forever, and
  * a plan run must not hang on an unreachable pi in another building. Results (including failures)
- * are cached for 10 minutes so the guard's 15-min ticks don't hammer or stall on the pi.
+ * are cached (default 10 minutes) so the guard's 15-min ticks don't hammer or stall on the pi;
+ * the frontend's live state poll passes a shorter maxAge.
  */
-export async function readElpatronGpioIsOn(heatingPiIp: string): Promise<boolean | undefined> {
-  if (gpioReadCache && gpioReadCache.heatingPiIp === heatingPiIp && Date.now() - gpioReadCache.atMs < 10 * 60_000) {
+export async function readElpatronGpioIsOn(heatingPiIp: string, maxAgeMs = 10 * 60_000): Promise<boolean | undefined> {
+  if (gpioReadCache && gpioReadCache.heatingPiIp === heatingPiIp && Date.now() - gpioReadCache.atMs < maxAgeMs) {
     return gpioReadCache.value;
   }
   const value = await readElpatronGpioUncached(heatingPiIp);
   gpioReadCache = { heatingPiIp, atMs: Date.now(), value };
   return value;
+}
+
+/** After we wrote the GPIO ourselves the state is known — spare the next reader a roundtrip. */
+export function primeElpatronGpioCache(heatingPiIp: string, isOn: boolean) {
+  gpioReadCache = { heatingPiIp, atMs: Date.now(), value: isOn };
 }
 
 async function readElpatronGpioUncached(heatingPiIp: string): Promise<boolean | undefined> {

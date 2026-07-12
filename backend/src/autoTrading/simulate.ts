@@ -36,6 +36,7 @@ export function simulate(
   let importWh = 0;
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
+  const autoExportWPerSlot: number[] = new Array(slots.length).fill(0);
   // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
   // so the first sell_ramp_minutes of every (re)start deliver reduced power.
   let sellRunMinutes = 0;
@@ -105,6 +106,7 @@ export function simulate(
       // Battery full: surplus PV flows to the grid by itself (solar-mode feeding)
       const overflowInBatteryWh = socWh - cap;
       autoExportWh += overflowInBatteryWh / knobs.charge_efficiency;
+      autoExportWPerSlot[i] = Math.round(overflowInBatteryWh / knobs.charge_efficiency / slot.durationH);
       revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
       socWh = cap;
     }
@@ -142,6 +144,7 @@ export function simulate(
     importWh,
     boughtWh,
     socAfterSlot,
+    autoExportWPerSlot,
   };
 }
 

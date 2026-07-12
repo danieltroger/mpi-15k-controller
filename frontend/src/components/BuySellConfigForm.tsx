@@ -109,7 +109,14 @@ function BuySellFormInner(props: {
     <Form
       class="buy-sell-config"
       onSubmit={async values => {
-        const next = diffMergeFormIntoConfig(pristine, values as BuySellFormData, props.getConfig());
+        // modular-forms hands over an empty FieldArray as undefined — normalize before merging
+        const raw = values as BuySellFormData;
+        const normalized: BuySellFormData = {
+          ...raw,
+          buyingRows: raw.buyingRows ?? [],
+          sellingRows: raw.sellingRows ?? [],
+        };
+        const next = diffMergeFormIntoConfig(pristine, normalized, props.getConfig());
         const ok = await props.setConfig(next);
         const owner = getOwner()!;
         if (ok) {

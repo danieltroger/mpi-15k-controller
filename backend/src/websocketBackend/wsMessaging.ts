@@ -2,6 +2,7 @@ import { type Accessor, createEffect, type Owner, runWithOwner, type Signal, unt
 import { startWsServer } from "./startWsServer.ts";
 import { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
 import type { Config } from "../config/config.types.ts";
+import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
@@ -96,6 +97,8 @@ export async function wsMessaging({
   }
 }
 
-function serializeTemperatures(temperatures: ReturnType<typeof useTemperatures>) {
+function serializeTemperatures(
+  temperatures: ReturnType<typeof useTemperatures>
+): Record<string, TemperatureReadingBroadcast | undefined> {
   return Object.fromEntries(Object.entries(temperatures()).map(([device_id, value]) => [device_id, value()]));
 }

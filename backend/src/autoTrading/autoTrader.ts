@@ -1,7 +1,7 @@
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { get_config_object } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
-import { debugLog, errorLog, logLog } from "../utilities/logging.ts";
+import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import { wait } from "../vendor/depictUtilishared.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
@@ -101,7 +101,9 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
           untrack(config).automatic_trading.price_area,
           untrack(config).automatic_trading,
           ctx.state
-        );
+        )
+          .then(() => refreshStatus(ctx))
+          .catch(e => warnLog("Settling recent days after the daily run failed", e));
         scheduleDaily();
       }, ms);
     };
@@ -150,7 +152,9 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
         untrack(config).automatic_trading.price_area,
         untrack(config).automatic_trading,
         ctx.state
-      );
+      )
+        .then(() => refreshStatus(ctx))
+        .catch(e => warnLog("Startup settlement catch-up failed", e));
     }, 90_000);
 
     scheduleDaily();
@@ -202,6 +206,19 @@ async function clearTradingVetoes(ctx: TraderCtx): Promise<string> {
 }
 
 /**
+ * The persisted state must be loaded before anything reads or writes ownership. A manual plan
+ * trigger (or an early guard tick) can arrive before the 90-second startup timer has loaded it —
+ * on 2026-07-12 that reconciled against the empty boot state, marked every schedule entry
+ * user-owned and saved, permanently clobbering ownership. Both loaders are guarded by the same
+ * flag, so whichever runs first wins and the other is a no-op.
+ */
+async function ensureStateLoaded(ctx: TraderCtx) {
+  if (ctx.flags.stateLoaded) return;
+  ctx.state = await loadAutoTraderState();
+  ctx.flags.stateLoaded = true;
+}
+
+/**
  * Serializes every read-modify-write of the schedules + ownership state, so a guard run and a
  * plan run can't interleave their setConfig calls and desync owned_entries from the config.
  * The returned promise carries fn's result or rejection to the caller — errors are NOT swallowed.
@@ -230,6 +247,7 @@ function refreshStatus(ctx: TraderCtx, extra?: Partial<AutoTraderStatus>) {
       vetoes: ctx.state.vetoes,
       guard: ctx.state.guard,
       last_error: ctx.state.last_error,
+      last_settlement: ctx.state.last_settlement,
       owned_selling_windows: Object.keys(ctx.state.owned_entries.selling).length,
       owned_buying_windows: Object.keys(ctx.state.owned_entries.buying).length,
       ...extra,
@@ -454,6 +472,7 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
   if (ctx.flags.planInFlight) return "plan already in progress";
   ctx.flags.planInFlight = true;
   try {
+    await ensureStateLoaded(ctx);
     const tradingConfig = untrack(ctx.config).automatic_trading;
 
     let prices = options.prices ?? (await fetchPrices(tradingConfig.price_area, trigger === "daily"));
@@ -515,6 +534,7 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
         horizon_end: new Date(prices.horizonEndMs).toISOString(),
         projection: result.projection,
         notes: result.notes,
+        soc_series: result.socSeries,
         windows: [...result.sells, ...result.buys].map(window => ({
           start: new Date(window.startMs).toISOString(),
           end: new Date(window.endMs).toISOString(),
@@ -577,6 +597,7 @@ async function runGuard(ctx: TraderCtx) {
   const startedAt = Date.now();
   debugLog("Auto trader guard: tick");
   try {
+    await ensureStateLoaded(ctx);
     const soc = untrack(ctx.clampedAverageSOC);
     if (soc === undefined) return;
     const priceArea = untrack(ctx.config).automatic_trading.price_area;

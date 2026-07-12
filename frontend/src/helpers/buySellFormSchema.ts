@@ -16,8 +16,11 @@ export const buySellFormSchema = z
     sellStartAgainAboveSoc: z.coerce.number(),
     onlySellAboveVoltage: z.coerce.number(),
     startSellingAgainAboveVoltage: z.coerce.number(),
-    buyingRows: z.array(scheduleRowSchema),
-    sellingRows: z.array(scheduleRowSchema),
+    // .default([]): modular-forms materializes an EMPTY FieldArray as undefined, and a bare
+    // z.array() then fails with "Required" — which made the whole form unsavable whenever the
+    // buy schedule had no rows (e.g. after old buy windows were pruned).
+    buyingRows: z.array(scheduleRowSchema).default([]),
+    sellingRows: z.array(scheduleRowSchema).default([]),
   })
   .superRefine((data, ctx) => {
     const checkRows = (rows: BuySellFormData["buyingRows"], path: "buyingRows" | "sellingRows") => {

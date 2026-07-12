@@ -1,0 +1,57 @@
+.diag__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.diag__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.diag__label {
+  color: var(--ink-2);
+}
+
+.diag__value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  /* long composed values (e.g. ledger parameters) wrap instead of escaping the card */
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.diag__subhead {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 12px 0 4px;
+
+  &:first-of-type {
+    margin-top: 2px;
+  }
+}
+
+.diag__reason {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+
+  b {
+    color: var(--ink);
+  }
+}

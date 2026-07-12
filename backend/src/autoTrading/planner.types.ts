@@ -74,11 +74,19 @@ export type PlanProjection = {
   estimatedRevenueSek: number;
   baselineRevenueSek: number;
 };
+/**
+ * One 15-min step of the plan's projected battery trajectory: SOC after the slot ran, plus the
+ * average power the sim expects to auto-export in it (battery full, surplus PV flowing to grid).
+ * autoExportW is optional on the wire — plans persisted before it exist without it.
+ */
+export type SocSeriesPoint = { startMs: number; socPercent: number; autoExportW?: number };
 export type PlanResult = {
   sells: PlannedWindow[];
   buys: PlannedWindow[];
   notes: string[];
   projection: PlanProjection;
+  /** Projected SOC per slot under the final plan — the frontend chart draws this as a line. */
+  socSeries: SocSeriesPoint[];
 };
 export type Slot = {
   startMs: number;
@@ -101,4 +109,6 @@ export type SimResult = {
   importWh: number;
   boughtWh: number;
   socAfterSlot: number[];
+  /** Average auto-export watts per slot (battery-full PV overflow) — 0 in slots without it */
+  autoExportWPerSlot: number[];
 };

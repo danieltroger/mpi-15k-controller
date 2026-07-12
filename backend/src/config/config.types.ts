@@ -1,3 +1,5 @@
+import type { ElpatronMode } from "../sharedTypes.ts";
+
 export type AutomaticTradingConfig = {
   /** Master switch for the automatic day-ahead trading planner */
   enabled: boolean;
@@ -173,6 +175,11 @@ export type Config = {
   elpatron_switching: {
     /** Let this controller gate the water heater element by solar (write-gpio to the heating pi) */
     enabled: boolean;
+    /**
+     * Off / always-on / solar-gated. Optional because configs predating it only carry `enabled` —
+     * always read through resolveElpatronMode (sharedTypes.ts), which falls back accordingly.
+     */
+    mode?: ElpatronMode;
     /** Solar watts above which the element is allowed on */
     min_solar_input: number;
     /** The pi running github.com/danieltroger/heating (ws server on :9321 owns the element GPIO) */

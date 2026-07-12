@@ -1,0 +1,49 @@
+.live-data {
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  th,
+  td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  th {
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+.live-data__value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-data__time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-data__stale td {
+  opacity: 0.45;
+}
