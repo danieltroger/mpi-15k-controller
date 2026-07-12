@@ -74,11 +74,15 @@ export type PlanProjection = {
   estimatedRevenueSek: number;
   baselineRevenueSek: number;
 };
+/** One 15-min step of the plan's projected battery trajectory (SOC after the slot ran). */
+export type SocSeriesPoint = { startMs: number; socPercent: number };
 export type PlanResult = {
   sells: PlannedWindow[];
   buys: PlannedWindow[];
   notes: string[];
   projection: PlanProjection;
+  /** Projected SOC per slot under the final plan — the frontend chart draws this as a line. */
+  socSeries: SocSeriesPoint[];
 };
 export type Slot = {
   startMs: number;

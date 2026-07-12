@@ -27,7 +27,9 @@
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
-  white-space: nowrap;
+  /* long composed values (e.g. ledger parameters) wrap instead of escaping the card */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .diag__subhead {

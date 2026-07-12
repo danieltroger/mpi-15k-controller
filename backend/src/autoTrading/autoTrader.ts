@@ -516,6 +516,7 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
         horizon_end: new Date(prices.horizonEndMs).toISOString(),
         projection: result.projection,
         notes: result.notes,
+        soc_series: result.socSeries,
         windows: [...result.sells, ...result.buys].map(window => ({
           start: new Date(window.startMs).toISOString(),
           end: new Date(window.endMs).toISOString(),

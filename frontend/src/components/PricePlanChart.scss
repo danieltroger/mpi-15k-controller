@@ -33,6 +33,11 @@
   border: 1px solid var(--grid);
 }
 
+.price-chart__legend-hint {
+  margin-left: 9px;
+  color: var(--ink-3);
+}
+
 .price-chart__empty {
   margin: 6px 0 4px;
   font-size: 13px;
@@ -53,14 +58,6 @@
     height: auto;
     touch-action: pan-y;
   }
-}
-
-.price-chart__band--sell {
-  fill: var(--band-sell);
-}
-
-.price-chart__band--buy {
-  fill: var(--band-buy);
 }
 
 .price-chart__band-label {
@@ -113,10 +110,30 @@
   stroke-linejoin: round;
 }
 
-.price-chart__minsoc {
+.price-chart__soc-casing {
+  fill: none;
+  stroke: var(--card);
+  stroke-width: 4;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+}
+
+.price-chart__soc {
+  fill: none;
+  stroke: var(--battery);
+  stroke-width: 1.8;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+}
+
+.price-chart__soc-label {
   font-family: var(--mono);
-  font-size: 9.5px;
-  fill: var(--ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--ok-text);
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 3;
 }
 
 .price-chart__now {
@@ -165,6 +182,12 @@
 
 .price-chart__tooltip-price {
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.price-chart__tooltip-soc {
+  font-size: 11.5px;
+  color: var(--ok-text);
   font-variant-numeric: tabular-nums;
 }
 
