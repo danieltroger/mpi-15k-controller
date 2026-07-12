@@ -7,10 +7,9 @@ import "./TopNav.scss";
 const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/buy-sell", label: "Trading" },
-  { href: "/live-data", label: "Live data" },
+  { href: "/system", label: "System" },
   { href: "/temperatures", label: "Temperatures" },
   { href: "/config", label: "Config" },
-  { href: "/diagnostics", label: "Diagnostics" },
 ];
 
 /** How long without any ws broadcast before "Live" degrades to "Quiet" (backend chatters constantly). */

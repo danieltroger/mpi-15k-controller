@@ -136,17 +136,29 @@ export function PricePlanChart() {
           `${index === 0 ? "M" : "L"}${geo.x(point.startMs + SLOT_MS / 2).toFixed(1)} ${ySoc(point.socPercent).toFixed(1)}`
       )
       .join(" ");
+    // Battery-full stretches where surplus PV auto-sells render in solar amber over the line
+    let autoPath = "";
+    let previousQualified = false;
+    for (const point of visible) {
+      if ((point.autoExportW ?? 0) <= 100) {
+        previousQualified = false;
+        continue;
+      }
+      autoPath += `${previousQualified ? "L" : "M"}${geo.x(point.startMs + SLOT_MS / 2).toFixed(1)} ${ySoc(point.socPercent).toFixed(1)} `;
+      previousQualified = true;
+    }
     let minPoint = visible[0];
     for (const point of visible) if (point.socPercent < minPoint.socPercent) minPoint = point;
     return {
       path,
+      autoPath,
       start: {
         x: geo.x(visible[0].startMs + SLOT_MS / 2),
         y: Math.max(PAD_T + 10, ySoc(visible[0].socPercent)),
         socPercent: visible[0].socPercent,
       },
       min: { x: geo.x(minPoint.startMs + SLOT_MS / 2), y: ySoc(minPoint.socPercent), socPercent: minPoint.socPercent },
-      socAtSlotStart: new Map(series.map(point => [point.startMs, point.socPercent])),
+      pointAtSlotStart: new Map(series.map(point => [point.startMs, point])),
     };
   });
 
@@ -170,7 +182,8 @@ export function PricePlanChart() {
       y: geo.y(slot.spot * 100),
       timeLabel: `${formatDayWord(slot.startMs, now())} ${formatClockTime(slot.startMs)}–${formatClockTime(slot.startMs + SLOT_MS)}`,
       priceLabel: `${formatSpotOre(slot.spot)}/kWh`,
-      socPercent: socLine()?.socAtSlotStart.get(slot.startMs),
+      socPercent: socLine()?.pointAtSlotStart.get(slot.startMs)?.socPercent,
+      autoExportW: socLine()?.pointAtSlotStart.get(slot.startMs)?.autoExportW,
       band,
     };
   });
@@ -201,7 +214,8 @@ export function PricePlanChart() {
         <span class="price-chart__legend" aria-hidden="true">
           <i class="price-chart__swatch price-chart__swatch--sell"></i> sell
           <i class="price-chart__swatch price-chart__swatch--buy"></i> buy
-          <span class="price-chart__legend-hint">darker = more power</span>
+          <i class="price-chart__swatch price-chart__swatch--auto"></i> auto-sell
+          <span class="price-chart__legend-hint">stronger colour = more power</span>
         </span>
         <span class="card-meta">
           <Show when={spotPrices()} fallback="öre/kWh">
@@ -311,6 +325,9 @@ export function PricePlanChart() {
                   <g>
                     <path d={soc().path} class="price-chart__soc-casing" />
                     <path d={soc().path} class="price-chart__soc" />
+                    <Show when={soc().autoPath}>
+                      <path d={soc().autoPath} class="price-chart__soc-auto" />
+                    </Show>
                     <text
                       x={soc().start.x + 5}
                       y={soc().start.y - 7}
@@ -363,6 +380,9 @@ export function PricePlanChart() {
                   <div class="price-chart__tooltip-price">{hover().priceLabel}</div>
                   <Show when={hover().socPercent !== undefined}>
                     <div class="price-chart__tooltip-soc">SOC {hover().socPercent}%</div>
+                  </Show>
+                  <Show when={(hover().autoExportW ?? 0) > 100}>
+                    <div class="price-chart__tooltip-auto">auto-selling ~{formatWatts(hover().autoExportW!)}</div>
                   </Show>
                   <Show when={hover().band}>
                     {band => (
