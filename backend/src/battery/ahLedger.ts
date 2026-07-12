@@ -4,12 +4,11 @@ import type { Config } from "../config/config.types.ts";
 import type { InfluxClientAccessor } from "./useDatabasePower.ts";
 import { queryChargeIntegral } from "./queryChargeIntegral.ts";
 import { applyParameterTracking } from "./ahLedgerParameterTracking.ts";
-import { computeSocAh, type AnchorType } from "./ahLedgerMath.ts";
+import { computeSocAh, type LedgerAnchor } from "./ahLedgerMath.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { useNow } from "../utilities/useNow.ts";
 import { logLog, warnLog } from "../utilities/logging.ts";
 
-type LedgerAnchor = { at: number; soc: number; type: AnchorType };
 type ActiveAnchor = LedgerAnchor & { drainA: number; capacityAh: number };
 
 /**

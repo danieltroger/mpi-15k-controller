@@ -1,9 +1,8 @@
 import { untrack } from "solid-js";
 import type { get_config_object } from "../config/config.ts";
-import { computeParameterUpdates, type AnchorType } from "./ahLedgerMath.ts";
+import { computeParameterUpdates, type LedgerAnchor } from "./ahLedgerMath.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 
-type LedgerAnchor = { at: number; soc: number; type: AnchorType };
 
 /**
  * Feeds a just-completed anchor→anchor span to the pure EMA logic, emits its log lines, and persists any

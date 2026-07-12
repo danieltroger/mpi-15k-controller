@@ -4,7 +4,7 @@ import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage, reactiveBatteryVoltageTime } from "../mqttValues/mqttHelpers.ts";
 import { fullConditionMet, emptyConditionMet } from "./anchorConditions.ts";
 import { warnLog } from "../utilities/logging.ts";
-import type { AnchorType } from "./ahLedgerMath.ts";
+import { SOC_ANCHORS_MEASUREMENT, type AnchorType } from "./ahLedgerMath.ts";
 import type { Config } from "../config/config.types.ts";
 
 /**
@@ -107,6 +107,6 @@ function publishAnchorMarker(client: AsyncMqttClient | undefined, type: AnchorTy
     return;
   }
   // Line protocol with a tag so Grafana can split by kind; markers are rare, so a failure is worth a log.
-  const line = `soc_anchors,type=${type} value=1`;
-  client.publish("soc_anchors", line).catch(error => warnLog("Failed to publish soc_anchors marker", type, error));
+  const line = `${SOC_ANCHORS_MEASUREMENT},type=${type} value=1`;
+  client.publish(SOC_ANCHORS_MEASUREMENT, line).catch(error => warnLog("Failed to publish soc_anchors marker", type, error));
 }

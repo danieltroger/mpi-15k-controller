@@ -4,9 +4,8 @@ import type { InfluxClientAccessor } from "./useDatabasePower.ts";
 import { anchorDetection } from "./anchorDetection.ts";
 import { socAnchorRestore } from "./socAnchorRestore.ts";
 import { ahLedger } from "./ahLedger.ts";
-import type { AnchorType } from "./ahLedgerMath.ts";
+import type { LedgerAnchor } from "./ahLedgerMath.ts";
 
-type LedgerAnchor = { at: number; soc: number; type: AnchorType };
 
 /**
  * Wires the Ah ledger together: live edge detection + marker publishing, cross-restart restore from

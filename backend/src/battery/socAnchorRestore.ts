@@ -2,7 +2,7 @@ import type Influx from "influx";
 import { type Accessor, createMemo, createResource } from "solid-js";
 import type { InfluxClientAccessor } from "./useDatabasePower.ts";
 import { warnLog } from "../utilities/logging.ts";
-import type { AnchorType } from "./ahLedgerMath.ts";
+import { SOC_ANCHORS_MEASUREMENT, type AnchorType } from "./ahLedgerMath.ts";
 
 /**
  * Restores the Ah ledger's anchor times across restarts, preferring the explicit `soc_anchors` markers
@@ -36,7 +36,7 @@ async function queryLastAnchorMarker(
 ): Promise<number | undefined> {
   if (!database) return undefined;
   try {
-    const [response] = await database.query(`SELECT last("value") FROM "soc_anchors" WHERE "type" = '${type}'`);
+    const [response] = await database.query(`SELECT last("value") FROM "${SOC_ANCHORS_MEASUREMENT}" WHERE "type" = '${type}'`);
     const timeOfLastMarker = (response as { time?: { getNanoTime: () => number } })?.time?.getNanoTime?.();
     if (timeOfLastMarker !== undefined && !isNaN(timeOfLastMarker)) {
       return Math.round(timeOfLastMarker / 1000 / 1000);

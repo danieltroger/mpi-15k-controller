@@ -3,6 +3,12 @@
 
 export type AnchorType = "full" | "empty" | "soft_empty";
 
+/** An anchor event the Ah ledger can hang off: when it happened and the SOC it pins. */
+export type LedgerAnchor = { at: number; soc: number; type: AnchorType };
+
+/** Influx measurement + MQTT topic for anchor markers — shared so publish and restore can never drift. */
+export const SOC_ANCHORS_MEASUREMENT = "soc_anchors";
+
 /** A structured log request produced by the pure layer; the caller dispatches to errorLog/warnLog/logLog. */
 export type ParameterLog = { level: "log" | "warn" | "error"; message: string };
 
