@@ -15,7 +15,7 @@ import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
  */
 export function useExpectedInputAmperage(
   batteryChargingAmperage: Accessor<number | undefined>,
-  assumedParasiticConsumption: Accessor<number>
+  idleConsumptionWatts: Accessor<number>
 ) {
   const { mqttValues } = useFromMqttProvider();
 
@@ -40,7 +40,7 @@ export function useExpectedInputAmperage(
     const acOutPowerT = mqttValues["ac_output_active_power_t"]?.value;
     if (acOutPowerR == undefined || acOutPowerS == undefined || acOutPowerT == undefined) return undefined;
     let solarPowerToDistribute = useTotalSolarPower() ?? 0;
-    const assumedSelfConsumptionPerPhase = assumedParasiticConsumption() / 3;
+    const assumedSelfConsumptionPerPhase = idleConsumptionWatts() / 3;
     // Not yet including charger watts as they can't be canceled out by solar
     const totalPowerFromGrid = {
       r: acOutPowerR + assumedSelfConsumptionPerPhase,
@@ -95,13 +95,10 @@ export function useExpectedInputAmperage(
 
 export function useLogExpectedVsActualChargingAmperage(
   batteryChargingAmperage: Accessor<number | undefined>,
-  assumedParasiticConsumption: Accessor<number>
+  idleConsumptionWatts: Accessor<number>
 ) {
   const { mqttClient } = useFromMqttProvider();
-  const { $calculatedGridAmpsPerPhase } = useExpectedInputAmperage(
-    batteryChargingAmperage,
-    assumedParasiticConsumption
-  );
+  const { $calculatedGridAmpsPerPhase } = useExpectedInputAmperage(batteryChargingAmperage, idleConsumptionWatts);
   const table = "input_amp_experiment";
 
   createEffect(() => {

@@ -1,6 +1,6 @@
-// Shared, pure anchor predicates so the Wh path (useLastFullAndEmpty) and the Ah path
-// (anchorDetection) can never drift on what "full"/"empty" means. Hall sensor 2 amps, positive =
-// charging; both take already-1-min-smoothed amps.
+// Pure anchor predicates for the Ah ledger's anchor detection (anchorDetection.ts) — kept in their own
+// file so "full"/"empty" have a single definition that stays unit-testable. Hall sensor 2 amps,
+// positive = charging; takes already-1-min-smoothed amps.
 
 /** Full: held at the full setpoint while the (smoothed) charge current has tapered below the stop threshold. */
 export function fullConditionMet(

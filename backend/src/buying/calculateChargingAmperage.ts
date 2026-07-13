@@ -11,10 +11,7 @@ import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
 /**
  * Takes in a desired amperage at the grid connection and returns the current maximum amperage we can tell the inverter to charge the battery from the grid with.
  */
-export function calculateChargingAmperage(
-  targetAmpsAtGridConnection: number,
-  assumedParasiticConsumption: Accessor<number>
-) {
+export function calculateChargingAmperage(targetAmpsAtGridConnection: number, idleConsumptionWatts: Accessor<number>) {
   const { mqttValues } = useFromMqttProvider();
   const batteryVoltage = reactiveBatteryVoltage();
   if (batteryVoltage == undefined) return undefined;
@@ -23,7 +20,7 @@ export function calculateChargingAmperage(
   const acOutPowerT = mqttValues["ac_output_active_power_t"]?.value;
   if (acOutPowerR == undefined || acOutPowerS == undefined || acOutPowerT == undefined) return undefined;
   let solarPowerToDistribute = useTotalSolarPower() ?? 0;
-  const assumedSelfConsumptionPerPhase = assumedParasiticConsumption() / 3;
+  const assumedSelfConsumptionPerPhase = idleConsumptionWatts() / 3;
   // Not yet including charger watts as they can't be canceled out by solar
   const powerConsumedByHouse = {
     r: acOutPowerR + assumedSelfConsumptionPerPhase,

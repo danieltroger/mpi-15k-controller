@@ -8,6 +8,8 @@ import {
   capacityWeightForTransition,
   drainEmaWeight,
   computeParameterUpdates,
+  smoothedAmpsAreStale,
+  SMOOTHED_AMPS_STALENESS_MS,
 } from "./ahLedgerMath.ts";
 
 const fails: string[] = [];
@@ -232,6 +234,25 @@ function approx(actual: number, expected: number, epsilon = 0.001): boolean {
     "none: no updates, no logs",
     none.drainA === undefined && none.capacityAh === undefined && none.logs.length === 0
   );
+}
+
+// ---------- smoothedAmpsAreStale (ADC-staleness gate) ----------
+{
+  const now = 1_000_000_000;
+  check("staleness: fresh sample not stale", smoothedAmpsAreStale(now - 1000, now) === false);
+  check(
+    "staleness: just inside the window not stale",
+    smoothedAmpsAreStale(now - (SMOOTHED_AMPS_STALENESS_MS - 1), now) === false
+  );
+  check(
+    "staleness: exactly at the cutoff not stale",
+    smoothedAmpsAreStale(now - SMOOTHED_AMPS_STALENESS_MS, now) === false
+  );
+  check(
+    "staleness: past the cutoff is stale",
+    smoothedAmpsAreStale(now - (SMOOTHED_AMPS_STALENESS_MS + 1), now) === true
+  );
+  check("staleness: cutoff is 5 minutes", SMOOTHED_AMPS_STALENESS_MS === 5 * 60 * 1000);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll ledger-math checks passed");

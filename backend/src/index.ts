@@ -121,22 +121,10 @@ function main() {
                 const batteryCurrentAmps = createMemo(() => currentReturn()?.sensor2.calculatedCurrentFromAmpMeter?.());
                 const smoothedBatteryCurrentAmps = createMemo(() => currentReturn()?.sensor2.smoothedCurrent?.());
                 const batteryValues = useBatteryValues(configResourceValue, {
-                  currentPower,
                   batteryCurrentAmps,
                   smoothedBatteryCurrentAmps,
                 });
-                const {
-                  totalLastEmpty,
-                  totalLastFull,
-                  energyRemovedSinceFull,
-                  energyAddedSinceEmpty,
-                  socSinceEmpty,
-                  socSinceFull,
-                  assumedParasiticConsumption,
-                  assumedCapacity,
-                  clampedAverageSOC,
-                  socAh,
-                } = batteryValues;
+                const { socAh, clampedSocAh, latestAnchor } = batteryValues;
 
                 return BatteryValuesProvider({
                   value: batteryValues,
@@ -195,7 +183,7 @@ function main() {
                           () =>
                             prematureFloatBugWorkaround({
                               configSignal: configResourceValue,
-                              energyRemovedSinceFull,
+                              clampedSocAh,
                             }),
                           e => {
                             setPrematureWorkaroundErrored(true);
@@ -284,28 +272,19 @@ function main() {
                           energyAddedSinceEmpty,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,
-                          totalLastEmpty,
                           currentBatteryPower: currentPower,
-                          energyRemovedSinceFull,
                           voltageSagMillivoltsRaw: () => currentReturn()?.sensor1.voltageSagMillivoltsRaw(),
                           voltageSagMillivoltsAveraged: () => currentReturn()?.sensor1.voltageSagMillivoltsAveraged(),
                           voltageSagMillivoltsRaw2: () => currentReturn()?.sensor2.voltageSagMillivoltsRaw(),
                           voltageSagMillivoltsAveraged2: () => currentReturn()?.sensor2.voltageSagMillivoltsAveraged(),
-                          socSinceEmpty,
-                          socSinceFull,
-                          // Frontend-facing SOC is clamped to [0,100]; the unclamped drift only goes to InfluxDB.
-                          averageSOC: clampedAverageSOC,
-                          // Shadow Ah ledger, unclamped — diagnostics display only, nothing consumes it.
+                          // THE SOC the whole app runs on: the Ah ledger clamped to [0,100]. Kept under the
+                          // stable "averageSOC" key the frontend already reads; socAh is the raw unclamped drift.
+                          averageSOC: clampedSocAh,
                           socAh,
-                          assumedCapacity,
-                          assumedParasiticConsumption,
+                          // Latest full/empty/soft-empty anchor — the frontend's "last full / last empty" source.
+                          latestAnchor,
                           isCharging: () => isChargingOuterScope()?.()?.(),
                           elpatronState: () => elpatronReturn()?.elpatronHeating(),
-                          // (the old `&& ...toISOString()` here could leak a raw 0 onto the wire)
-                          totalLastFull: () => {
-                            const lastFullMs = totalLastFull();
-                            return lastFullMs ? new Date(lastFullMs).toISOString() : undefined;
-                          },
                           // Object.fromEntries can't carry the per-key mapping — the cast restores
                           // what is provably true from mqttValueKeys.map
                           ...(Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])) as {

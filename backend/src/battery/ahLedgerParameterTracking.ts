@@ -5,7 +5,7 @@ import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 
 /**
  * Feeds a just-completed anchor→anchor span to the pure EMA logic, emits its log lines, and persists any
- * accepted drain/capacity update into config (like the Wh fitter persists current_state). Updates apply
+ * accepted drain/capacity update into config (like the Wh fitter persisted its capacity/parasitic state). Updates apply
  * FORWARD ONLY: this runs at a re-anchor, where the ledger is about to snapshot the fresh config values
  * for the new span, so a changed parameter never retroactively re-scores the span that just ended.
  */

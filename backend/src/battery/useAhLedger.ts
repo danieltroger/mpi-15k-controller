@@ -23,7 +23,7 @@ export function useAhLedger({
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   influxClient: InfluxClientAccessor;
   batteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
-  smoothedBatteryCurrentAmps: Accessor<number | undefined>;
+  smoothedBatteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
   databaseFullFallbackAt: Accessor<number | undefined>;
   databaseEmptyFallbackAt: Accessor<number | undefined>;
 }) {
@@ -66,7 +66,9 @@ export function useAhLedger({
 
   const { socAh } = ahLedger({ configSignal, influxClient, batteryCurrentAmps, latestAnchor });
 
-  return { socAh };
+  // latestAnchor is exposed too: it's the Ah system's "last full/empty/soft-empty" the frontend shows
+  // in place of the deleted Wh totalLastFull/totalLastEmpty.
+  return { socAh, latestAnchor };
 }
 
 function laterOf(a: number | undefined, b: number | undefined): number | undefined {

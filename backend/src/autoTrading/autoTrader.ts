@@ -6,6 +6,7 @@ import { wait } from "../vendor/depictUtilishared.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
+import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedValues.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
@@ -30,9 +31,8 @@ import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.t
 type TraderCtx = {
   config: Accessor<Config>;
   setConfig: Awaited<ReturnType<typeof get_config_object>>[1];
-  /** SOC clamped to [0,100] — the planner must never project from a nonsensical <0 / >100 start. */
-  clampedAverageSOC: Accessor<number | undefined>;
-  assumedParasiticConsumption: Accessor<number>;
+  /** Ah-ledger SOC clamped to [0,100] — the planner must never project from a nonsensical <0 / >100 start. */
+  clampedSocAh: Accessor<number | undefined>;
   influxClient: ReturnType<typeof useInfluxClient>;
   enabled: Accessor<boolean>;
   nextDailyRunAt: Accessor<string | undefined>;
@@ -51,7 +51,7 @@ type TraderCtx = {
 
 export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnType<typeof get_config_object>> }) {
   const [config, setConfig] = configSignal;
-  const { clampedAverageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
+  const { clampedSocAh } = useBatteryValuesProvider();
   const [status, setStatus] = createSignal<AutoTraderStatus>({ enabled: false, note: "starting" });
   const [nextDailyRunAt, setNextDailyRunAt] = createSignal<string | undefined>();
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
@@ -59,8 +59,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
   const ctx: TraderCtx = {
     config,
     setConfig,
-    clampedAverageSOC,
-    assumedParasiticConsumption,
+    clampedSocAh,
     influxClient: useInfluxClient(),
     enabled,
     nextDailyRunAt,
@@ -360,9 +359,11 @@ async function buildPlannerInput(
     prices: prices.slots,
     solarWattsAt: solar.wattsAt,
     houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
-    parasiticWatts: ctx.assumedParasiticConsumption() || cfg.soc_calculations.current_state.parasitic_consumption,
+    // Idle draw and usable capacity now come from the Ah ledger's online-tracked drain/capacity (the Wh
+    // fitter's persisted capacity/parasitic state is gone): inverterIdleWatts = drain_a × v_discharge, capacityWh = capacity_ah × v_discharge.
+    parasiticWatts: inverterIdleWatts(cfg),
     socPercent: soc,
-    capacityWh: cfg.soc_calculations.current_state.capacity,
+    capacityWh: packCapacityWh(cfg),
     constraintTailHours: tradingConfig.constraint_tail_hours,
     fixedSells: sells,
     fixedBuys: buys,
@@ -488,10 +489,10 @@ async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<string>
     }
     if (ctx.flags.aborted) return "aborted";
 
-    let soc = untrack(ctx.clampedAverageSOC);
+    let soc = untrack(ctx.clampedSocAh);
     for (let i = 0; i < 30 && soc === undefined && !ctx.flags.aborted; i++) {
       await wait(10_000);
-      soc = untrack(ctx.clampedAverageSOC);
+      soc = untrack(ctx.clampedSocAh);
     }
     if (soc === undefined) throw new Error("SOC not available — cannot plan");
     if (ctx.flags.aborted) return "aborted";
@@ -599,7 +600,7 @@ async function runGuard(ctx: TraderCtx) {
   debugLog("Auto trader guard: tick");
   try {
     await ensureStateLoaded(ctx);
-    const soc = untrack(ctx.clampedAverageSOC);
+    const soc = untrack(ctx.clampedSocAh);
     if (soc === undefined) return;
     const priceArea = untrack(ctx.config).automatic_trading.price_area;
     // For a breach decision slightly stale prices beat no guard run at all

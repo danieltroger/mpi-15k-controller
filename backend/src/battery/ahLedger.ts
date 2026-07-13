@@ -12,10 +12,10 @@ import { logLog, warnLog } from "../utilities/logging.ts";
 type ActiveAnchor = LedgerAnchor & { drainA: number; capacityAh: number };
 
 /**
- * The Ah (coulomb-counting) SOC ledger — Phase 1's shadow of the Wh system. Anchored at the latest
+ * The Ah (coulomb-counting) SOC ledger — the app's single SOC source. Anchored at the latest
  * full/empty/soft-empty event (`latestAnchor`), it restores ∫amps from that anchor out of InfluxDB once
- * (via the raw-mV subquery, so it survives deploys) and then accumulates live from the hall amps signal,
- * mirroring calculateBatteryEnergy. `soc_ah` is published UNclamped so the drift shows in Grafana.
+ * (via the raw-mV subquery, so it survives deploys) and then accumulates live from the hall amps signal.
+ * `soc_ah` is published UNclamped so the drift shows in Grafana; consumers read the clamped value.
  *
  * On each re-anchor it (a) hands the completed span to the online drain/capacity EMA tracker, then
  * (b) snapshots the (possibly just-updated) drain/capacity into the new anchor. The SOC formula reads
@@ -55,7 +55,7 @@ export function ahLedger({
     }
   );
 
-  // Accumulate live amp-hours (trapezoidal via the previous sample, like calculateBatteryEnergy's power).
+  // Accumulate live amp-hours (trapezoidal integration via the previous sample).
   createEffect(() => {
     const amps = batteryCurrentAmps();
     if (!amps) return;
@@ -92,7 +92,7 @@ export function ahLedger({
           logLog("Ah ledger: skipping parameter tracking for restored span", previous.type, "→", anchor.type);
         }
       }
-      localAh = 0; // keep lastAmps so the first post-anchor sample still bridges (mirrors the Wh ledger)
+      localAh = 0; // keep lastAmps so the first post-anchor sample still bridges the gap across the re-anchor
       const ahLedgerConfig = config().soc_calculations.ah_ledger; // read AFTER the update above → forward-only
       setActiveAnchor({
         at: anchor.at,

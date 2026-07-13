@@ -9,12 +9,21 @@ const lastVoltageSet: { float?: number; bulk?: number } = {};
 
 export function prematureFloatBugWorkaround({
   configSignal,
-  energyRemovedSinceFull,
+  clampedSocAh,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
-  energyRemovedSinceFull: Accessor<number | undefined>;
+  clampedSocAh: Accessor<number | undefined>;
 }) {
   const [config] = configSignal;
+  // Wh discharged below full, derived from the Ah SOC: (100 − SOC)% of the usable pack energy
+  // (capacity_ah × mean discharge-branch voltage). Same meaning — and same config key
+  // start_bulk_charge_after_wh_discharged — as the deleted Wh energyRemovedSinceFull it replaces.
+  const energyRemovedSinceFull = createMemo(() => {
+    const soc = clampedSocAh();
+    if (soc == undefined) return undefined;
+    const { capacity_ah, v_discharge } = config().soc_calculations.ah_ledger;
+    return ((100 - soc) / 100) * capacity_ah * v_discharge;
+  });
   const [localStateOfConfiguredVoltageFloat, { refetch: refetchFloat }] = createResource(() =>
     getConfiguredVoltageFromShinemonitor(configSignal, "float")
   );

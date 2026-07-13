@@ -5,10 +5,13 @@ import { calculateChargingAmperage } from "./calculateChargingAmperage.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
+import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
 import type { Config } from "../config/config.types.ts";
 
 export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
-  const { clampedAverageSOC, assumedParasiticConsumption } = useBatteryValuesProvider();
+  const { clampedSocAh } = useBatteryValuesProvider();
+  // Inverter idle draw the grid-charge sizing must leave headroom for; from the Ah ledger (drain_a × v_discharge).
+  const idleConsumptionWatts = createMemo(() => inverterIdleWatts(config()));
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_buying.schedule),
@@ -49,7 +52,7 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
   let hitSOCLimit = false;
 
   const powerFromSchedule = createMemo(() => {
-    const soc = clampedAverageSOC();
+    const soc = clampedSocAh();
     if (soc === undefined) return;
     const { only_buy_below_soc, start_buying_again_below_soc } = config().scheduled_power_buying;
     const limitToUse = hitSOCLimit ? start_buying_again_below_soc : only_buy_below_soc;
@@ -73,9 +76,7 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
   const maxGridAmps = createMemo(() => config().scheduled_power_buying.max_grid_input_amperage);
 
   // Max amperage we can charge at battery (~50v) without blowing the fuse to the grid
-  const maxBatteryChargingAmperage = createMemo(() =>
-    calculateChargingAmperage(maxGridAmps(), assumedParasiticConsumption)
-  );
+  const maxBatteryChargingAmperage = createMemo(() => calculateChargingAmperage(maxGridAmps(), idleConsumptionWatts));
 
   // Charging amperage at the battery (at ~50v)
   const chargingAmperageForBuyingUnlimited = createMemo(() => {
