@@ -17,6 +17,7 @@ import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import {
   configToBuySellFormData,
+  datetimeLocalToIso,
   diffMergeFormIntoConfig,
   isoToDatetimeLocal,
   type BuySellFormData,
@@ -26,7 +27,7 @@ import {
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
 import { formatDurationLabel, rowDurationHours, rowEnergyKwh } from "~/helpers/scheduleRowDerived";
 import type { Config } from "../../../backend/src/config/config.types";
-import type { AutoTraderStatus, StateWindow } from "../../../backend/src/autoTrading/autoTraderState.types";
+import type { AutoTraderStatus } from "../../../backend/src/autoTrading/autoTraderState.types";
 import "./BuySellConfig.scss";
 
 type BuySellForm = FormStore<BuySellFormData, undefined>;
@@ -132,11 +133,30 @@ function ScheduleRowMeta(props: { form: BuySellForm; index: number }) {
   );
 }
 
-/** A row is "planned" when it matches a window of the trader's last plan exactly (any edit makes it yours). */
-function rowIsPlanned(
-  row: { kind?: string; start?: string; end?: string; power?: number },
-  plannedWindows: StateWindow[] | undefined
-): boolean {
+type FormRowSnapshot = { kind?: string; start?: string; end?: string; power?: number };
+
+/**
+ * A row is "planned" when the trader's ownership record has a value-identical entry for it — the
+ * same rule the backend's reconcileOwnership uses, so an edited row correctly loses its badge.
+ * Older backends don't publish owned_entries yet; fall back to matching the last plan's windows
+ * (a lossy proxy: windows kept through a keepActiveWindows replan are owned but absent there).
+ */
+function rowIsPlanned(row: FormRowSnapshot, status: AutoTraderStatus | undefined): boolean {
+  if (!row.start || !row.end) return false;
+  const owned = status?.owned_entries;
+  if (owned) {
+    const key = datetimeLocalToIso(row.start);
+    if (row.kind === "sell") {
+      const entry = owned.selling[key];
+      return !!entry && isoToDatetimeLocal(entry.end_time) === row.end && entry.power_watts === Number(row.power);
+    }
+    if (row.kind === "buy") {
+      const entry = owned.buying[key];
+      return !!entry && isoToDatetimeLocal(entry.end_time) === row.end && entry.charging_power === Number(row.power);
+    }
+    return false;
+  }
+  const plannedWindows = status?.last_plan?.windows;
   if (!plannedWindows) return false;
   return plannedWindows.some(
     w =>
@@ -183,8 +203,6 @@ function BuySellFormInner(props: {
     pristine = configToBuySellFormData(c);
     setValues(buySellForm, pristine, { shouldDirty: false, shouldTouched: false });
   });
-
-  const plannedWindows = () => status()?.last_plan?.windows;
 
   return (
     <Form
@@ -366,9 +384,7 @@ function BuySellFormInner(props: {
                                   >
                                     {field.value === "sell" ? "Sell" : "Buy"}
                                   </span>
-                                  <Show
-                                    when={rowIsPlanned(getValues(buySellForm).rows?.[index()] ?? {}, plannedWindows())}
-                                  >
+                                  <Show when={rowIsPlanned(getValues(buySellForm).rows?.[index()] ?? {}, status())}>
                                     <span
                                       class="buy-sell-config__planned"
                                       title="Written by the auto-trader — editing makes it yours"
