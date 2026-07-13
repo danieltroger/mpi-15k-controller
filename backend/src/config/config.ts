@@ -104,18 +104,8 @@ export const default_config: Config = {
     tank_max_temperature: 50,
   },
   soc_calculations: {
-    recalculate_parameters_interval_seconds: 1800,
     battery_empty_at: 46,
-    capacity_per_cell_from_wh: 18,
-    capacity_per_cell_to_wh: 20,
-    parasitic_consumption_from: 200,
-    parasitic_consumption_to: 350,
-    number_of_cells: 576,
     table: "soc_values",
-    current_state: {
-      capacity: 19.2 * 12 * 3 * 16,
-      parasitic_consumption: 315,
-    },
     // Validated offline on 3 months of hall-sensor-2 data (Phase 0). drain_a is seasonal (~0.7 A in
     // spring, ~2.8 A in summer) which is why it is tracked online rather than hard-coded.
     ah_ledger: {
@@ -171,11 +161,15 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but alerting, automatic_trading, elpatron_switching and
- * soc_calculations merge one level deeper: knobs get added over time, and a config.json written
- * before a knob existed must still pick up its default (the planner, the elpatron load model and
- * the SOC ledgers do raw arithmetic on these — a missing knob would silently NaN every
- * projection; a missing alerting threshold would silently never alert).
+ * Top-level keys merge shallowly, but alerting, automatic_trading, elpatron_switching and soc_calculations
+ * merge one level deeper: knobs get added over time, and a config.json written before a knob
+ * existed must still pick up its default (the planner, the elpatron load model and the SOC ledger
+ * do raw arithmetic on these — a missing knob would silently NaN every projection;
+ * a missing alerting threshold would silently never alert).
+ * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
+ * predating it still boots with the validated defaults. Orphaned keys from the deleted Wh fitter
+ * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the
+ * spreads copy unknown keys straight through and nothing reads them.
  */
 function mergeWithDefaults(partial: Partial<Config>): Config {
   return {
@@ -187,10 +181,6 @@ function mergeWithDefaults(partial: Partial<Config>): Config {
     soc_calculations: {
       ...default_config.soc_calculations,
       ...partial.soc_calculations,
-      current_state: {
-        ...default_config.soc_calculations.current_state,
-        ...partial.soc_calculations?.current_state,
-      },
       ah_ledger: {
         ...default_config.soc_calculations.ah_ledger,
         ...partial.soc_calculations?.ah_ledger,
