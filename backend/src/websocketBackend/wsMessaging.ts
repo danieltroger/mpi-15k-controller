@@ -3,6 +3,7 @@ import { startWsServer } from "./startWsServer.ts";
 import { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
 import type { Config } from "../config/config.types.ts";
 import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
+import type { WsAction, WsExposedAccessorMap } from "../wsContract.types.ts";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
@@ -14,8 +15,9 @@ export async function wsMessaging({
   config_signal: Signal<Config>;
   owner: Owner;
   temperatures: ReturnType<typeof useTemperatures>;
-  exposedAccessors: Record<string, Accessor<any>>;
-  actions: Record<string, () => Promise<string>>;
+  /** Typed by the ws contract — exposing a key with the wrong shape (or forgetting one) won't compile */
+  exposedAccessors: WsExposedAccessorMap;
+  actions: Record<WsAction, () => Promise<string>>;
 }) {
   const exposed_signals = {
     config: {
@@ -37,7 +39,8 @@ export async function wsMessaging({
     const { command, key, value, id, action } = msg;
 
     if (command === "action") {
-      const handler = actions[action as string];
+      // action arrives as untrusted wire input — the runtime unknown-action reply below handles misses
+      const handler = (actions as Partial<Record<string, () => Promise<string>>>)[String(action)];
       if (!handler) {
         return JSON.stringify({
           id,
@@ -99,6 +102,12 @@ export async function wsMessaging({
 
 function serializeTemperatures(
   temperatures: ReturnType<typeof useTemperatures>
-): Record<string, TemperatureReadingBroadcast | undefined> {
-  return Object.fromEntries(Object.entries(temperatures()).map(([device_id, value]) => [device_id, value()]));
+): Record<string, TemperatureReadingBroadcast> {
+  // Thermometers without a reading yet are omitted (JSON.stringify would drop the undefineds
+  // on the wire anyway — filtering makes the contract type honest)
+  return Object.fromEntries(
+    Object.entries(temperatures())
+      .map(([device_id, value]) => [device_id, value()] as const)
+      .filter((entry): entry is readonly [string, TemperatureReadingBroadcast] => entry[1] !== undefined)
+  );
 }

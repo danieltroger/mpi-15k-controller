@@ -7,7 +7,7 @@ import type { TemperatureReadingBroadcast } from "../../../backend/src/sharedTyp
 import "./temperatures.scss";
 
 export default function Temperatures() {
-  const [get_temperatures] = getBackendSyncedSignal<Record<string, TemperatureReadingBroadcast>, true>("temperatures", {
+  const [get_temperatures] = getBackendSyncedSignal("temperatures", {
     loading: {
       value: 0,
       time: 0,

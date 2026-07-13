@@ -21,6 +21,8 @@ export function resolveElpatronMode(elpatronConfig: { mode?: ElpatronMode; enabl
   return elpatronConfig.mode ?? (elpatronConfig.enabled ? "solar" : "off");
 }
 
+export type MqttValueKey = (typeof mqttValueKeys)[number];
+
 export const mqttValueKeys = [
   "solar_input_power_1",
   "solar_input_power_2",

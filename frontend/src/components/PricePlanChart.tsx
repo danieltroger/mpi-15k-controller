@@ -32,9 +32,9 @@ const PLOT_H = VIEW_H - PAD_T - PAD_B;
  * truth for what will run); min-SOC and the price series need the trading-aware backend.
  */
 export function PricePlanChart() {
-  const [spotPrices] = getBackendSyncedSignal<FetchedPrices>("spotPrices", undefined, true, true);
-  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
-  const [status] = getBackendSyncedSignal<AutoTraderStatus>("autoTraderStatus");
+  const [spotPrices] = getBackendSyncedSignal("spotPrices", undefined, true, true);
+  const [config] = getBackendSyncedSignal("config", undefined, false);
+  const [status] = getBackendSyncedSignal("autoTraderStatus");
   const now = useNowMs(30_000);
   const [hoverIndex, setHoverIndex] = createSignal<number>();
   let svgElement: SVGSVGElement | undefined;

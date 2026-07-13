@@ -12,8 +12,8 @@ import type { ElpatronDisplayState } from "../../../../backend/src/sharedTypes";
  * pushed from the heating pi via the controller so what the card claims is what the element does.
  */
 export function WaterHeaterCard() {
-  const [config, setConfig] = getBackendSyncedSignal<Config>("config");
-  const [elpatronState] = getBackendSyncedSignal<ElpatronDisplayState>("elpatronState", undefined, true, true);
+  const [config, setConfig] = getBackendSyncedSignal("config");
+  const [elpatronState] = getBackendSyncedSignal("elpatronState", undefined, true, true);
   const owner = getOwner()!;
   const now = useNowMs(5000);
   const switching = () => config()?.elpatron_switching;

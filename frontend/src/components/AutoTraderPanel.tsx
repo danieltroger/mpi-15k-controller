@@ -4,13 +4,13 @@ import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { formatKwh, formatSek, formatShortDateTime } from "~/helpers/format";
 import type { Config } from "../../../backend/src/config/config.types";
-import type { AutoTraderStatus } from "../../../backend/src/autoTrading/autoTraderState.types";
+import type { WsAction } from "../../../backend/src/wsContract.types";
 
 const fmtTime = (iso: string | undefined) => (iso ? formatShortDateTime(iso) : "—");
 
 export function AutoTraderPanel() {
-  const [status] = getBackendSyncedSignal<AutoTraderStatus>("autoTraderStatus");
-  const [config, setConfig] = getBackendSyncedSignal<Config>("config");
+  const [status] = getBackendSyncedSignal("autoTraderStatus");
+  const [config, setConfig] = getBackendSyncedSignal("config");
   const socket = useWebSocket();
   const owner = getOwner()!;
   const [busy, setBusy] = createSignal(false);
@@ -26,7 +26,7 @@ export function AutoTraderPanel() {
     await setConfig({ ...current, automatic_trading: { ...current.automatic_trading, ...patch } });
   };
 
-  const runAction = async (action: string, formatResult: (result: string) => string) => {
+  const runAction = async (action: WsAction, formatResult: (result: string) => string) => {
     setBusy(true);
     try {
       const result = await sendBackendAction(socket, action);

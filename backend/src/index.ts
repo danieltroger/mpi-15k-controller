@@ -18,7 +18,7 @@ import { saveTemperatures } from "./temperatureMeasuring/saveTemperatures.ts";
 import { feedWhenNoSolar } from "./feeding/feedWhenNoSolar.ts";
 import { useBatteryValues } from "./battery/useBatteryValues.ts";
 import { BatteryValuesProvider } from "./battery/BatteryValuesProvider.ts";
-import { mqttValueKeys } from "./sharedTypes.ts";
+import { mqttValueKeys, type MqttValue, type MqttValueKey } from "./sharedTypes.ts";
 import { elpatronSwitching } from "./elpatronSwitching.ts";
 import { shouldSellPower } from "./feeding/shouldSellPower.ts";
 import { NowProvider } from "./utilities/useNow.ts";
@@ -302,8 +302,16 @@ function main() {
                           assumedParasiticConsumption,
                           isCharging: () => isChargingOuterScope()?.()?.(),
                           elpatronState: () => elpatronReturn()?.elpatronHeating(),
-                          totalLastFull: () => totalLastFull() && new Date(totalLastFull()!).toISOString(),
-                          ...Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])),
+                          // (the old `&& ...toISOString()` here could leak a raw 0 onto the wire)
+                          totalLastFull: () => {
+                            const lastFullMs = totalLastFull();
+                            return lastFullMs ? new Date(lastFullMs).toISOString() : undefined;
+                          },
+                          // Object.fromEntries can't carry the per-key mapping — the cast restores
+                          // what is provably true from mqttValueKeys.map
+                          ...(Object.fromEntries(mqttValueKeys.map(key => [key, () => mqttValues[key]])) as {
+                            [K in MqttValueKey]: () => MqttValue | undefined;
+                          }),
                         },
                       })
                     );

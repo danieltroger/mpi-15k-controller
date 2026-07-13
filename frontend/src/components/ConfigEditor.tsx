@@ -2,13 +2,12 @@ import { createComputed, getOwner } from "solid-js";
 import "./ConfigEditor.scss";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
+import type { Config } from "../../../backend/src/config/config.types";
 
 export function ConfigEditor() {
   let textarea: HTMLTextAreaElement;
   let button: HTMLButtonElement | undefined;
-  const [get_config, set_config] = getBackendSyncedSignal<{
-    [key: string]: any;
-  }>("config", undefined, false);
+  const [get_config, set_config] = getBackendSyncedSignal("config", undefined, false);
   const owner = getOwner()!;
 
   return (
@@ -34,9 +33,10 @@ export function ConfigEditor() {
           if (!set_config) {
             return;
           }
-          let object_contents: { [key: string]: any } | undefined;
+          let object_contents: Config | undefined;
           try {
-            object_contents = JSON.parse(textarea.value);
+            // The raw-JSON escape hatch can't prove the shape — the backend validates on write
+            object_contents = JSON.parse(textarea.value) as Config;
           } catch (e) {
             console.error(e);
             await showToastWithMessage(owner, () => "Error parsing JSON: " + e);
