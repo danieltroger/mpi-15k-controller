@@ -116,9 +116,7 @@ export function anchorDetection({
         // Unlike `full` (a level that can be held until amps return), the crossing is an edge: firing it
         // later with fresh amps would validate the wrong moment, so losing it is correct — but say so,
         // matching the full branch's observability. Soft-empty is a fallback anchor; full/empty still work.
-        warnLog(
-          "Ah ledger anchor: soft-empty crossing while hall amps are stale (>5 min) — crossing skipped"
-        );
+        warnLog("Ah ledger anchor: soft-empty crossing while hall amps are stale (>5 min) — crossing skipped");
       }
     } else if (voltage > softEmpty.voltage + 0.5) {
       armedSoftEmpty = true;
