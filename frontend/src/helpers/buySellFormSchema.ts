@@ -49,8 +49,11 @@ export const buySellFormSchema = z
     }
     // (No hard rule tying the sell cutoff to the sunny floor: the config comment recommends
     // cutoff ≤ sunny floor, but the live systems run other arrangements on purpose.)
-    // Hysteresis pairs must not invert
-    if (data.sellStartAgainAboveSoc < data.sellOnlyAboveSoc) {
+    // Hysteresis pairs must not invert. The sell check is skipped when the stop threshold is the
+    // >100 "never sell" sentinel — resume is necessarily below it then, and erroring would make
+    // the whole form unsavable (the same lockout class this schema was reworked to avoid). The
+    // buy direction needs no guard: its sentinel is high (e.g. 200) and its rule checks ≤.
+    if (data.sellOnlyAboveSoc <= 100 && data.sellStartAgainAboveSoc < data.sellOnlyAboveSoc) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["sellStartAgainAboveSoc"],
