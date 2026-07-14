@@ -24,7 +24,7 @@ for (const file of selftestFiles) {
   const startedAt = Date.now();
   const result = spawnSync(process.execPath, [...process.execArgv, file], { stdio: "inherit" });
   if (result.error) console.error(`  spawn error:`, result.error);
-  console.log(`━━━ ${relative}: ${result.status === 0 ? "passed" : `FAILED (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})`} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s ━━━`);
+  console.log(
     `━━━ ${relative}: ${result.status === 0 ? "passed" : `FAILED (exit ${result.status})`} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s ━━━`
   );
   if (result.status !== 0) failures.push(relative);
