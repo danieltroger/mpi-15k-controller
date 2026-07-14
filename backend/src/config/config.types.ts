@@ -70,8 +70,59 @@ export type AutomaticTradingConfig = {
   };
 };
 
+export type AlertingConfig = {
+  /** Master switch — rules still run but nothing is recorded or sent when off */
+  enabled: boolean;
+  /** Log what would have been pushed instead of pushing (burn-in mode; cooldowns behave as live) */
+  dry_run: boolean;
+  /** Application API token from pushover.net/apps */
+  pushover_app_token: string;
+  /** A Pushover delivery-group key (whole family) or a single user key */
+  pushover_recipient_key: string;
+  /** Prefixed to every title so Örebro and Göteborg pushes are tellable apart */
+  site_name: string;
+  /** P1 when any battery probe (cell/bus-bar thermometers) reaches this; clears 3° lower */
+  battery_temp_p1_celsius: number;
+  /** P1 when component_max_temperature reaches this — the inverter hard-shuts-off at 100 °C */
+  inverter_temp_p1_celsius: number;
+  /**
+   * P2 when the hottest cooling_outlet_* probe reaches this — the early ventilation alarm. In the
+   * 2025-06-30 shutdown (door + ventilation accidentally closed) outlets hit 39–41 °C vs a 34 °C
+   * normal-summer peak, and would have crossed 36 °C ~80 min before the 100 °C cutoff. The
+   * external-inlet probe sat flat at 24.5 °C through it, so it can't be the signal.
+   */
+  cooling_outlet_temp_p2_celsius: number;
+  /** P2 below this pack voltage (16s LiFePO4 tolerates down to 2.5 V/cell = 40 V) */
+  battery_undervoltage_p2_volts: number;
+  /** P1 above this pack voltage (3.65 V/cell = 58.4 V is the charge ceiling) */
+  battery_overvoltage_p1_volts: number;
+  /** P1 when charging > 200 W with any battery probe at/below this (no charging below freezing) */
+  charging_battery_temp_p1_celsius: number;
+  /** P2 when no mqtt value has updated for this long (inverter USB daemon dead) */
+  stale_mqtt_p2_minutes: number;
+  /** P2 when every thermometer has been silent for this long */
+  stale_temperatures_p2_minutes: number;
+  /** Grid counts as down when ac_input_voltage_r sits below this … */
+  grid_out_below_volts: number;
+  /** … for at least this long (P2) */
+  grid_out_p2_seconds: number;
+  /** Forward every errorLog() as a deduped P2 */
+  error_log_p2: boolean;
+  /** Quiet P3 pushes for the daily plan + settlement results */
+  digest_p3: boolean;
+  /** Per-alert-key re-send suppression window */
+  cooldown_minutes: number;
+  /** Global cap (P1 exempt) so a bug can't machine-gun the family or the API quota */
+  max_pushes_per_hour: number;
+  /** Separate hourly budget for forwarded-errorLog P2s so log noise can't crowd out threshold-rule alerts */
+  max_errorlog_pushes_per_hour: number;
+  /** No staleness alerts this soon after boot — sensors come up in their own time */
+  startup_grace_seconds: number;
+};
+
 export type Config = {
   automatic_trading: AutomaticTradingConfig;
+  alerting: AlertingConfig;
   usb_parameter_setting: {
     min_seconds_between_commands: number;
     /**

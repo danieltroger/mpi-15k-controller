@@ -22,3 +22,5 @@ backend/for_influx.txt
 
 auto_trader_state.json
 backend/auto_trader_state.json
+alert_state.json
+backend/alert_state.json
