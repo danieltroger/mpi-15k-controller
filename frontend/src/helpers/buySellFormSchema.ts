@@ -2,6 +2,7 @@ import { z } from "zod";
 import { datetimeLocalToIso, type BuySellFormData } from "./buySellConfigMapping";
 
 const scheduleRowSchema = z.object({
+  kind: z.enum(["sell", "buy"]),
   start: z.string(),
   end: z.string(),
   power: z.coerce.number(),
@@ -9,57 +10,107 @@ const scheduleRowSchema = z.object({
 
 export const buySellFormSchema = z
   .object({
-    buyOnlyBelowSoc: z.coerce.number(),
-    buyStartAgainBelowSoc: z.coerce.number(),
-    maxGridInputAmperage: z.coerce.number(),
-    sellOnlyAboveSoc: z.coerce.number(),
-    sellStartAgainAboveSoc: z.coerce.number(),
-    onlySellAboveVoltage: z.coerce.number(),
-    startSellingAgainAboveVoltage: z.coerce.number(),
+    emergencySocFloor: z.coerce.number().min(0).max(100),
+    plannerSocFloor: z.coerce.number().min(0).max(100),
+    plannerSocFloorSunny: z.coerce.number().min(0).max(100),
+    extraReserveKwh: z.coerce.number().min(0),
+    // Runtime SOC thresholds deliberately allow >100: setting a buy threshold to 101 means
+    // "charge unconditionally" (and a sell cutoff >100 means "never sell") — both in live use.
+    buyOnlyBelowSoc: z.coerce.number().min(0),
+    buyStartAgainBelowSoc: z.coerce.number().min(0),
+    maxGridInputAmperage: z.coerce.number().min(0),
+    sellOnlyAboveSoc: z.coerce.number().min(0),
+    sellStartAgainAboveSoc: z.coerce.number().min(0),
+    onlySellAboveVoltage: z.coerce.number().min(0),
+    startSellingAgainAboveVoltage: z.coerce.number().min(0),
     // .default([]): modular-forms materializes an EMPTY FieldArray as undefined, and a bare
     // z.array() then fails with "Required" — which made the whole form unsavable whenever the
-    // buy schedule had no rows (e.g. after old buy windows were pruned).
-    buyingRows: z.array(scheduleRowSchema).default([]),
-    sellingRows: z.array(scheduleRowSchema).default([]),
+    // schedule had no rows (e.g. after old windows were pruned).
+    rows: z.array(scheduleRowSchema).default([]),
   })
   .superRefine((data, ctx) => {
-    const checkRows = (rows: BuySellFormData["buyingRows"], path: "buyingRows" | "sellingRows") => {
+    // The floors form a ladder (see AutomaticTradingConfig comments): the relaxed sunny floor may
+    // never exceed the normal planner floor, the emergency bottom sits under both, and the
+    // runtime sell cutoff must stay at or below the sunny floor or the planner would promise
+    // energy the runtime refuses to deliver.
+    if (data.plannerSocFloorSunny > data.plannerSocFloor) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["plannerSocFloorSunny"],
+        message: "Sunny floor must be ≤ the planner floor",
+      });
+    }
+    if (data.emergencySocFloor > data.plannerSocFloorSunny) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["emergencySocFloor"],
+        message: "Emergency floor must be ≤ the sunny floor",
+      });
+    }
+    // (No hard rule tying the sell cutoff to the sunny floor: the config comment recommends
+    // cutoff ≤ sunny floor, but the live systems run other arrangements on purpose.)
+    // Hysteresis pairs must not invert. The sell check is skipped when the stop threshold is the
+    // >100 "never sell" sentinel — resume is necessarily below it then, and erroring would make
+    // the whole form unsavable (the same lockout class this schema was reworked to avoid). The
+    // buy direction needs no guard: its sentinel is high (e.g. 200) and its rule checks ≤.
+    if (data.sellOnlyAboveSoc <= 100 && data.sellStartAgainAboveSoc < data.sellOnlyAboveSoc) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sellStartAgainAboveSoc"],
+        message: "Resume threshold must be ≥ the stop threshold",
+      });
+    }
+    if (data.startSellingAgainAboveVoltage < data.onlySellAboveVoltage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["startSellingAgainAboveVoltage"],
+        message: "Resume voltage must be ≥ the stop voltage",
+      });
+    }
+    if (data.buyStartAgainBelowSoc > data.buyOnlyBelowSoc) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["buyStartAgainBelowSoc"],
+        message: "Resume threshold must be ≤ the stop threshold",
+      });
+    }
+
+    const checkRows = (kind: "sell" | "buy") => {
       const seen = new Set<string>();
-      rows.forEach((row, i) => {
-        if (row.start.trim() === "" || row.end.trim() === "") return;
+      data.rows.forEach((row, i) => {
+        if (row.kind !== kind || row.start.trim() === "" || row.end.trim() === "") return;
         const k = datetimeLocalToIso(row.start);
         if (seen.has(k)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            path: [path, i, "start"],
-            message: "Duplicate start time in this list",
+            path: ["rows", i, "start"],
+            message: "Duplicate start time for this kind",
           });
         }
         seen.add(k);
       });
-
-      rows.forEach((row, i) => {
-        const hasAny = row.start.trim() !== "" || row.end.trim() !== "";
-        const hasAll = row.start.trim() !== "" && row.end.trim() !== "";
-        if (hasAny && !hasAll) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [path, i, "start"],
-            message: "Set both start and end, or clear the row",
-          });
-        }
-        if (hasAll) {
-          if (new Date(row.end) <= new Date(row.start)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: [path, i, "end"],
-              message: "End must be after start",
-            });
-          }
-        }
-      });
     };
+    checkRows("sell");
+    checkRows("buy");
 
-    checkRows(data.buyingRows, "buyingRows");
-    checkRows(data.sellingRows, "sellingRows");
+    data.rows.forEach((row, i) => {
+      const hasAny = row.start.trim() !== "" || row.end.trim() !== "";
+      const hasAll = row.start.trim() !== "" && row.end.trim() !== "";
+      if (hasAny && !hasAll) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rows", i, "start"],
+          message: "Set both start and end, or clear the row",
+        });
+      }
+      if (hasAll && new Date(row.end) <= new Date(row.start)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rows", i, "end"],
+          message: "End must be after start",
+        });
+      }
+    });
   });
+
+export type ParsedBuySellForm = BuySellFormData;

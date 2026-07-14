@@ -84,4 +84,10 @@ export type AutoTraderStatus = {
   last_settlement?: AutoTraderState["last_settlement"];
   owned_selling_windows?: number;
   owned_buying_windows?: number;
+  /**
+   * The ownership record itself, so the frontend can badge exactly the schedule entries the trader
+   * owns — last_plan.windows is a lossy proxy (a window kept through a keepActiveWindows replan is
+   * owned but absent from the latest plan's windows).
+   */
+  owned_entries?: AutoTraderState["owned_entries"];
 };

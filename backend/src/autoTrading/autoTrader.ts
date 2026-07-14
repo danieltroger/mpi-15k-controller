@@ -250,6 +250,7 @@ function refreshStatus(ctx: TraderCtx, extra?: Partial<AutoTraderStatus>) {
       last_settlement: ctx.state.last_settlement,
       owned_selling_windows: Object.keys(ctx.state.owned_entries.selling).length,
       owned_buying_windows: Object.keys(ctx.state.owned_entries.buying).length,
+      owned_entries: ctx.state.owned_entries,
       ...extra,
     }))
   );

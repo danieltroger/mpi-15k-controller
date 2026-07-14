@@ -53,22 +53,6 @@ export function AutoTraderPanel() {
           }
         </p>
 
-        <div class="buy-sell-config__grid2">
-          <label class="buy-sell-config__label">
-            Extra reserve to keep in battery (kWh), e.g. for car charging
-            <input
-              class="buy-sell-config__input"
-              type="number"
-              min="0"
-              step="1"
-              value={tradingConfig()?.extra_reserve_kwh ?? 0}
-              onChange={e =>
-                void writeTradingConfig({ extra_reserve_kwh: Math.max(0, parseFloat(e.currentTarget.value) || 0) })
-              }
-            />
-          </label>
-        </div>
-
         <Show when={status()!.last_plan}>
           {plan => (
             <>
