@@ -37,19 +37,19 @@ function DiagRow(props: { label: string; value: string; title?: string }) {
 }
 
 function SocLedgers() {
-  const [socSinceFull] = getBackendSyncedSignal<number>("socSinceFull");
-  const [socSinceEmpty] = getBackendSyncedSignal<number>("socSinceEmpty");
-  const [socAh] = getBackendSyncedSignal<number>("socAh");
-  const [averageSOC] = getBackendSyncedSignal<number>("averageSOC");
-  const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
-  const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
-  const [energyRemovedSinceFull] = getBackendSyncedSignal<number>("energyRemovedSinceFull");
-  const [energyAddedSinceEmpty] = getBackendSyncedSignal<number>("energyAddedSinceEmpty");
-  const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
-  const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
-  const [isCharging] = getBackendSyncedSignal<number>("isCharging");
-  const [line_power_direction] = getBackendSyncedSignal<MqttValue>("line_power_direction");
-  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
+  const [socSinceFull] = getBackendSyncedSignal("socSinceFull");
+  const [socSinceEmpty] = getBackendSyncedSignal("socSinceEmpty");
+  const [socAh] = getBackendSyncedSignal("socAh");
+  const [averageSOC] = getBackendSyncedSignal("averageSOC");
+  const [assumedCapacity] = getBackendSyncedSignal("assumedCapacity");
+  const [assumedParasiticConsumption] = getBackendSyncedSignal("assumedParasiticConsumption");
+  const [energyRemovedSinceFull] = getBackendSyncedSignal("energyRemovedSinceFull");
+  const [energyAddedSinceEmpty] = getBackendSyncedSignal("energyAddedSinceEmpty");
+  const [totalLastFull] = getBackendSyncedSignal("totalLastFull");
+  const [totalLastEmpty] = getBackendSyncedSignal("totalLastEmpty");
+  const [isCharging] = getBackendSyncedSignal("isCharging");
+  const [line_power_direction] = getBackendSyncedSignal("line_power_direction");
+  const [config] = getBackendSyncedSignal("config", undefined, false);
   const now = useNowMs(1000);
   const ahLedgerConfig = () => config()?.soc_calculations?.ah_ledger;
 
@@ -99,13 +99,11 @@ function SocLedgers() {
 }
 
 function CurrentSensors() {
-  const [voltageSagMillivoltsRaw] = getBackendSyncedSignal<{ value: number; time: number }>("voltageSagMillivoltsRaw");
-  const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged");
-  const [voltageSagMillivoltsRaw2] = getBackendSyncedSignal<{ value: number; time: number }>(
-    "voltageSagMillivoltsRaw2"
-  );
-  const [voltageSagMillivoltsAveraged2] = getBackendSyncedSignal<number>("voltageSagMillivoltsAveraged2");
-  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
+  const [voltageSagMillivoltsRaw] = getBackendSyncedSignal("voltageSagMillivoltsRaw");
+  const [voltageSagMillivoltsAveraged] = getBackendSyncedSignal("voltageSagMillivoltsAveraged");
+  const [voltageSagMillivoltsRaw2] = getBackendSyncedSignal("voltageSagMillivoltsRaw2");
+  const [voltageSagMillivoltsAveraged2] = getBackendSyncedSignal("voltageSagMillivoltsAveraged2");
+  const [config] = getBackendSyncedSignal("config", undefined, false);
 
   const currentFromMv = (
     millivolts: number | undefined,
@@ -163,17 +161,13 @@ function CurrentSensors() {
 }
 
 function NoBuyDebug() {
-  const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
-  const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
-  const [ac_output_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_r");
-  const [ac_output_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_s");
-  const [ac_output_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_t");
-  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastFeedWhenNoSolarReason"
-  );
-  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal<{ what: string; when: number }>(
-    "lastChangingFeedWhenNoSolarReason"
-  );
+  const [solar_input_power_1] = getBackendSyncedSignal("solar_input_power_1");
+  const [solar_input_power_2] = getBackendSyncedSignal("solar_input_power_2");
+  const [ac_output_active_power_r] = getBackendSyncedSignal("ac_output_active_power_r");
+  const [ac_output_active_power_s] = getBackendSyncedSignal("ac_output_active_power_s");
+  const [ac_output_active_power_t] = getBackendSyncedSignal("ac_output_active_power_t");
+  const [lastFeedWhenNoSolarReason] = getBackendSyncedSignal("lastFeedWhenNoSolarReason");
+  const [lastChangingFeedWhenNoSolarReason] = getBackendSyncedSignal("lastChangingFeedWhenNoSolarReason");
   const now = useNowMs(1000);
 
   const solarPower = createMemo(

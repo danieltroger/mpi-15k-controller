@@ -8,26 +8,26 @@ import "./LiveReadings.scss";
 const STALE_AFTER_MS = 60_000;
 
 export function LiveReadings() {
-  const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
-  const [battery_voltage] = getBackendSyncedSignal<MqttValue>("battery_voltage");
-  const [battery_current] = getBackendSyncedSignal<MqttValue>("battery_current");
-  const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
-  const [solar_input_current_1] = getBackendSyncedSignal<MqttValue>("solar_input_current_1");
-  const [solar_input_current_2] = getBackendSyncedSignal<MqttValue>("solar_input_current_2");
-  const [solar_input_voltage_1] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_1");
-  const [solar_input_voltage_2] = getBackendSyncedSignal<MqttValue>("solar_input_voltage_2");
-  const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
-  const [ac_output_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_output_total_active_power");
-  const [ac_input_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_input_total_active_power");
-  const [ac_input_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_r");
-  const [ac_input_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_s");
-  const [ac_input_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_input_active_power_t");
-  const [ac_output_active_power_r] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_r");
-  const [ac_output_active_power_s] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_s");
-  const [ac_output_active_power_t] = getBackendSyncedSignal<MqttValue>("ac_output_active_power_t");
-  const [ac_input_voltage_r] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_r");
-  const [ac_input_voltage_s] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_s");
-  const [ac_input_voltage_t] = getBackendSyncedSignal<MqttValue>("ac_input_voltage_t");
+  const [currentBatteryPower] = getBackendSyncedSignal("currentBatteryPower");
+  const [battery_voltage] = getBackendSyncedSignal("battery_voltage");
+  const [battery_current] = getBackendSyncedSignal("battery_current");
+  const [solar_input_power_1] = getBackendSyncedSignal("solar_input_power_1");
+  const [solar_input_current_1] = getBackendSyncedSignal("solar_input_current_1");
+  const [solar_input_current_2] = getBackendSyncedSignal("solar_input_current_2");
+  const [solar_input_voltage_1] = getBackendSyncedSignal("solar_input_voltage_1");
+  const [solar_input_voltage_2] = getBackendSyncedSignal("solar_input_voltage_2");
+  const [solar_input_power_2] = getBackendSyncedSignal("solar_input_power_2");
+  const [ac_output_total_active_power] = getBackendSyncedSignal("ac_output_total_active_power");
+  const [ac_input_total_active_power] = getBackendSyncedSignal("ac_input_total_active_power");
+  const [ac_input_active_power_r] = getBackendSyncedSignal("ac_input_active_power_r");
+  const [ac_input_active_power_s] = getBackendSyncedSignal("ac_input_active_power_s");
+  const [ac_input_active_power_t] = getBackendSyncedSignal("ac_input_active_power_t");
+  const [ac_output_active_power_r] = getBackendSyncedSignal("ac_output_active_power_r");
+  const [ac_output_active_power_s] = getBackendSyncedSignal("ac_output_active_power_s");
+  const [ac_output_active_power_t] = getBackendSyncedSignal("ac_output_active_power_t");
+  const [ac_input_voltage_r] = getBackendSyncedSignal("ac_input_voltage_r");
+  const [ac_input_voltage_s] = getBackendSyncedSignal("ac_input_voltage_s");
+  const [ac_input_voltage_t] = getBackendSyncedSignal("ac_input_voltage_t");
   const now = useNowMs(1000);
 
   const solarInput = createMemo(() => {

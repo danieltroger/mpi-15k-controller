@@ -12,8 +12,8 @@ import "./AlertsCard.scss";
  * button every family phone gets verified with. Thresholds live in the alerting config section.
  */
 export function AlertsCard() {
-  const [recentAlerts] = getBackendSyncedSignal<AlertRecord[]>("recentAlerts", undefined, true, true);
-  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
+  const [recentAlerts] = getBackendSyncedSignal("recentAlerts", undefined, true, true);
+  const [config] = getBackendSyncedSignal("config", undefined, false);
   const socket = useWebSocket();
   const owner = getOwner()!;
   const now = useNowMs(5000);

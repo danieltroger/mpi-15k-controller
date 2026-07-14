@@ -1,14 +1,20 @@
-import { Accessor, createEffect, createSignal, getOwner, onCleanup, Signal } from "solid-js";
+import { type Accessor, createEffect, createSignal, getOwner, onCleanup } from "solid-js";
 import { random_string } from "@depict-ai/utilishared/latest";
 import { useVisibilityState } from "@depict-ai/ui/latest";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { isServer } from "solid-js/web";
+import type {
+  WsAction,
+  WsExposedSignals,
+  WsSignalKey,
+  WsWritableSignalKey,
+} from "../../../backend/src/wsContract.types";
 
 /** Fire a backend action (command: "action") and return its result string, or undefined on failure. */
 export async function sendBackendAction(
   socket: ReturnType<typeof useWebSocket>,
-  action: string
+  action: WsAction
 ): Promise<string | undefined> {
   const [response] = (await socket?.ensure_sent({
     id: random_string(),
@@ -20,27 +26,84 @@ export async function sendBackendAction(
   throw new Error(response.message || "Action failed");
 }
 
-export function getBackendSyncedSignal<T, default_value_was_provided extends boolean = false>(
-  key: string,
-  default_value?: T,
+/** Only `config` is writable server-side; for every other key the setter type is `never`. */
+type BackendSetter<K extends WsSignalKey> = K extends WsWritableSignalKey
+  ? (new_value: WsExposedSignals[K]) => Promise<boolean | undefined>
+  : never;
+
+/**
+ * A signal mirroring one backend-exposed value, typed by the ws contract (wsContract.types.ts):
+ * the key must exist there and the value type is inferred from it — a typo'd key or a wrongly
+ * assumed shape fails to compile instead of failing at runtime.
+ */
+// With a default value the accessor never yields undefined
+export function getBackendSyncedSignal<K extends WsSignalKey>(
+  key: K,
+  default_value: WsExposedSignals[K],
+  refetchOnVisibilityChange?: boolean,
+  silentReadErrors?: boolean
+): readonly [Accessor<WsExposedSignals[K]>, BackendSetter<K>];
+// Without one, undefined means "hasn't arrived yet"
+export function getBackendSyncedSignal<K extends WsSignalKey>(
+  key: K,
+  default_value?: undefined,
+  refetchOnVisibilityChange?: boolean,
+  silentReadErrors?: boolean
+): readonly [Accessor<WsExposedSignals[K] | undefined>, BackendSetter<K>];
+export function getBackendSyncedSignal<K extends WsSignalKey>(
+  key: K,
+  default_value?: WsExposedSignals[K],
   refetchOnVisibilityChange = true,
   /** Log read failures to the console instead of toasting — for keys an older backend may not expose yet. */
   silentReadErrors = false
 ) {
+  type Value = WsExposedSignals[K] | undefined;
   const socket = useWebSocket();
-  const signal = createSignal<T>(default_value!);
+  const owner = getOwner();
+  const [get_value, set_actual_signal] = createSignal<Value>(default_value);
+
+  const write = async (new_value: WsExposedSignals[K]) => {
+    set_actual_signal(() => new_value); // set the signal immediately, since that's what's expected of a signal and we kind of want to emulate that
+    try {
+      const [response] = (await socket?.ensure_sent({
+        id: random_string(),
+        command: "write",
+        key,
+        value: new_value,
+      })) as [
+        {
+          id: string;
+          status: "ok" | "not-ok";
+          value: unknown;
+          message?: string;
+        },
+        string,
+      ];
+      if (response.status === "ok") {
+        return true;
+      }
+      console.error(response);
+      throw response.message;
+    } catch (e) {
+      console.error(e);
+      if (owner) await showToastWithMessage(owner, () => `Error writing ${key}: ${e}`);
+    }
+    return false;
+  };
+  // The runtime write function exists for every key (the backend rejects non-writable ones);
+  // the conditional type narrows it away at compile time for read-only keys.
+  const result = [get_value, write] as unknown as readonly [Accessor<Value>, BackendSetter<K>];
 
   if (isServer) {
-    return signal as default_value_was_provided extends true ? Signal<T> : Signal<T | undefined>;
+    return result;
   }
 
-  const [get_value, set_actual_signal] = signal;
-  const owner = getOwner()!;
   const pageIsVisible = useVisibilityState();
   const message_handler = ({ data }: MessageEvent) => {
     const decoded = JSON.parse(data);
     if (decoded.type === "change" && decoded.key === key) {
-      set_actual_signal(decoded.value);
+      // functional form like the other setters — a bare value would be *called* if it were a function
+      set_actual_signal(() => decoded.value);
     }
   };
   const requestValueUpdate = async () => {
@@ -52,21 +115,21 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
       {
         id: string;
         status: "ok" | "not-ok";
-        value: any;
+        value: Value;
       },
       string,
     ];
     if (response.status === "ok") {
-      set_actual_signal(response.value);
+      set_actual_signal(() => response.value);
     } else if (silentReadErrors) {
       console.warn(`Backend can't provide ${key} (yet?):`, response_json);
     } else {
       console.error(response);
-      await showToastWithMessage(owner, () => `Error reading ${key}: ${response_json}`);
+      if (owner) await showToastWithMessage(owner, () => `Error reading ${key}: ${response_json}`);
     }
   };
-  socket?.addEventListener("message", message_handler as any);
-  onCleanup(() => socket?.removeEventListener("message", message_handler as any));
+  socket?.addEventListener("message", message_handler as EventListener);
+  onCleanup(() => socket?.removeEventListener("message", message_handler as EventListener));
 
   // Initially, and when leaving the tab and coming back, poll for current values
   // Otherwise when opening a tab that has been suspended for a while, we will show ancient values until a new broadcast comes in for that value
@@ -76,35 +139,5 @@ export function getBackendSyncedSignal<T, default_value_was_provided extends boo
     requestValueUpdate();
   }
 
-  return [
-    get_value as default_value_was_provided extends true ? Accessor<T> : Accessor<T | undefined>,
-    async (new_value: T) => {
-      set_actual_signal(() => new_value); // set the signal immediately, since that's what's expected of a signal and we kind of want to emulate that
-      try {
-        const [response] = (await socket?.ensure_sent({
-          id: random_string(),
-          command: "write",
-          key,
-          value: new_value,
-        })) as [
-          {
-            id: string;
-            status: "ok" | "not-ok";
-            value: any;
-            message?: string;
-          },
-          string,
-        ];
-        if (response.status === "ok") {
-          return true;
-        }
-        console.error(response);
-        throw response.message;
-      } catch (e) {
-        console.error(e);
-        await showToastWithMessage(owner, () => `Error writing ${key}: ${e}`);
-      }
-      return false;
-    },
-  ] as const;
+  return result;
 }

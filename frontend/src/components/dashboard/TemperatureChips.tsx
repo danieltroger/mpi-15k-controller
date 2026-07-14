@@ -9,7 +9,7 @@ import type { TemperatureReadingBroadcast } from "../../../../backend/src/shared
 const STALE_AFTER_MS = 3 * 60_000;
 
 export function TemperatureChips() {
-  const [temperatures] = getBackendSyncedSignal<Record<string, TemperatureReadingBroadcast>>("temperatures");
+  const [temperatures] = getBackendSyncedSignal("temperatures");
   const now = useNowMs(5000);
   const readings = createMemo(() => Object.values(temperatures() ?? {}).sort((a, b) => a.label.localeCompare(b.label)));
   const newestTime = createMemo(() => Math.max(0, ...readings().map(reading => reading.time)));

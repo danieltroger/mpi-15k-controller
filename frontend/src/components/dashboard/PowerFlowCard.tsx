@@ -18,11 +18,11 @@ const BALANCE_TOLERANCE_WATTS = 500;
  * sums for its sanity check; the card-meta shows that balance so a broken sensor is visible here too.
  */
 export function PowerFlowCard() {
-  const [solar_input_power_1] = getBackendSyncedSignal<MqttValue>("solar_input_power_1");
-  const [solar_input_power_2] = getBackendSyncedSignal<MqttValue>("solar_input_power_2");
-  const [ac_output_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_output_total_active_power");
-  const [ac_input_total_active_power] = getBackendSyncedSignal<MqttValue>("ac_input_total_active_power");
-  const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
+  const [solar_input_power_1] = getBackendSyncedSignal("solar_input_power_1");
+  const [solar_input_power_2] = getBackendSyncedSignal("solar_input_power_2");
+  const [ac_output_total_active_power] = getBackendSyncedSignal("ac_output_total_active_power");
+  const [ac_input_total_active_power] = getBackendSyncedSignal("ac_input_total_active_power");
+  const [currentBatteryPower] = getBackendSyncedSignal("currentBatteryPower");
 
   const solarWatts = createMemo(() => {
     const array1 = solar_input_power_1()?.value;

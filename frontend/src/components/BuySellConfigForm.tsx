@@ -172,7 +172,7 @@ function BuySellFormInner(props: {
   getConfig: Accessor<Config>;
   setConfig: (config: Config) => Promise<boolean | undefined>;
 }) {
-  const [status] = getBackendSyncedSignal<AutoTraderStatus>("autoTraderStatus");
+  const [status] = getBackendSyncedSignal("autoTraderStatus");
   const [buySellForm, { Form }] = createForm<BuySellFormData>({
     initialValues: configToBuySellFormData(untrack(() => props.getConfig())),
     validate: zodForm(buySellFormSchema),
@@ -524,7 +524,7 @@ function BuySellFormInner(props: {
 }
 
 export function BuySellConfigForm(): JSX.Element {
-  const [config, set_config] = getBackendSyncedSignal<Config>("config", undefined, false);
+  const [config, set_config] = getBackendSyncedSignal("config", undefined, false);
 
   return (
     <Show when={config()} fallback={<p class="buy-sell-config__loading">Loading configuration…</p>}>

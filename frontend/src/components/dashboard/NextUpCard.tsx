@@ -24,8 +24,8 @@ function settlementDayLabel(settledDate: string, nowMs: number): string {
 }
 
 export function NextUpCard() {
-  const [status] = getBackendSyncedSignal<AutoTraderStatus>("autoTraderStatus");
-  const [config] = getBackendSyncedSignal<Config>("config", undefined, false);
+  const [status] = getBackendSyncedSignal("autoTraderStatus");
+  const [config] = getBackendSyncedSignal("config", undefined, false);
   const now = useNowMs(30_000);
 
   // Windows from the config schedules (what will actually run), enriched with the planner's

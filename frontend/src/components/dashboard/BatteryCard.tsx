@@ -18,14 +18,14 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 export function BatteryCard() {
   // averageSOC is the clamped SOC the trading logic actually runs on — the number that was
   // broadcast all along but shown nowhere before this card existed.
-  const [averageSOC] = getBackendSyncedSignal<number>("averageSOC");
-  const [assumedCapacity] = getBackendSyncedSignal<number>("assumedCapacity");
-  const [currentBatteryPower] = getBackendSyncedSignal<CurrentBatteryPowerBroadcast>("currentBatteryPower");
-  const [assumedParasiticConsumption] = getBackendSyncedSignal<number>("assumedParasiticConsumption");
-  const [energyRemovedSinceFull] = getBackendSyncedSignal<number>("energyRemovedSinceFull");
-  const [energyAddedSinceEmpty] = getBackendSyncedSignal<number>("energyAddedSinceEmpty");
-  const [totalLastFull] = getBackendSyncedSignal<string>("totalLastFull");
-  const [totalLastEmpty] = getBackendSyncedSignal<number>("totalLastEmpty");
+  const [averageSOC] = getBackendSyncedSignal("averageSOC");
+  const [assumedCapacity] = getBackendSyncedSignal("assumedCapacity");
+  const [currentBatteryPower] = getBackendSyncedSignal("currentBatteryPower");
+  const [assumedParasiticConsumption] = getBackendSyncedSignal("assumedParasiticConsumption");
+  const [energyRemovedSinceFull] = getBackendSyncedSignal("energyRemovedSinceFull");
+  const [energyAddedSinceEmpty] = getBackendSyncedSignal("energyAddedSinceEmpty");
+  const [totalLastFull] = getBackendSyncedSignal("totalLastFull");
+  const [totalLastEmpty] = getBackendSyncedSignal("totalLastEmpty");
   const now = useNowMs(1000);
 
   const activity = useBatteryActivity({
