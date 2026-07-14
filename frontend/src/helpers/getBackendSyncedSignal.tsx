@@ -102,7 +102,8 @@ export function getBackendSyncedSignal<K extends WsSignalKey>(
   const message_handler = ({ data }: MessageEvent) => {
     const decoded = JSON.parse(data);
     if (decoded.type === "change" && decoded.key === key) {
-      set_actual_signal(decoded.value);
+      // functional form like the other setters — a bare value would be *called* if it were a function
+      set_actual_signal(() => decoded.value);
     }
   };
   const requestValueUpdate = async () => {
