@@ -1,0 +1,38 @@
+name: Frontend build
+
+# The solid babel transform only runs its client-mode pass at build time — typecheck alone misses
+# a class of crashes (e.g. mixed static+dynamic text inside SVG <text>). Building both routers is
+# the only gate that catches them before nodemon does, so it runs on every frontend-affecting
+# change (the frontend imports types from backend/src, hence that path too).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/src/**"
+      - ".github/workflows/frontend-build.yml"
+  push:
+    paths:
+      - "frontend/**"
+      - "backend/src/**"
+      - ".github/workflows/frontend-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build frontend (SSR + client routers)
+        working-directory: frontend
+        run: yarn build

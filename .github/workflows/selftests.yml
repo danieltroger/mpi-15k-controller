@@ -1,0 +1,35 @@
+name: Backend selftests
+
+# Replaces the old planner-test.yml: instead of hand-listing one selftest behind narrow path
+# filters, runSelftests.ts discovers every backend/src/**/*.selftest.ts, and any backend change
+# (planner, SOC ledger math, alerting, utilities they all depend on) triggers the whole suite.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/selftests.yml"
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/selftests.yml"
+
+jobs:
+  selftests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run all *.selftest.ts files
+        working-directory: backend
+        run: yarn selftest
