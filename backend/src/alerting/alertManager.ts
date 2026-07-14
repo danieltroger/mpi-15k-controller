@@ -40,6 +40,9 @@ export function createAlertManager(config: Accessor<Config>): AlertManager {
     ])
   );
   const pushedAtMs: number[] = [];
+  // Forwarded errorLogs are unbounded and uncurated compared to the threshold rules, so they get
+  // their own (smaller) hourly budget — log noise must never rate-cap a real hazard P2.
+  const errorLogPushedAtMs: number[] = [];
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   const persist = () => {
@@ -77,14 +80,18 @@ export function createAlertManager(config: Accessor<Config>): AlertManager {
       return record;
     }
 
-    while (pushedAtMs.length && pushedAtMs[0] < nowMs - 3600_000) pushedAtMs.shift();
+    const isForwardedErrorLog = alert.key.startsWith("errorlog:");
+    const budgetBucket = isForwardedErrorLog ? errorLogPushedAtMs : pushedAtMs;
+    while (budgetBucket.length && budgetBucket[0] < nowMs - 3600_000) budgetBucket.shift();
     const decision = decideSend({
       nowMs,
       severity: alert.severity,
       lastSentForKey: lastSentByKey.get(alert.key),
       cooldownMs: alertingConfig.cooldown_minutes * 60_000,
-      pushedAtMsLastHour: pushedAtMs,
-      maxPushesPerHour: alertingConfig.max_pushes_per_hour,
+      pushedAtMsLastHour: budgetBucket,
+      maxPushesPerHour: isForwardedErrorLog
+        ? alertingConfig.max_errorlog_pushes_per_hour
+        : alertingConfig.max_pushes_per_hour,
     });
 
     if (decision === "cooldown") {
@@ -117,7 +124,7 @@ export function createAlertManager(config: Accessor<Config>): AlertManager {
 
     if (record.delivery === "pushed" || record.delivery === "dry_run") {
       lastSentByKey.set(alert.key, { atMs: nowMs, severity: alert.severity });
-      if (record.delivery === "pushed") pushedAtMs.push(nowMs);
+      if (record.delivery === "pushed") budgetBucket.push(nowMs);
     }
     setRecentAlerts(existing => [record, ...existing].slice(0, RECENT_CAP));
     persist();

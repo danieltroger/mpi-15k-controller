@@ -267,7 +267,9 @@ function main() {
                           },
                           send_test_alert: async () => {
                             const record = await alertManager.raise({
-                              key: "test-alert",
+                              // Unique per press: re-testing a silent phone is the whole point, so the
+                              // cooldown must never swallow a manual test (review: PR #37).
+                              key: `test-alert-${Date.now()}`,
                               severity: "P2",
                               title: "Test alert",
                               message:

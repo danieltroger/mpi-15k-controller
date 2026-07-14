@@ -30,6 +30,7 @@ export const default_config: Config = {
     digest_p3: true,
     cooldown_minutes: 30,
     max_pushes_per_hour: 20,
+    max_errorlog_pushes_per_hour: 6,
     startup_grace_seconds: 180,
   },
   automatic_trading: {

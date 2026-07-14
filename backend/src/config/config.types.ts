@@ -114,6 +114,8 @@ export type AlertingConfig = {
   cooldown_minutes: number;
   /** Global cap (P1 exempt) so a bug can't machine-gun the family or the API quota */
   max_pushes_per_hour: number;
+  /** Separate hourly budget for forwarded-errorLog P2s so log noise can't crowd out threshold-rule alerts */
+  max_errorlog_pushes_per_hour: number;
   /** No staleness alerts this soon after boot — sensors come up in their own time */
   startup_grace_seconds: number;
 };
