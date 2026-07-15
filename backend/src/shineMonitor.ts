@@ -1,7 +1,8 @@
 import { get_config_object } from "./config/config.ts";
 import { untrack } from "solid-js";
 import { sha1 } from "./utilities/sha1.ts";
-import { logLog } from "./utilities/logging.ts";
+import { logLog, warnLog } from "./utilities/logging.ts";
+import { wait } from "./vendor/depictUtilishared.ts";
 import type { Config } from "./config/config.types.ts";
 
 export type GetVoltageResponse = {
@@ -26,6 +27,8 @@ export type SetVoltageResponse = {
 let requestBeingMade: Promise<void> | undefined;
 
 const shineUrl = "https://web.dessmonitor.com/public/";
+const TRANSIENT_RETRIES = 2;
+const RETRY_DELAY_MS = 8_000;
 
 export async function makeRequestWithAuth<T>(
   configSignal: Awaited<ReturnType<typeof get_config_object>>,
@@ -43,30 +46,48 @@ export async function makeRequestWithAuth<T>(
     const {
       dat: { secret, token },
     } = auth;
-    const now = +new Date();
     const requestPart = { action, source: "1", ...initialRequest };
-    const asQueryString = new URLSearchParams(requestPart) + "";
-    const sign = sha1(now + secret + token + "&" + asQueryString);
-    const actualParams = new URLSearchParams({
-      sign: sign,
-      salt: now + "",
-      token: token,
-      ...requestPart,
-    });
-    const urlObject = new URL(shineUrl);
-    urlObject.search = actualParams + "";
+    // Signed fresh per attempt — the salt is a timestamp and retries come seconds later
+    const buildUrl = () => {
+      const now = +new Date();
+      const asQueryString = new URLSearchParams(requestPart) + "";
+      const sign = sha1(now + secret + token + "&" + asQueryString);
+      const urlObject = new URL(shineUrl);
+      urlObject.search = new URLSearchParams({ sign: sign, salt: now + "", token: token, ...requestPart }) + "";
+      return urlObject;
+    };
 
-    const response = await fetch(urlObject, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0",
-        "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
-        "Accept": "*/*",
-      },
-      signal: AbortSignal.timeout(120_000),
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to make request to shinemonitor, non-200 response: " + response.status);
+    // Dessmonitor's cloud intermittently 404s or drops single requests and recovers within
+    // seconds (139 log occurrences May–Jul 2026, every one self-healed). Absorb those blips here
+    // instead of letting every consumer crash-restart and page a P2; a persistent outage still
+    // throws after the retries.
+    let response: Response | undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await fetch(buildUrl(), {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0",
+            "Accept-Language": "en-SE;q=1, sv-SE;q=0.9",
+            "Accept": "*/*",
+          },
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (fetchError) {
+        if (attempt >= TRANSIENT_RETRIES) throw fetchError;
+        warnLog(
+          `Shinemonitor request failed (${fetchError}), retry ${attempt + 1}/${TRANSIENT_RETRIES} in ${RETRY_DELAY_MS / 1000}s`
+        );
+        await wait(RETRY_DELAY_MS);
+        continue;
+      }
+      if (response.ok) break;
+      if (attempt >= TRANSIENT_RETRIES) {
+        throw new Error("Failed to make request to shinemonitor, non-200 response: " + response.status);
+      }
+      warnLog(
+        `Shinemonitor returned ${response.status}, retry ${attempt + 1}/${TRANSIENT_RETRIES} in ${RETRY_DELAY_MS / 1000}s`
+      );
+      await wait(RETRY_DELAY_MS);
     }
     const decoded = (await response.json()) as T;
 
