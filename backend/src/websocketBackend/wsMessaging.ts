@@ -22,7 +22,23 @@ export async function wsMessaging({
   const exposed_signals = {
     config: {
       getter: get_config,
-      setter: set_config,
+      // Clients write the WHOLE config object from their own (possibly stale) copy — a phone tab that
+      // re-synced 80 min ago and then saved reverted an Ah-ledger drain update on 2026-07-16. The
+      // machine-owned EMA state must therefore always be taken from the live value, never the client's:
+      // these fields are only ever written by the ledger's parameter tracking. To seed them manually,
+      // stop the service and edit config.json.
+      setter: (value: Config) =>
+        set_config(current => ({
+          ...value,
+          soc_calculations: {
+            ...value.soc_calculations,
+            ah_ledger: {
+              ...value.soc_calculations.ah_ledger,
+              drain_a: current.soc_calculations.ah_ledger.drain_a,
+              capacity_ah: current.soc_calculations.ah_ledger.capacity_ah,
+            },
+          },
+        })),
       validator: (value: Config) => {
         if (typeof value !== "object") {
           return "Can't write config, not an object: " + value;
