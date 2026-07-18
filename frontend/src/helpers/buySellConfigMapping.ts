@@ -146,7 +146,8 @@ function diffScheduleOfKind(
   for (const [key, row] of currentByKey) {
     const before = pristineByKey.get(key);
     const changed = !before || before.end !== row.end || Number(before.power) !== Number(row.power);
-    if (!changed) continue; // the user added or edited this row
+    if (!changed) continue; // untouched rows are never sent
+    // …only rows the user added or edited become set patches
     if (kind === "sell") {
       sets.push(
         configSet(["scheduled_power_selling", "schedule", key], {

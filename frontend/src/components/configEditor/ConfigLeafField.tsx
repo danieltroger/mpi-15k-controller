@@ -12,13 +12,17 @@ export function ConfigLeafField(props: { state: ConfigEditorState; meta: ConfigF
   const path = () => props.meta.path;
   const effective = () => props.state.effectiveValue(path());
   const dirty = () => !!props.state.pendingFor(path());
-  // The control kind follows the live value's type; meta settles it when the value is absent
+  // The control kind follows the live value's type; meta settles it when the value is absent —
+  // numeric hints (unit/min/max/step) force a number input so an absent optional numeric field
+  // can never stage a string into a numeric slot (setAtPath has no type precedent for new keys)
   const kind = () => {
     if (props.meta.readonly) return "readonly";
     if (props.meta.options) return "select";
     const value = effective();
     if (typeof value === "boolean") return "boolean";
     if (typeof value === "number") return "number";
+    const { unit, min, max, step } = props.meta;
+    if (value === undefined && (unit ?? min ?? max ?? step) !== undefined) return "number";
     return "text";
   };
 
