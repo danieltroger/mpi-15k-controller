@@ -155,6 +155,13 @@ async function estimateElpatronHistory(
  * its stove GPIO turned out to be a call-for-heat line (asserted all summer) and its
  * stove_disabled config flag flips with operator fiddling, so neither is trusted here.
  *
+ * Residual risks, for the record: a PARTIAL firing that never crests tank_max + 2 and rises
+ * ≤15 °C/h would be subtracted as element — the one misclassification that UNDER-forecasts
+ * (all others over-forecast, the safe direction). Real firings reach 62–70 °C, so this is the
+ * tail case. And tank_max_temperature does double duty as the element band edge (−5) and the
+ * boiler ceiling (+2): recalibrating it moves both, which at worst mislabels element burns as
+ * boiler (safe direction, element stays in the baseline).
+ *
  * Pure and exported for the selftest.
  */
 export function estimateElpatronWattsByHour(
