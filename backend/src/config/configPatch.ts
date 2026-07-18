@@ -68,6 +68,12 @@ export function applyConfigPatches(current: Config, patches: readonly ConfigPatc
 
 export type ConfigPatchResult = { patched: Config } | { error: string };
 
+/** Whether `unset` may remove this path — the config editor uses it to decide if clearing a text
+ * field means "remove the key" (optional) or "set empty string" (required). */
+export function pathIsUnsettable(path: readonly string[]): boolean {
+  return UNSETTABLE_PATH_PATTERNS.some(pattern => pathMatchesPattern(path, pattern));
+}
+
 /**
  * Every top-level Config key, as a runtime object so patch paths can be validated on the wire.
  * `satisfies Record<keyof Config, true>` makes forgetting a newly added key a compile error.

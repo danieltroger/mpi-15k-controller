@@ -1,11 +1,11 @@
 import { Title } from "@solidjs/meta";
-import { ConfigEditor } from "~/components/ConfigEditor";
+import { ConfigEditor } from "~/components/configEditor/ConfigEditor";
 
 export default function Config() {
   return (
     <main>
       <Title>Config — Kraftverket</Title>
-      <h1>Config editor</h1>
+      <h1>Config</h1>
       <ConfigEditor />
     </main>
   );
