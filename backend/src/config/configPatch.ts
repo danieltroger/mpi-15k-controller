@@ -92,18 +92,11 @@ const TOP_LEVEL_CONFIG_KEYS = {
   full_battery_voltage: true,
   float_charging_voltage: true,
   start_bulk_charge_voltage: true,
-  temperature_report_interval: true,
   thermometers: true,
   mqtt_host: true,
   temperature_saving: true,
   feed_from_battery_when_no_solar: true,
   start_bulk_charge_after_wh_discharged: true,
-  shinemonitor_password: true,
-  shinemonitor_user: true,
-  shinemonitor_company_key: true,
-  inverter_sn: true,
-  inverter_pn: true,
-  savedAuth_do_not_edit: true,
 } satisfies Record<keyof Config, true>;
 
 /**
@@ -128,11 +121,6 @@ const UNSETTABLE_PATH_PATTERNS: readonly (readonly string[])[] = [
   ["thermometers", "*"],
   ["elpatron_switching", "mode"],
   ["influxdb"],
-  ["shinemonitor_password"],
-  ["shinemonitor_user"],
-  ["inverter_sn"],
-  ["inverter_pn"],
-  ["savedAuth_do_not_edit"],
 ];
 
 /** Assigning these via bracket notation mutates the prototype chain instead of the object. */

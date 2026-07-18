@@ -41,11 +41,7 @@ type UnsettableConfigPath =
   | readonly ["scheduled_power_buying", "schedule", string]
   | readonly ["thermometers", string]
   | readonly ["elpatron_switching", "mode"]
-  | readonly ["influxdb"]
-  | readonly ["shinemonitor_password"]
-  | readonly ["shinemonitor_user"]
-  | readonly ["inverter_sn"]
-  | readonly ["inverter_pn"];
+  | readonly ["influxdb"];
 
 export function configUnset(path: UnsettableConfigPath): ConfigPatch {
   return { path, op: "unset" };

@@ -74,6 +74,5 @@ function seedConfig(): Config {
     "28-00000e8d0b6a": "Battery cell 3",
     "28-00000e8ddf12": "Cooling outlet left",
   };
-  seeded.shinemonitor_user = "daniel";
   return seeded;
 }

@@ -138,7 +138,6 @@ export const default_config: Config = {
   mqtt_host: "192.168.0.3",
   stop_charging_below_current: 10,
   thermometers: {},
-  temperature_report_interval: 3000,
   temperature_saving: {
     database: "mppsolar",
     table: "battery_temperatures",
