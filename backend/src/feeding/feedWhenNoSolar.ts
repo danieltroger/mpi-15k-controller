@@ -10,7 +10,7 @@ import { useSetBuyingParameters } from "../buying/useSetBuyingParameters.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
-import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
+import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -33,7 +33,6 @@ export function feedWhenNoSolar({
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
   const { mqttValues } = useFromMqttProvider();
-  const { assumedParasiticConsumption } = useBatteryValuesProvider();
 
   const { $usbValues, triggerGettingUsbValues, setCommandQueue } = useUsbInverterConfiguration();
   const acOutputPower = () => {
@@ -52,6 +51,8 @@ export function feedWhenNoSolar({
     return solar - acOutput;
   });
   const [config] = configSignal;
+  // Inverter idle draw the grid-charge sizing must leave headroom for; from the Ah ledger (drain_a × v_discharge).
+  const idleConsumptionWatts = createMemo(() => inverterIdleWatts(config()));
   const feedBelow = createMemo(() => config().feed_from_battery_when_no_solar.feed_below_available_power);
   const incrementForAntiPeak = useOutputPowerSuddenlyRose(acOutputPower, config, mqttValues);
   // If we are between having reached nearly 58.4v the first time, and the charge process having completed due to no current flowing
@@ -206,7 +207,7 @@ export function feedWhenNoSolar({
   );
   const { currentlyBuying } = useSetBuyingParameters({
     chargingAmperageForBuying,
-    assumedParasiticConsumption,
+    idleConsumptionWatts,
     stillFeedingIn,
   });
 

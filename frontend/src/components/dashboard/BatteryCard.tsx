@@ -10,35 +10,44 @@ import {
   formatWhAsKwh,
   useNowMs,
 } from "~/helpers/format";
-import type { CurrentBatteryPowerBroadcast } from "../../../../backend/src/sharedTypes";
+import type { LedgerAnchor } from "../../../../backend/src/battery/ahLedger.types";
 
 const RING_RADIUS = 62;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export function BatteryCard() {
-  // averageSOC is the clamped SOC the trading logic actually runs on — the number that was
-  // broadcast all along but shown nowhere before this card existed.
+  // averageSOC is THE SOC the whole app runs on: the Ah ledger clamped to [0,100]. Capacity, idle draw
+  // and the branch voltages come from the synced config's ah_ledger; latestAnchor is the last full/empty.
   const [averageSOC] = getBackendSyncedSignal("averageSOC");
-  const [assumedCapacity] = getBackendSyncedSignal("assumedCapacity");
   const [currentBatteryPower] = getBackendSyncedSignal("currentBatteryPower");
-  const [assumedParasiticConsumption] = getBackendSyncedSignal("assumedParasiticConsumption");
-  const [energyRemovedSinceFull] = getBackendSyncedSignal("energyRemovedSinceFull");
-  const [energyAddedSinceEmpty] = getBackendSyncedSignal("energyAddedSinceEmpty");
-  const [totalLastFull] = getBackendSyncedSignal("totalLastFull");
-  const [totalLastEmpty] = getBackendSyncedSignal("totalLastEmpty");
+  const [latestAnchor] = getBackendSyncedSignal("latestAnchor");
+  const [config] = getBackendSyncedSignal("config", undefined, false);
   const now = useNowMs(1000);
+
+  const ahLedger = () => config()?.soc_calculations?.ah_ledger;
+  // Inverter idle draw and usable pack energy, derived from the Ah ledger (drain_a / capacity_ah × v_discharge).
+  const idleWatts = createMemo(() => {
+    const ledger = ahLedger();
+    return ledger ? ledger.drain_a * ledger.v_discharge : undefined;
+  });
+  const capacityWh = createMemo(() => {
+    const ledger = ahLedger();
+    return ledger ? ledger.capacity_ah * ledger.v_discharge : undefined;
+  });
 
   const activity = useBatteryActivity({
     batteryPowerWatts: () => currentBatteryPower()?.value,
-    parasiticWatts: assumedParasiticConsumption,
-    whUntilFull: energyRemovedSinceFull,
-    whUntilEmpty: energyAddedSinceEmpty,
+    idleWatts,
+    socPercent: averageSOC,
+    capacityAh: () => ahLedger()?.capacity_ah,
+    vCharge: () => ahLedger()?.v_charge,
+    vDischarge: () => ahLedger()?.v_discharge,
   });
 
   const socFraction = createMemo(() => Math.min(1, Math.max(0, (averageSOC() ?? 0) / 100)));
   const storedWh = createMemo(() => {
     const soc = averageSOC();
-    const capacity = assumedCapacity();
+    const capacity = capacityWh();
     if (soc === undefined || capacity === undefined) return undefined;
     return (soc / 100) * capacity;
   });
@@ -72,7 +81,7 @@ export function BatteryCard() {
             <small>%</small>
           </div>
           <div class="battery-card__kwh">
-            {dashUnless(storedWh(), stored => `${formatWhAsKwh(stored)} / ${formatWhAsKwh(assumedCapacity()!)}`)}
+            {dashUnless(storedWh(), stored => `${formatWhAsKwh(stored)} / ${formatWhAsKwh(capacityWh()!)}`)}
           </div>
         </div>
       </div>
@@ -100,9 +109,16 @@ export function BatteryCard() {
       </Show>
 
       <div class="battery-card__history">
-        last full {dashUnless(totalLastFull(), iso => formatRelativeTime(now(), +new Date(iso)))} · last empty{" "}
-        {dashUnless(totalLastEmpty(), ms => formatRelativeTime(now(), ms))}
+        {dashUnless(
+          latestAnchor(),
+          anchor => `last ${anchorLabel(anchor.type)} ${formatRelativeTime(now(), anchor.at)}`
+        )}
       </div>
     </section>
   );
+}
+
+/** Human label for an anchor kind in the "last …" footer. */
+function anchorLabel(type: LedgerAnchor["type"]): string {
+  return type === "soft_empty" ? "soft-empty" : type;
 }

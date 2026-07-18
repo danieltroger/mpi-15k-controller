@@ -1,4 +1,5 @@
 import type { Config } from "./config/config.types.ts";
+import type { LedgerAnchor } from "./battery/ahLedger.types.ts";
 import type { AutoTraderStatus } from "./autoTrading/autoTraderState.types.ts";
 import type { FetchedPrices } from "./autoTrading/priceService.types.ts";
 import type { AlertRecord } from "./alerting/alerting.types.ts";
@@ -27,24 +28,12 @@ export type WsExposedSignals = {
   recentAlerts: AlertRecord[];
   elpatronState: ElpatronDisplayState;
   currentBatteryPower: CurrentBatteryPowerBroadcast;
-  /** Clamped to [0,100] — the SOC the trading logic runs on */
+  /** THE SOC everything runs on: the Ah ledger clamped to [0,100] */
   averageSOC: number;
-  /** Shadow Ah ledger, unclamped — diagnostics only */
+  /** Raw unclamped Ah-ledger SOC — diagnostics only, may exceed [0,100] */
   socAh: number;
-  socSinceEmpty: number;
-  socSinceFull: number;
-  /** Wh */
-  assumedCapacity: number;
-  /** W */
-  assumedParasiticConsumption: number;
-  /** Wh until full again */
-  energyRemovedSinceFull: number;
-  /** Wh until empty again */
-  energyAddedSinceEmpty: number;
-  /** ISO timestamp */
-  totalLastFull: string;
-  /** ms epoch */
-  totalLastEmpty: number;
+  /** Latest full/empty/soft-empty anchor — the "last full / last empty" source */
+  latestAnchor: LedgerAnchor;
   isCharging: boolean;
   lastFeedWhenNoSolarReason: { what: string; when: number };
   lastChangingFeedWhenNoSolarReason: { what: string; when: number };

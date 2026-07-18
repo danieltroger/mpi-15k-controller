@@ -6,7 +6,7 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
 
 export function shouldSellPower(config: Accessor<Config>) {
-  const { clampedAverageSOC } = useBatteryValuesProvider();
+  const { clampedSocAh } = useBatteryValuesProvider();
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_selling.schedule),
@@ -58,7 +58,7 @@ export function shouldSellPower(config: Accessor<Config>) {
   let hitLimit = false;
 
   const exportAmountForSelling = createMemo(() => {
-    const soc = clampedAverageSOC();
+    const soc = clampedSocAh();
     const voltage = reactiveBatteryVoltage();
     if (soc === undefined || voltage === undefined) return;
 

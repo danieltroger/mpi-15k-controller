@@ -181,24 +181,15 @@ export type Config = {
     password: string;
   };
   soc_calculations: {
-    recalculate_parameters_interval_seconds: number;
     battery_empty_at: number;
-    capacity_per_cell_from_wh: number;
-    capacity_per_cell_to_wh: number;
-    parasitic_consumption_from: number;
-    parasitic_consumption_to: number;
-    number_of_cells: number;
     table: string;
-    current_state: {
-      parasitic_consumption: number;
-      capacity: number;
-    };
     /**
-     * Coulomb-counting (Ah) SOC ledger — the Phase 1 shadow of the Wh system above. Anchored at the
-     * latest full/empty/soft-empty event and integrated from hall sensor 2 amps:
+     * Coulomb-counting (Ah) SOC ledger — the single SOC system (the old Wh integrate-and-fit system and
+     * its Wh-fitter knobs — the persisted capacity/parasitic state and the fitter search ranges — are gone).
+     * Anchored at the latest full/empty/soft-empty event and integrated from hall sensor 2 amps:
      *   SOC = anchor_soc + (∫amps·dt − drain_a·elapsed_h) / capacity_ah · 100
-     * `drain_a` (sensor zero-bias + parasitic, seasonal) and `capacity_ah` are tracked online (EMA)
-     * and persisted here across restarts, exactly like `current_state` above.
+     * `drain_a` (sensor zero-bias + parasitic, seasonal) and `capacity_ah` are tracked online (EMA) and
+     * persisted here across restarts.
      */
     ah_ledger: {
       /** Usable pack capacity in amp-hours (16S LiFePO4). Online-tracked from deep full↔empty spans. */

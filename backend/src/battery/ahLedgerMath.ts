@@ -1,13 +1,28 @@
-// Pure math for the Ah (coulomb-counting) SOC ledger and its online parameter tracking. No runtime
-// imports on purpose: everything here is exercised by ahLedgerMath.selftest.ts without hardware or DB.
+// Pure math for the Ah (coulomb-counting) SOC ledger and its online parameter tracking. Only a
+// type-only import (erased at build): everything here is exercised by ahLedgerMath.selftest.ts
+// without hardware or DB.
 
-export type AnchorType = "full" | "empty" | "soft_empty";
-
-/** An anchor event the Ah ledger can hang off: when it happened and the SOC it pins. */
-export type LedgerAnchor = { at: number; soc: number; type: AnchorType };
+import type { AnchorType, LedgerAnchor } from "./ahLedger.types.ts";
+// Re-exported so existing importers can keep pulling these from ahLedgerMath.ts; the single
+// definition lives in the pure ahLedger.types.ts the frontend shares.
+export type { AnchorType, LedgerAnchor };
 
 /** Influx measurement + MQTT topic for anchor markers — shared so publish and restore can never drift. */
 export const SOC_ANCHORS_MEASUREMENT = "soc_anchors";
+
+/**
+ * How long the 1-min-smoothed hall amps may coast on their last sample before anchor detection must
+ * treat them as unknown. The smoothing memo holds its previous mean when the ADC stops producing
+ * samples, so without this a stale &lt;stop-current reading could satisfy the "full" condition the
+ * moment voltage later climbs to the setpoint. 5 min ≫ the ~1 s sample cadence, so it only trips on a
+ * real ADC outage.
+ */
+export const SMOOTHED_AMPS_STALENESS_MS = 5 * 60 * 1000;
+
+/** True when a smoothed-amps sample taken at `sampleTime` is too old (at `now`) to trust for detection. */
+export function smoothedAmpsAreStale(sampleTime: number, now: number): boolean {
+  return now - sampleTime > SMOOTHED_AMPS_STALENESS_MS;
+}
 
 /** A structured log request produced by the pure layer; the caller dispatches to errorLog/warnLog/logLog. */
 export type ParameterLog = { level: "log" | "warn" | "error"; message: string };

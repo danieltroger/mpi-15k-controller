@@ -12,6 +12,7 @@ import process from "process";
 import Influx from "influx";
 import { default_config } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
+import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedValues.ts";
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
@@ -31,10 +32,11 @@ const influxClient = config.influxdb ? new Influx.InfluxDB({ ...config.influxdb 
 
 let soc = process.env.SOC ? parseFloat(process.env.SOC) : undefined;
 if (soc === undefined && influxClient) {
-  const [row] = (await influxClient.query(`SELECT last(average_soc) as soc FROM "soc_values"`)) as unknown as {
+  // soc_ah is the (unclamped) SOC the Ah ledger publishes; clamp to [0,100] like the live planner input.
+  const [row] = (await influxClient.query(`SELECT last(soc_ah) as soc FROM "soc_values"`)) as unknown as {
     soc: number;
   }[];
-  soc = row?.soc;
+  if (row?.soc !== undefined) soc = Math.max(0, Math.min(100, row.soc));
 }
 if (soc === undefined) {
   console.error("No SOC available — pass SOC=<percent> as env var");
@@ -78,9 +80,9 @@ const input: PlannerInput = {
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
   houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
-  parasiticWatts: config.soc_calculations.current_state.parasitic_consumption,
+  parasiticWatts: inverterIdleWatts(config),
   socPercent: soc,
-  capacityWh: config.soc_calculations.current_state.capacity,
+  capacityWh: packCapacityWh(config),
   constraintTailHours: at.constraint_tail_hours,
   fixedSells,
   fixedBuys,

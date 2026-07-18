@@ -4,7 +4,7 @@ import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage, reactiveBatteryVoltageTime } from "../mqttValues/mqttHelpers.ts";
 import { fullConditionMet, emptyConditionMet } from "./anchorConditions.ts";
 import { warnLog } from "../utilities/logging.ts";
-import { SOC_ANCHORS_MEASUREMENT, type AnchorType } from "./ahLedgerMath.ts";
+import { SOC_ANCHORS_MEASUREMENT, smoothedAmpsAreStale, type AnchorType } from "./ahLedgerMath.ts";
 import type { Config } from "../config/config.types.ts";
 
 /**
@@ -23,7 +23,7 @@ export function anchorDetection({
   smoothedBatteryCurrentAmps,
 }: {
   config: Accessor<Config>;
-  smoothedBatteryCurrentAmps: Accessor<number | undefined>;
+  smoothedBatteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
 }) {
   const { mqttClient } = useFromMqttProvider();
   const [lastFullEventAt, setLastFullEventAt] = createSignal<number | undefined>(undefined);
@@ -35,12 +35,27 @@ export function anchorDetection({
   let armedEmpty = false;
   let armedSoftEmpty = false;
   let previousVoltage: number | undefined;
+  let staleAmpsWarned = false;
 
   createEffect(() => {
     const voltage = reactiveBatteryVoltage();
     const eventTime = reactiveBatteryVoltageTime();
-    const smoothedAmps = smoothedBatteryCurrentAmps();
+    const smoothedSample = smoothedBatteryCurrentAmps();
     if (voltage == undefined || eventTime == undefined) return;
+
+    // Staleness gate: the smoothing memo coasts on its last mean when the ADC stops sampling, so treat
+    // a sample older than the cutoff as unknown for detection (a frozen amps reading must not trip the
+    // full/soft-empty conditions). A fresh sample re-arms the once-per-outage warning below.
+    let smoothedAmps: number | undefined;
+    let smoothedAmpsStale = false;
+    if (smoothedSample != undefined) {
+      if (smoothedAmpsAreStale(smoothedSample.time, +new Date())) {
+        smoothedAmpsStale = true;
+      } else {
+        smoothedAmps = smoothedSample.value;
+        staleAmpsWarned = false;
+      }
+    }
 
     const fullBatteryVoltage = config().full_battery_voltage;
     const stopChargingBelowCurrent = config().stop_charging_below_current;
@@ -66,6 +81,13 @@ export function anchorDetection({
         armedFull = false;
         setLastFullEventAt(eventTime);
         publishAnchorMarker(untrack(mqttClient), "full");
+      } else if (smoothedAmpsStale && voltage >= fullBatteryVoltage && !staleAmpsWarned) {
+        // Voltage is at the full setpoint but the only amps we have are a stale coast — exactly the case
+        // the staleness gate exists for. Hold off the full anchor and say so once per outage.
+        staleAmpsWarned = true;
+        warnLog(
+          "Ah ledger anchor: smoothed hall amps stale (>5 min) while voltage ≥ full setpoint — holding off the full anchor until live amps return"
+        );
       }
     } else if (voltage < fullBatteryVoltage - 0.5) {
       armedFull = true;
@@ -90,6 +112,11 @@ export function anchorDetection({
         armedSoftEmpty = false;
         setLastSoftEmptyEventAt(eventTime);
         publishAnchorMarker(untrack(mqttClient), "soft_empty");
+      } else if (crossedDown && smoothedAmpsStale) {
+        // Unlike `full` (a level that can be held until amps return), the crossing is an edge: firing it
+        // later with fresh amps would validate the wrong moment, so losing it is correct — but say so,
+        // matching the full branch's observability. Soft-empty is a fallback anchor; full/empty still work.
+        warnLog("Ah ledger anchor: soft-empty crossing while hall amps are stale (>5 min) — crossing skipped");
       }
     } else if (voltage > softEmpty.voltage + 0.5) {
       armedSoftEmpty = true;

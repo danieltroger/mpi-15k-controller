@@ -7,7 +7,7 @@ export type BatteryValues = ReturnType<typeof useBatteryValues>;
 const BatteryValuesContext = createContext<BatteryValues>();
 
 /**
- * Shares the battery-derived accessors (averageSOC, assumedParasiticConsumption, …) with the whole
+ * Shares the battery-derived accessors (socAh, clampedSocAh, latestAnchor) with the whole
  * subtree so the selling/buying/feeding/trading modules can pull what they need via
  * useBatteryValuesProvider() instead of having them threaded down from index.ts as props.
  * useBatteryValues is still called once, above this provider; its result is handed in as `value`.

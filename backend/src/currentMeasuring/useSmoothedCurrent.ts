@@ -4,7 +4,8 @@ import { type Accessor, createMemo } from "solid-js";
  * Trailing rolling mean of an amp signal over `windowMs` (default 60 s). Anchor detection wants a
  * 1-min-smoothed hall current so a single noisy ADC sample can't declare the pack full or trip a
  * soft-empty crossing. Kept O(1) per sample with a running sum. Emits undefined until the first
- * sample arrives, then always the mean of whatever falls inside the window.
+ * sample arrives, then the mean of whatever falls inside the window plus `time` = the newest sample's
+ * timestamp, so a consumer can tell a live mean from one the memo is coasting on after the ADC died.
  */
 export function useSmoothedCurrent({
   rawCurrent,
@@ -12,11 +13,11 @@ export function useSmoothedCurrent({
 }: {
   rawCurrent: Accessor<{ value: number; time: number } | undefined>;
   windowMs?: number;
-}): Accessor<number | undefined> {
+}): Accessor<{ value: number; time: number } | undefined> {
   const samples: { value: number; time: number }[] = [];
   let runningSum = 0;
 
-  return createMemo<number | undefined>(prev => {
+  return createMemo<{ value: number; time: number } | undefined>(prev => {
     const current = rawCurrent();
     if (!current) return prev;
     samples.push(current);
@@ -26,6 +27,6 @@ export function useSmoothedCurrent({
       runningSum -= samples[0].value;
       samples.shift();
     }
-    return runningSum / samples.length;
+    return { value: runningSum / samples.length, time: current.time };
   });
 }

@@ -10,6 +10,7 @@ import {
 } from "~/helpers/format";
 import type { CurrentBatteryPowerBroadcast, MqttValue } from "../../../../backend/src/sharedTypes";
 import type { Config } from "../../../../backend/src/config/config.types";
+import type { LedgerAnchor } from "../../../../backend/src/battery/ahLedger.types";
 import "./DiagnosticsCards.scss";
 
 /**
@@ -37,37 +38,35 @@ function DiagRow(props: { label: string; value: string; title?: string }) {
 }
 
 function SocLedgers() {
-  const [socSinceFull] = getBackendSyncedSignal("socSinceFull");
-  const [socSinceEmpty] = getBackendSyncedSignal("socSinceEmpty");
   const [socAh] = getBackendSyncedSignal("socAh");
   const [averageSOC] = getBackendSyncedSignal("averageSOC");
-  const [assumedCapacity] = getBackendSyncedSignal("assumedCapacity");
-  const [assumedParasiticConsumption] = getBackendSyncedSignal("assumedParasiticConsumption");
-  const [energyRemovedSinceFull] = getBackendSyncedSignal("energyRemovedSinceFull");
-  const [energyAddedSinceEmpty] = getBackendSyncedSignal("energyAddedSinceEmpty");
-  const [totalLastFull] = getBackendSyncedSignal("totalLastFull");
-  const [totalLastEmpty] = getBackendSyncedSignal("totalLastEmpty");
+  const [latestAnchor] = getBackendSyncedSignal("latestAnchor");
   const [isCharging] = getBackendSyncedSignal("isCharging");
   const [line_power_direction] = getBackendSyncedSignal("line_power_direction");
   const [config] = getBackendSyncedSignal("config", undefined, false);
   const now = useNowMs(1000);
   const ahLedgerConfig = () => config()?.soc_calculations?.ah_ledger;
+  // Usable capacity and idle draw are derived from the Ah ledger now (the Wh fitter's assumed
+  // capacity / parasitic figures were deleted with it).
+  const capacityWh = () => {
+    const ledger = ahLedgerConfig();
+    return ledger ? ledger.capacity_ah * ledger.v_discharge : undefined;
+  };
+  const idleWatts = () => {
+    const ledger = ahLedgerConfig();
+    return ledger ? ledger.drain_a * ledger.v_discharge : undefined;
+  };
 
   return (
     <section class="card">
       <div class="card-head">
-        <span class="eyebrow">SOC ledgers</span>
+        <span class="eyebrow">SOC ledger</span>
       </div>
+      <DiagRow label="SOC (clamped, drives trading)" value={dashUnless(averageSOC(), soc => `${soc.toFixed(2)}%`)} />
       <DiagRow
-        label="Average SOC (clamped, drives trading)"
-        value={dashUnless(averageSOC(), soc => `${soc.toFixed(2)}%`)}
-      />
-      <DiagRow label="Wh ledger since full" value={dashUnless(socSinceFull(), soc => `${soc}%`)} />
-      <DiagRow label="Wh ledger since empty" value={dashUnless(socSinceEmpty(), soc => `${soc}%`)} />
-      <DiagRow
-        label="Ah ledger (shadow, unclamped)"
+        label="SOC (raw Ah, unclamped → InfluxDB)"
         value={dashUnless(socAh(), soc => `${soc.toFixed(2)}%`)}
-        title="Diagnostics only — nothing consumes this yet"
+        title="The coulomb-counting SOC before clamping — the drift Grafana tracks"
       />
       <Show when={ahLedgerConfig()}>
         {ledger => (
@@ -77,25 +76,25 @@ function SocLedgers() {
           />
         )}
       </Show>
-      <DiagRow label="Assumed capacity" value={dashUnless(assumedCapacity(), formatWhAsKwh)} />
-      <DiagRow label="Assumed parasitic draw" value={dashUnless(assumedParasiticConsumption(), formatWatts)} />
-      <DiagRow label="Removed since full" value={dashUnless(energyRemovedSinceFull(), formatWhAsKwh)} />
-      <DiagRow label="Added since empty" value={dashUnless(energyAddedSinceEmpty(), formatWhAsKwh)} />
-      <DiagRow
-        label="Last full"
-        value={dashUnless(
-          totalLastFull(),
-          iso => `${formatShortDateTime(iso)} (${formatRelativeTime(now(), +new Date(iso))})`
+      <DiagRow label="Usable capacity (capacity_ah × v_discharge)" value={dashUnless(capacityWh(), formatWhAsKwh)} />
+      <DiagRow label="Idle draw (drain_a × v_discharge)" value={dashUnless(idleWatts(), formatWatts)} />
+      <Show when={latestAnchor()}>
+        {anchor => (
+          <DiagRow
+            label="Latest anchor"
+            value={`${anchorLabel(anchor().type)} @ ${anchor().soc}% · ${formatShortDateTime(anchor().at)} (${formatRelativeTime(now(), anchor().at)})`}
+          />
         )}
-      />
-      <DiagRow
-        label="Last empty"
-        value={dashUnless(totalLastEmpty(), ms => `${formatShortDateTime(ms)} (${formatRelativeTime(now(), ms)})`)}
-      />
+      </Show>
       <DiagRow label="isCharging (float workaround)" value={String(isCharging() ?? "—")} />
       <DiagRow label="line_power_direction (raw)" value={dashUnless(line_power_direction()?.value, String)} />
     </section>
   );
+}
+
+/** Human label for an anchor kind. */
+function anchorLabel(type: LedgerAnchor["type"]): string {
+  return type === "soft_empty" ? "soft-empty" : type;
 }
 
 function CurrentSensors() {

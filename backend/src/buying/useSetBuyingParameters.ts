@@ -5,11 +5,11 @@ import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInve
 export function useSetBuyingParameters({
   stillFeedingIn,
   chargingAmperageForBuying,
-  assumedParasiticConsumption,
+  idleConsumptionWatts,
 }: {
   stillFeedingIn: Accessor<boolean>;
   chargingAmperageForBuying: Accessor<number | undefined>;
-  assumedParasiticConsumption: Accessor<number>;
+  idleConsumptionWatts: Accessor<number>;
 }) {
   const { $usbValues, setCommandQueue } = useUsbInverterConfiguration();
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
@@ -52,7 +52,7 @@ export function useSetBuyingParameters({
     });
   });
 
-  useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying, assumedParasiticConsumption);
+  useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying, idleConsumptionWatts);
 
   return { currentlyBuying };
 }
