@@ -10,7 +10,7 @@ import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedVal
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { fetchElpatronForecast } from "./elpatronForecast.ts";
+import { fetchElpatronForecast, shouldSubtractElpatronHistory } from "./elpatronForecast.ts";
 import {
   type AutoTraderState,
   type AutoTraderStatus,
@@ -348,15 +348,10 @@ async function buildPlannerInput(
     solarWattsAt: solar.wattsAt,
     nowMs,
   });
-  // Strip the element's share out of the learned history whenever the stove is off — element
-  // days linger in the 14-day median after disarming, so gating on "armed now" re-inflated the
-  // baseline the moment guests left. Unknown stove state (pi unreachable) falls back to the
-  // armed gate, which is safe in both seasons.
-  const subtractElpatronHistory = elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
   const consumption = await fetchConsumptionForecast(
     ctx.influxClient(),
     tradingConfig.fallback_house_load_watts,
-    subtractElpatronHistory ? cfg.elpatron_switching : undefined
+    shouldSubtractElpatronHistory(elpatron) ? cfg.elpatron_switching : undefined
   );
   const { sells, buys } = userWindows(ctx, cfg);
   return {

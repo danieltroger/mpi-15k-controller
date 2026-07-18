@@ -128,10 +128,9 @@ export async function fetchConsumptionForecast(
  * steep temperature DROP and clamp to 0; hours holding the thermostat band land near the standing
  * loss — both are what actually happened electrically, to within the calibration.
  *
- * Assumes the element is the ONLY thing heating the tank, which holds when this runs (armed ⇒
- * summer, pellet stove cold). Turning the element GPIO on manually DURING stove season would
- * misattribute stove heat to the element here and under-provision the baseline — if that ever
- * becomes a real combination, gate this on the stove being off (readable from the heating pi).
+ * Assumes the element is the ONLY thing heating the tank. The caller guarantees that by gating
+ * on the stove GPIO being off (shouldSubtractElpatronHistory); only the unknown-stove-state
+ * fallback (heating pi unreachable ⇒ gate on armed) still leans on armed-implies-stove-cold.
  */
 async function estimateElpatronHistory(
   influxClient: Influx.InfluxDB,

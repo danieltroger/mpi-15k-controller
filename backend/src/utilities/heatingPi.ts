@@ -54,12 +54,34 @@ export async function readElpatronGpioIsOn(heatingPiIp: string, maxAgeMs = 10 * 
 }
 
 /**
- * After we wrote the element GPIO ourselves the state is known — spare the next reader a
- * roundtrip. Keeps the previously-read stove state; a write only changes the element.
+ * After we wrote the element GPIO ourselves the element state is known — spare the next reader a
+ * roundtrip. Only updates the element within the cache's existing freshness window: the carried
+ * stove state was NOT just observed, so a write must not extend the snapshot's age (else frequent
+ * element flips could postpone a real stove read indefinitely).
  */
 export function primeElpatronGpioCache(heatingPiIp: string, isOn: boolean) {
-  const previousStoveOn = gpioReadCache?.heatingPiIp === heatingPiIp ? gpioReadCache.value?.stoveOn : undefined;
-  gpioReadCache = { heatingPiIp, atMs: Date.now(), value: { elementOn: isOn, stoveOn: previousStoveOn } };
+  const previous = gpioReadCache?.heatingPiIp === heatingPiIp ? gpioReadCache : undefined;
+  gpioReadCache = {
+    heatingPiIp,
+    atMs: previous?.atMs ?? 0,
+    value: { elementOn: isOn, stoveOn: previous?.value?.stoveOn },
+  };
+}
+
+/**
+ * A {type:"change", key:"gpio"} broadcast from the heating pi carries the fresh state of ALL
+ * outputs — cache the full snapshot as just-observed.
+ */
+export function primeHeatingGpioFromBroadcast(heatingPiIp: string, outputs: Record<string, number>) {
+  if (outputs.electric_heating_element === undefined) return;
+  gpioReadCache = {
+    heatingPiIp,
+    atMs: Date.now(),
+    value: {
+      elementOn: outputs.electric_heating_element === 0,
+      stoveOn: outputs.stove === undefined ? undefined : outputs.stove === 0,
+    },
+  };
 }
 
 async function readHeatingGpioUncached(heatingPiIp: string): Promise<HeatingGpioSnapshot | undefined> {

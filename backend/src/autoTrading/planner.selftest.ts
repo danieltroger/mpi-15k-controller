@@ -5,7 +5,7 @@
 import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
-import { buildElpatronLoadModel } from "./elpatronForecast.ts";
+import { buildElpatronLoadModel, MANUAL_ON_MODEL_HORIZON_MS } from "./elpatronForecast.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
 const H = 3600_000;
@@ -605,11 +605,10 @@ function check(name: string, cond: boolean, detail = "") {
   check("elpatron: always-on mode holds the band around the clock", ungated(t0 + 20 * H) === 480);
   // A hand-switched GPIO is a point-in-time observation: modeled for one day, not extrapolated
   // forever (the 2026-07-16/17 over-forecast). Rolling re-plans re-extend while it stays on.
-  const manualOnHorizonMs = 24 * H;
   const manual = buildElpatronLoadModel({
     nowMs: t0,
     startTempC: 50,
-    heatingAllowedAt: ms => ms - t0 < manualOnHorizonMs,
+    heatingAllowedAt: ms => ms - t0 < MANUAL_ON_MODEL_HORIZON_MS,
     ...elpatronKnobs,
   });
   check("elpatron: manual-on modeled within the first day", manual(t0 + 20 * H) === 480);

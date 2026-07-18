@@ -16,7 +16,7 @@ import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedVal
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { fetchElpatronForecast } from "./elpatronForecast.ts";
+import { fetchElpatronForecast, shouldSubtractElpatronHistory } from "./elpatronForecast.ts";
 import { generatePlan } from "./planner.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
@@ -62,12 +62,10 @@ const elpatron = await fetchElpatronForecast({
 console.log(
   `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}, stove on: ${elpatron.stoveOn ?? "unknown"}\n`
 );
-// Same gate as buildPlannerInput: stove off ⇒ history subtraction runs regardless of armed state
-const subtractElpatronHistory = elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
 const consumption = await fetchConsumptionForecast(
   influxClient,
   at.fallback_house_load_watts,
-  subtractElpatronHistory ? elpatronConfig : undefined
+  shouldSubtractElpatronHistory(elpatron) ? elpatronConfig : undefined
 );
 
 const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
