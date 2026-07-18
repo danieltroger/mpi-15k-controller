@@ -2,29 +2,22 @@ import { createSignal, For, getOwner, Show } from "solid-js";
 import { getBackendSyncedSignal, sendBackendAction } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
+import { configSet } from "~/helpers/configPatches";
+import { useConfigPatcher } from "~/helpers/useConfigPatcher";
 import { formatKwh, formatSek, formatShortDateTime } from "~/helpers/format";
-import type { Config } from "../../../backend/src/config/config.types";
 import type { WsAction } from "../../../backend/src/wsContract.types";
 
 const fmtTime = (iso: string | undefined) => (iso ? formatShortDateTime(iso) : "—");
 
 export function AutoTraderPanel() {
   const [status] = getBackendSyncedSignal("autoTraderStatus");
-  const [config, setConfig] = getBackendSyncedSignal("config");
+  const [config] = getBackendSyncedSignal("config");
   const socket = useWebSocket();
   const owner = getOwner()!;
   const [busy, setBusy] = createSignal(false);
+  const { sendPatch } = useConfigPatcher();
 
   const tradingConfig = () => config()?.automatic_trading;
-
-  const writeTradingConfig = async (patch: Partial<NonNullable<Config["automatic_trading"]>>) => {
-    const current = config();
-    if (!current?.automatic_trading) {
-      await showToastWithMessage(owner, () => "Config not loaded yet");
-      return;
-    }
-    await setConfig({ ...current, automatic_trading: { ...current.automatic_trading, ...patch } });
-  };
 
   const runAction = async (action: WsAction, formatResult: (result: string) => string) => {
     setBusy(true);
@@ -146,7 +139,7 @@ export function AutoTraderPanel() {
           <button
             type="button"
             class={`buy-sell-config__btn buy-sell-config__btn--${status()!.enabled ? "secondary" : "primary"}`}
-            onClick={() => void writeTradingConfig({ enabled: !status()!.enabled })}
+            onClick={() => void sendPatch(configSet(["automatic_trading", "enabled"], !status()!.enabled))}
           >
             {status()!.enabled ? "Disable automatic trading" : "Enable automatic trading"}
           </button>

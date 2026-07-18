@@ -18,12 +18,14 @@ import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import {
   configToBuySellFormData,
   datetimeLocalToIso,
-  diffMergeFormIntoConfig,
+  diffFormIntoPatches,
   isoToDatetimeLocal,
   type BuySellFormData,
   type BuySellScheduleRow,
   type ScheduleRowKind,
 } from "~/helpers/buySellConfigMapping";
+import { useConfigPatcher } from "~/helpers/useConfigPatcher";
+import { applyConfigPatches } from "../../../backend/src/config/configPatch";
 import { buySellFormSchema } from "~/helpers/buySellFormSchema";
 import { formatDurationLabel, rowDurationHours, rowEnergyKwh } from "~/helpers/scheduleRowDerived";
 import type { Config } from "../../../backend/src/config/config.types";
@@ -168,11 +170,9 @@ function rowIsPlanned(row: FormRowSnapshot, status: AutoTraderStatus | undefined
 }
 
 /** Renders only when `getConfig()` is defined. `createForm` runs with server-backed `initialValues` so inputs are filled on first paint (no race with `setValues`). */
-function BuySellFormInner(props: {
-  getConfig: Accessor<Config>;
-  setConfig: (config: Config) => Promise<boolean | undefined>;
-}) {
+function BuySellFormInner(props: { getConfig: Accessor<Config> }) {
   const [status] = getBackendSyncedSignal("autoTraderStatus");
+  const { sendPatches } = useConfigPatcher();
   const [buySellForm, { Form }] = createForm<BuySellFormData>({
     initialValues: configToBuySellFormData(untrack(() => props.getConfig())),
     validate: zodForm(buySellFormSchema),
@@ -208,17 +208,35 @@ function BuySellFormInner(props: {
     <Form
       class="buy-sell-config"
       onSubmit={async values => {
-        // modular-forms hands over an empty FieldArray as undefined — normalize before merging
+        // modular-forms hands over an empty FieldArray as undefined — normalize before diffing
         const raw = values as BuySellFormData;
         const normalized: BuySellFormData = { ...raw, rows: raw.rows ?? [] };
-        const next = diffMergeFormIntoConfig(pristine, normalized, props.getConfig());
-        const ok = await props.setConfig(next);
+        // One patch per changed field/row — untouched state is never sent, so concurrent
+        // backend writes (trader windows, ledger tracking) survive a save by construction
+        const patches = diffFormIntoPatches(pristine, normalized);
         const owner = getOwner()!;
+        if (!patches.length) {
+          resetToServer();
+          return;
+        }
+        const ok = await sendPatches(patches);
         if (ok) {
           await showToastWithMessage(owner, () => "Saved!");
-          pristine = configToBuySellFormData(next);
+          // Preview the accepted patches onto the latest synced config so the form resets to the
+          // post-save state deterministically (the change broadcast may not have landed yet)
+          const applied = applyConfigPatches(
+            untrack(() => props.getConfig()),
+            patches
+          );
+          if ("error" in applied) {
+            // Server accepted what our local preview rejects — resync from the signal instead
+            console.error("Local patch preview failed after server accepted:", applied.error);
+            resetToServer();
+            return;
+          }
+          pristine = configToBuySellFormData(applied.patched);
           reset(buySellForm, { initialValues: pristine });
-          lastAppliedSnap = buySellSliceKey(next);
+          lastAppliedSnap = buySellSliceKey(applied.patched);
         }
       }}
     >
@@ -524,11 +542,11 @@ function BuySellFormInner(props: {
 }
 
 export function BuySellConfigForm(): JSX.Element {
-  const [config, set_config] = getBackendSyncedSignal("config", undefined, false);
+  const [config] = getBackendSyncedSignal("config", undefined, false);
 
   return (
     <Show when={config()} fallback={<p class="buy-sell-config__loading">Loading configuration…</p>}>
-      <BuySellFormInner getConfig={config as Accessor<Config>} setConfig={set_config!} />
+      <BuySellFormInner getConfig={config as Accessor<Config>} />
     </Show>
   );
 }

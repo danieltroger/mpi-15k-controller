@@ -1,4 +1,6 @@
+import { configSet, configUnset } from "~/helpers/configPatches";
 import type { Config } from "../../../backend/src/config/config.types";
+import type { ConfigPatch } from "../../../backend/src/wsContract.types";
 
 export type ScheduleRowKind = "sell" | "buy";
 
@@ -78,106 +80,91 @@ export function filterCompleteRows(rows: BuySellScheduleRow[]): BuySellScheduleR
 }
 
 /**
- * Three-way merge: apply only what the user actually changed (vs the `pristine` snapshot the form
- * was loaded from) onto the latest server config. Rows/fields the user never touched keep whatever
- * the server has now — so a schedule the auto-trader wrote while the tab was open survives a save.
- * Row identity is kind + start time: editing either counts as delete-old + add-new.
+ * Diff the form against the `pristine` snapshot it was loaded from and emit one patch per field
+ * the user actually changed — untouched fields/rows are never sent, so anything the backend wrote
+ * while the tab was open (e.g. auto-trader schedule windows) survives a save by construction.
+ * Row identity is kind + start time: editing either counts as delete-old + add-new. Set patches
+ * come before unset patches so a failure mid-batch can leave a duplicate row but never a hole.
  */
-export function diffMergeFormIntoConfig(pristine: BuySellFormData, values: BuySellFormData, latest: Config): Config {
-  const scalar = (before: number, now: number, latestVal: number): number =>
-    Number(now) !== Number(before) ? Number(now) : latestVal;
-
-  const mergeSchedule = <E extends { end_time: string }>(
-    kind: ScheduleRowKind,
-    latestSchedule: Record<string, E>,
-    toEntry: (row: BuySellScheduleRow) => E
-  ): Record<string, E> => {
-    const ofKind = (rows: BuySellScheduleRow[]) => filterCompleteRows(rows).filter(r => r.kind === kind);
-    const result: Record<string, E> = { ...latestSchedule };
-    const pristineByKey = new Map(ofKind(pristine.rows).map(r => [datetimeLocalToIso(r.start), r]));
-    const currentByKey = new Map(ofKind(values.rows).map(r => [datetimeLocalToIso(r.start), r]));
-    for (const key of pristineByKey.keys()) {
-      if (!currentByKey.has(key)) delete result[key]; // the user removed this row
-    }
-    for (const [key, row] of currentByKey) {
-      const before = pristineByKey.get(key);
-      const changed = !before || before.end !== row.end || Number(before.power) !== Number(row.power);
-      if (changed) result[key] = toEntry(row); // the user added or edited this row
-    }
-    return result;
+export function diffFormIntoPatches(pristine: BuySellFormData, values: BuySellFormData): ConfigPatch[] {
+  const sets: ConfigPatch[] = [];
+  const unsets: ConfigPatch[] = [];
+  const scalar = (before: number, now: number, makePatch: (value: number) => ConfigPatch) => {
+    if (Number(now) !== Number(before)) sets.push(makePatch(Number(now)));
   };
 
-  return {
-    ...latest,
-    automatic_trading: {
-      ...latest.automatic_trading,
-      emergency_soc_floor_percent: scalar(
-        pristine.emergencySocFloor,
-        values.emergencySocFloor,
-        latest.automatic_trading.emergency_soc_floor_percent
-      ),
-      planner_soc_floor_percent: scalar(
-        pristine.plannerSocFloor,
-        values.plannerSocFloor,
-        latest.automatic_trading.planner_soc_floor_percent
-      ),
-      planner_soc_floor_sunny_percent: scalar(
-        pristine.plannerSocFloorSunny,
-        values.plannerSocFloorSunny,
-        latest.automatic_trading.planner_soc_floor_sunny_percent
-      ),
-      extra_reserve_kwh: scalar(
-        pristine.extraReserveKwh,
-        values.extraReserveKwh,
-        latest.automatic_trading.extra_reserve_kwh
-      ),
-    },
-    scheduled_power_buying: {
-      only_buy_below_soc: scalar(
-        pristine.buyOnlyBelowSoc,
-        values.buyOnlyBelowSoc,
-        latest.scheduled_power_buying.only_buy_below_soc
-      ),
-      start_buying_again_below_soc: scalar(
-        pristine.buyStartAgainBelowSoc,
-        values.buyStartAgainBelowSoc,
-        latest.scheduled_power_buying.start_buying_again_below_soc
-      ),
-      max_grid_input_amperage: scalar(
-        pristine.maxGridInputAmperage,
-        values.maxGridInputAmperage,
-        latest.scheduled_power_buying.max_grid_input_amperage
-      ),
-      schedule: mergeSchedule("buy", latest.scheduled_power_buying.schedule, row => ({
-        end_time: datetimeLocalToIso(row.end),
-        charging_power: Number(row.power),
-      })),
-    },
-    scheduled_power_selling: {
-      only_sell_above_soc: scalar(
-        pristine.sellOnlyAboveSoc,
-        values.sellOnlyAboveSoc,
-        latest.scheduled_power_selling.only_sell_above_soc
-      ),
-      start_selling_again_above_soc: scalar(
-        pristine.sellStartAgainAboveSoc,
-        values.sellStartAgainAboveSoc,
-        latest.scheduled_power_selling.start_selling_again_above_soc
-      ),
-      only_sell_above_voltage: scalar(
-        pristine.onlySellAboveVoltage,
-        values.onlySellAboveVoltage,
-        latest.scheduled_power_selling.only_sell_above_voltage
-      ),
-      start_selling_again_above_voltage: scalar(
-        pristine.startSellingAgainAboveVoltage,
-        values.startSellingAgainAboveVoltage,
-        latest.scheduled_power_selling.start_selling_again_above_voltage
-      ),
-      schedule: mergeSchedule("sell", latest.scheduled_power_selling.schedule, row => ({
-        end_time: datetimeLocalToIso(row.end),
-        power_watts: Number(row.power),
-      })),
-    },
-  };
+  scalar(pristine.emergencySocFloor, values.emergencySocFloor, value =>
+    configSet(["automatic_trading", "emergency_soc_floor_percent"], value)
+  );
+  scalar(pristine.plannerSocFloor, values.plannerSocFloor, value =>
+    configSet(["automatic_trading", "planner_soc_floor_percent"], value)
+  );
+  scalar(pristine.plannerSocFloorSunny, values.plannerSocFloorSunny, value =>
+    configSet(["automatic_trading", "planner_soc_floor_sunny_percent"], value)
+  );
+  scalar(pristine.extraReserveKwh, values.extraReserveKwh, value =>
+    configSet(["automatic_trading", "extra_reserve_kwh"], value)
+  );
+  scalar(pristine.buyOnlyBelowSoc, values.buyOnlyBelowSoc, value =>
+    configSet(["scheduled_power_buying", "only_buy_below_soc"], value)
+  );
+  scalar(pristine.buyStartAgainBelowSoc, values.buyStartAgainBelowSoc, value =>
+    configSet(["scheduled_power_buying", "start_buying_again_below_soc"], value)
+  );
+  scalar(pristine.maxGridInputAmperage, values.maxGridInputAmperage, value =>
+    configSet(["scheduled_power_buying", "max_grid_input_amperage"], value)
+  );
+  scalar(pristine.sellOnlyAboveSoc, values.sellOnlyAboveSoc, value =>
+    configSet(["scheduled_power_selling", "only_sell_above_soc"], value)
+  );
+  scalar(pristine.sellStartAgainAboveSoc, values.sellStartAgainAboveSoc, value =>
+    configSet(["scheduled_power_selling", "start_selling_again_above_soc"], value)
+  );
+  scalar(pristine.onlySellAboveVoltage, values.onlySellAboveVoltage, value =>
+    configSet(["scheduled_power_selling", "only_sell_above_voltage"], value)
+  );
+  scalar(pristine.startSellingAgainAboveVoltage, values.startSellingAgainAboveVoltage, value =>
+    configSet(["scheduled_power_selling", "start_selling_again_above_voltage"], value)
+  );
+
+  diffScheduleOfKind("sell", pristine.rows, values.rows, sets, unsets);
+  diffScheduleOfKind("buy", pristine.rows, values.rows, sets, unsets);
+  return [...sets, ...unsets];
+}
+
+function diffScheduleOfKind(
+  kind: ScheduleRowKind,
+  pristineRows: BuySellScheduleRow[],
+  currentRows: BuySellScheduleRow[],
+  sets: ConfigPatch[],
+  unsets: ConfigPatch[]
+) {
+  const section = kind === "sell" ? ("scheduled_power_selling" as const) : ("scheduled_power_buying" as const);
+  const ofKind = (rows: BuySellScheduleRow[]) => filterCompleteRows(rows).filter(r => r.kind === kind);
+  const pristineByKey = new Map(ofKind(pristineRows).map(r => [datetimeLocalToIso(r.start), r]));
+  const currentByKey = new Map(ofKind(currentRows).map(r => [datetimeLocalToIso(r.start), r]));
+  for (const [key, row] of currentByKey) {
+    const before = pristineByKey.get(key);
+    const changed = !before || before.end !== row.end || Number(before.power) !== Number(row.power);
+    if (!changed) continue; // untouched rows are never sent
+    // …only rows the user added or edited become set patches
+    if (kind === "sell") {
+      sets.push(
+        configSet(["scheduled_power_selling", "schedule", key], {
+          end_time: datetimeLocalToIso(row.end),
+          power_watts: Number(row.power),
+        })
+      );
+    } else {
+      sets.push(
+        configSet(["scheduled_power_buying", "schedule", key], {
+          end_time: datetimeLocalToIso(row.end),
+          charging_power: Number(row.power),
+        })
+      );
+    }
+  }
+  for (const key of pristineByKey.keys()) {
+    if (!currentByKey.has(key)) unsets.push(configUnset([section, "schedule", key])); // the user removed this row
+  }
 }

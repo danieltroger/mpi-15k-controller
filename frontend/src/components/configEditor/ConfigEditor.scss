@@ -1,0 +1,419 @@
+/* Config page — generated per-field form. Same token vocabulary as the rest of Kraftverket;
+ * amber (--solar / --warn-text) is the "edited, not yet saved" color throughout. */
+
+.cfg {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* the sticky savebar must never cover the last section's fields */
+  padding-bottom: 8px;
+}
+
+.cfg-intro {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  max-width: 70ch;
+}
+
+.cfg-loading {
+  opacity: 0.85;
+}
+
+.cfg-search {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  width: min(100%, 26rem);
+
+  &:hover {
+    border-color: var(--ink-3);
+  }
+}
+
+/* ————— section cards ————— */
+
+.cfg-section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0;
+
+  &[open] .cfg-section__summary {
+    border-bottom: 1px solid var(--line-soft);
+  }
+}
+
+.cfg-section__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0.85rem 1.25rem;
+  cursor: pointer;
+  list-style-position: outside;
+
+  &:hover {
+    color: var(--ok-text);
+  }
+}
+
+.cfg-section__title {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.cfg-section__dirty {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--warn-text);
+  background: var(--chip-warn-bg);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.cfg-section__desc {
+  margin: 0.75rem 1.25rem 0;
+  font-size: 0.88rem;
+  color: var(--ink-2);
+  max-width: 75ch;
+}
+
+.cfg-section__note {
+  margin: 0.5rem 1.25rem 0;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+  gap: 1rem 1.25rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.cfg-grid__full,
+.cfg-heading {
+  grid-column: 1 / -1;
+}
+
+.cfg-heading {
+  margin: 0.5rem 0 -0.25rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border-top: 1px solid var(--line-soft);
+  padding-top: 0.9rem;
+}
+
+/* ————— fields ————— */
+
+.cfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+  border-left: 3px solid transparent;
+  padding-left: 0.55rem;
+  margin-left: -0.55rem;
+}
+
+.cfg-field--dirty {
+  border-left-color: var(--solar);
+}
+
+.cfg-field__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cfg-field__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.cfg-field__unit {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.cfg-field__revert {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--warn-text);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.cfg-field__help {
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.cfg-field__key {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+.cfg-field__rovalue {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  padding: 0.45rem 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cfg-field__ropill {
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 650;
+  color: var(--ink-3);
+  background: var(--line-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.cfg-input {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  min-width: 0;
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink-3);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+  }
+}
+
+.cfg-field--dirty .cfg-input {
+  border-color: var(--solar);
+}
+
+/* ————— toggle ————— */
+
+.cfg-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: none;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink-2);
+  align-self: flex-start;
+}
+
+.cfg-toggle__track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+  flex: none;
+}
+
+.cfg-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.cfg-toggle--on {
+  color: var(--ok-text);
+  font-weight: 600;
+
+  .cfg-toggle__track {
+    background: var(--battery);
+    border-color: var(--battery);
+  }
+
+  .cfg-toggle__knob {
+    transform: translateX(16px);
+  }
+}
+
+/* ————— map (schedule / thermometer) editor ————— */
+
+.cfg-map {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.cfg-map__wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  align-self: stretch;
+}
+
+.cfg-map__table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+
+  th,
+  td {
+    border: 1px solid var(--line-soft);
+    padding: 0.35rem 0.45rem;
+    text-align: left;
+  }
+
+  th {
+    background: var(--line-soft);
+    font-size: 0.78rem;
+    color: var(--ink-2);
+  }
+}
+
+.cfg-map__row--dirty td:first-child {
+  box-shadow: inset 3px 0 0 var(--solar);
+}
+
+.cfg-map__row--removed .cfg-input {
+  text-decoration: line-through;
+}
+
+.cfg-map__row--removed td {
+  background: color-mix(in srgb, var(--crit) 6%, transparent);
+}
+
+.cfg-map__actions {
+  white-space: nowrap;
+}
+
+.cfg-map__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+
+/* ————— buttons / savebar / raw ————— */
+
+.cfg-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink-3);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.cfg-btn--primary {
+  background: var(--battery);
+  color: white;
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.06);
+    border-color: transparent;
+  }
+}
+
+.cfg-btn--small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+.cfg-savebar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--solar);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+}
+
+.cfg-savebar__text {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.cfg-savebar__actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.cfg-raw {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 0.7rem 1rem;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+
+  summary {
+    cursor: pointer;
+  }
+
+  pre {
+    margin: 0.75rem 0 0;
+    max-height: 24rem;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+}
