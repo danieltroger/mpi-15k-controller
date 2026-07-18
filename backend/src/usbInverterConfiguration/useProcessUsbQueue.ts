@@ -1,5 +1,11 @@
 import { debugLog, errorLog } from "../utilities/logging.ts";
 import { exec } from "../utilities/exec.ts";
+
+// FTDI serial cable → inverter RS-232, NOT the inverter's USB-HID port: that port's
+// firmware NAKs every command longer than 16 bytes (so MCHGV/DAT/BCA can never work
+// there), while serial accepts the full PI17 command set. by-id path survives
+// re-enumeration; baud is mpp-solar's default 2400.
+const INVERTER_SERIAL_DEVICE = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0";
 import { type Accessor, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
 import type { CommandQueueItem } from "./usb.types.ts";
 import type { Config } from "../config/config.types.ts";
@@ -65,7 +71,7 @@ async function sendUsbCommands() {
     debugLog("Sending USB command", queueItem!.command);
     try {
       const { stdout, stderr } = await exec(
-        `/home/ubuntu/mpp-solar/.venv/bin/mpp-solar -p /dev/hidraw0 -P PI17  -c ${queueItem!.command}`
+        `/home/ubuntu/mpp-solar/.venv/bin/mpp-solar -p ${INVERTER_SERIAL_DEVICE} -P PI17 -c ${queueItem!.command}`
       );
       queueItem!.onSucceeded?.({ stdout, stderr });
       if (queueItem!.refreshAfterSend) {

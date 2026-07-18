@@ -23,5 +23,5 @@ tail -f /var/log/mpi-15k-controller.log
 - Node ≥ 26 (nodesource deb) and a `yarn` binary on PATH; the repo is Yarn PnP zero-install, so no `yarn install` is required to run.
 - `backend/config.json` — not in the repo (contains coordinates/credentials); copy from the old box.
 - The mpp-solar poller: python venv at `~/mpp-solar` with a `mpp-solar` systemd **user** unit (the controller stops/starts it around USB commands; the install script enables lingering so it survives without SSH sessions).
-- Device access for `SERVICE_USER`: inverter USB (`/dev/hidraw0`), I2C (ADS1115 current sensor), 1-wire (temperature, needs `sudo dtoverlay` = passwordless sudo), plus MQTT broker and InfluxDB reachable per config.
+- Device access for `SERVICE_USER`: inverter serial (FTDI cable at `/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0` → inverter RS-232; the old `/dev/hidraw0` USB path rejects >16-byte commands and is unused since 2026-07), I2C (ADS1115 current sensor), 1-wire (temperature, needs `sudo dtoverlay` = passwordless sudo), plus MQTT broker and InfluxDB reachable per config.
 - The other rc.local inhabitants (sshx, autossh tunnels) are separate from the controller and still live in `/etc/rc.local`.
