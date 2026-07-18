@@ -1,9 +1,10 @@
 import { type Accessor, createEffect, type Owner, runWithOwner, type Signal, untrack } from "solid-js";
 import { startWsServer } from "./startWsServer.ts";
 import { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
+import { applyConfigPatch } from "../config/configPatch.ts";
 import type { Config } from "../config/config.types.ts";
 import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
-import type { WsAction, WsExposedAccessorMap } from "../wsContract.types.ts";
+import type { ConfigPatchOp, WsAction, WsExposedAccessorMap } from "../wsContract.types.ts";
 
 export async function wsMessaging({
   config_signal: [get_config, set_config],
@@ -52,7 +53,29 @@ export async function wsMessaging({
   } as const;
 
   const { broadcast } = await startWsServer(async (msg: { [key: string]: any }) => {
-    const { command, key, value, id, action } = msg;
+    const { command, key, value, id, action, path, op } = msg;
+
+    if (command === "patch") {
+      // Path-scoped config write: applies exactly the named path onto the LIVE config (never a
+      // client-supplied base object), so a stale client can only affect the field it touched.
+      if (key !== "config") {
+        return JSON.stringify({ id, status: "not-ok", message: `Only the config key supports patch, got: ${key}` });
+      }
+      // applyConfigPatch validates path/op/value and returns an error message naming the path
+      let patchError: string | undefined;
+      set_config(current => {
+        const result = applyConfigPatch(current, { path, op: op as ConfigPatchOp, value });
+        if ("error" in result) {
+          patchError = result.error;
+          return current;
+        }
+        return result.patched;
+      });
+      if (patchError) {
+        return JSON.stringify({ id, status: "not-ok", message: patchError });
+      }
+      return JSON.stringify({ id, status: "ok" });
+    }
 
     if (command === "action") {
       // action arrives as untrusted wire input — the runtime unknown-action reply below handles misses

@@ -20,7 +20,7 @@ import type {
  * layer. Pure types only — the frontend imports this file directly.
  */
 export type WsExposedSignals = {
-  /** The whole runtime config; the only writable key */
+  /** The whole runtime config; writable only through path-scoped `patch` commands */
   config: Config;
   temperatures: Record<string, TemperatureReadingBroadcast>;
   autoTraderStatus: AutoTraderStatus;
@@ -49,6 +49,38 @@ export type WsSignalKey = keyof WsExposedSignals;
 
 /** Keys the frontend may write; everything else is read-only over the ws. */
 export type WsWritableSignalKey = "config";
+
+export type ConfigPatchOp = "set" | "unset";
+
+/**
+ * One path-scoped config write. `path` addresses a value from the Config root (e.g.
+ * ["automatic_trading", "enabled"]); "set" writes `value` there, "unset" deletes the key
+ * (schedule entries and optional fields come and go). The op is explicit because
+ * `value: undefined` would not survive JSON serialization.
+ */
+export type ConfigPatch = {
+  path: readonly string[];
+  op: ConfigPatchOp;
+  /** Present iff op is "set" */
+  value?: unknown;
+};
+
+/**
+ * The wire message for a patch. Unlike the old whole-object write, a stale client can only
+ * ever affect the one path it names — the backend applies the patch onto the LIVE config.
+ */
+export type ConfigPatchRequest = ConfigPatch & {
+  id: string;
+  command: "patch";
+  key: "config";
+};
+
+/** Reply to a ConfigPatchRequest. `message` names the offending path when status is "not-ok". */
+export type ConfigPatchResponse = {
+  id: string;
+  status: "ok" | "not-ok";
+  message?: string;
+};
 
 export type WsAction = "generate_trading_plan" | "clear_trading_vetoes" | "send_test_alert";
 
