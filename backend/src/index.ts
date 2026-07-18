@@ -25,10 +25,7 @@ import { NowProvider } from "./utilities/useNow.ts";
 import { useShouldBuyPower } from "./buying/useShouldBuyPower.ts";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
-import {
-  UsbInverterConfigurationProvider,
-  useUsbInverterConfiguration,
-} from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import { InverterCommsProvider, useInverterComms } from "./inverterComms/InverterCommsProvider.ts";
 import { InfluxClientProvider } from "./utilities/InfluxClientProvider.ts";
 import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 import { latestSpotPrices } from "./autoTrading/priceService.ts";
@@ -72,11 +69,13 @@ function main() {
     if (!configResourceValue) return;
     const [config] = configResourceValue;
 
-    MQTTValuesProvider({
-      mqttHost: createMemo(() => config().mqtt_host),
+    // The serial engine is outermost: MQTTValuesProvider's value store is fed from it, and the
+    // command API (queueSetter/$usbValues) comes from the same context.
+    InverterCommsProvider({
+      config,
       get children() {
-        return UsbInverterConfigurationProvider({
-          config,
+        return MQTTValuesProvider({
+          mqttHost: createMemo(() => config().mqtt_host),
           get children() {
             return InfluxClientProvider({
               config,
@@ -150,7 +149,7 @@ function main() {
                     const { chargingAmperageForBuying } = useShouldBuyPower({ config });
 
                     const { mqttValues } = useFromMqttProvider();
-                    const { $usbValues } = useUsbInverterConfiguration();
+                    const { $usbValues } = useInverterComms();
                     const alertManager = createAlertManager(config);
                     catchError(
                       () =>
