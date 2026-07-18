@@ -23,13 +23,24 @@ type USBCommands =
    */
   | { command: `MUCHGC${string}` }
   /**
+   * Set battery CV (constant/bulk) charge voltage AND float charge voltage atomically -- examples:
+   * MCHGV0580,0580 (both values 4-digit decivolts, 58.0 V → 0580; mpp-solar only accepts 40.0-59.9 V).
+   * At 20 bytes this only works over the FTDI serial cable — the inverter's USB-HID port firmware
+   * NAKs every command longer than 16 bytes.
+   */
+  | { command: `MCHGV${string}` }
+  /**
    * Query the maximum output power for feeding grid -- queries Query the maximum output power for feeding grid
    */
   | { command: "GPMP" }
   /**
    * Query energy control status -- queries the device energy distribution
    */
-  | { command: "HECS" };
+  | { command: "HECS" }
+  /**
+   * Query battery setting -- charge voltages and charge/discharge current limits
+   */
+  | { command: "BATS" };
 
 export type CommandQueueItem = USBCommands & {
   onSucceeded?: (result: { stdout: string; stderr: string }) => void;
@@ -58,4 +69,7 @@ export type UsbValues = Partial<{
   battery_discharge_to_loads_when_solar_input_loss: "enabled" | "disabled";
   battery_discharge_to_feed_grid_when_solar_input_normal: "enabled" | "disabled";
   battery_discharge_to_feed_grid_when_solar_input_loss: "enabled" | "disabled";
+  /** The CV/bulk charge voltage from BATS; the "(c.v.)" in the key is verbatim mpp-solar output */
+  "battery_constant_charge_voltage(c.v.)": string;
+  battery_floating_charge_voltage: string;
 }>;

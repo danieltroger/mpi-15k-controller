@@ -4,7 +4,7 @@ import type { Config } from "../config/config.types.ts";
 import { createStore } from "solid-js/store";
 import { warnLog } from "../utilities/logging.ts";
 
-const commands = new Set(["GPMP", "HECS"] as const);
+const commands = new Set(["GPMP", "HECS", "BATS"] as const);
 
 const keys = new Set([
   "solar_energy_distribution_priority",
@@ -16,6 +16,8 @@ const keys = new Set([
   "battery_discharge_to_feed_grid_when_solar_input_normal",
   "battery_discharge_to_feed_grid_when_solar_input_loss",
   "maximum_feeding_grid_power",
+  "battery_constant_charge_voltage(c.v.)",
+  "battery_floating_charge_voltage",
 ]);
 
 /**

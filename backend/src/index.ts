@@ -78,10 +78,6 @@ function main() {
             return InfluxClientProvider({
               config,
               get children() {
-                const hasCredentials = createMemo(
-                  () => !!(config().shinemonitor_password && config().shinemonitor_user)
-                );
-                const hasInverterDetails = createMemo(() => !!(config().inverter_sn && config().inverter_sn));
                 const [prematureWorkaroundErrored, setPrematureWorkaroundErrored] = createSignal(false);
                 const [feedWhenNoSolarErrored, setFeedWhenNoSolarErrored] = createSignal(false);
                 const [currentMeasuringErrored, setCurrentMeasuringErrored] = createSignal(false);
@@ -165,64 +161,51 @@ function main() {
                       e => errorLog("Alert rules crashed — alerting rules disabled until restart", e)
                     );
 
-                    const isChargingOuterScope = createMemo(() => {
-                      if (!hasCredentials()) {
-                        return errorLog(
-                          "No credentials configured, please set shinemonitor_password and shinemonitor_user in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
-                        );
-                      } else if (!hasInverterDetails()) {
-                        return errorLog(
-                          "No inverter details configured, please set inverter_sn and inverter_pn in config.json. PREMATURE FLOAT BUG WORKAROUND (and feed when no solar) DISABLED!"
-                        );
-                      }
-                      const { exportAmountForSelling } = shouldSellPower(config);
-                      const { chargingAmperageForBuying } = useShouldBuyPower({ config });
-                      const isCharging = createMemo(() => {
-                        if (prematureWorkaroundErrored()) return;
-                        return catchError(
-                          () =>
-                            prematureFloatBugWorkaround({
-                              configSignal: configResourceValue,
-                              clampedSocAh,
-                            }),
-                          e => {
-                            setPrematureWorkaroundErrored(true);
-                            errorLog("Premature float bug workaround errored", e, "restarting in 60s");
-                            setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
-                          }
-                        );
-                      });
+                    const { exportAmountForSelling } = shouldSellPower(config);
+                    const { chargingAmperageForBuying } = useShouldBuyPower({ config });
+                    const isCharging = createMemo(() => {
+                      if (prematureWorkaroundErrored()) return;
+                      return catchError(
+                        () =>
+                          prematureFloatBugWorkaround({
+                            config,
+                            clampedSocAh,
+                          }),
+                        e => {
+                          setPrematureWorkaroundErrored(true);
+                          errorLog("Premature float bug workaround errored", e, "restarting in 60s");
+                          setTimeout(() => setPrematureWorkaroundErrored(false), 60_000);
+                        }
+                      );
+                    });
 
-                      createEffect(() => {
-                        if (feedWhenNoSolarErrored()) return;
-                        catchError(
-                          () => {
-                            const obj = { what: "Initialising", when: +new Date() };
+                    createEffect(() => {
+                      if (feedWhenNoSolarErrored()) return;
+                      catchError(
+                        () => {
+                          const obj = { what: "Initialising", when: +new Date() };
+                          setLastChangingFeedWhenNoSolarReason(obj);
+                          setLastFeedWhenNoSolarReason(obj);
+                          onCleanup(() => {
+                            const obj = { what: feedWhenNoSolarDead, when: +new Date() };
                             setLastChangingFeedWhenNoSolarReason(obj);
                             setLastFeedWhenNoSolarReason(obj);
-                            onCleanup(() => {
-                              const obj = { what: feedWhenNoSolarDead, when: +new Date() };
-                              setLastChangingFeedWhenNoSolarReason(obj);
-                              setLastFeedWhenNoSolarReason(obj);
-                            });
-                            return feedWhenNoSolar({
-                              configSignal: configResourceValue,
-                              isCharging: () => isCharging()?.(),
-                              setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
-                              setLastReason: setLastFeedWhenNoSolarReason,
-                              exportAmountForSelling,
-                              chargingAmperageForBuying,
-                            });
-                          },
-                          e => {
-                            setFeedWhenNoSolarErrored(true);
-                            errorLog("Feed when no solar errored", e, "restarting in 60s");
-                            setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
-                          }
-                        );
-                      });
-
-                      return isCharging;
+                          });
+                          return feedWhenNoSolar({
+                            configSignal: configResourceValue,
+                            isCharging: () => isCharging()?.(),
+                            setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
+                            setLastReason: setLastFeedWhenNoSolarReason,
+                            exportAmountForSelling,
+                            chargingAmperageForBuying,
+                          });
+                        },
+                        e => {
+                          setFeedWhenNoSolarErrored(true);
+                          errorLog("Feed when no solar errored", e, "restarting in 60s");
+                          setTimeout(() => setFeedWhenNoSolarErrored(false), 60_000);
+                        }
+                      );
                     });
                     // Memo (not effect) so the returned live heater state can be exposed over the ws
                     const elpatronReturn = createMemo(() => {
@@ -282,7 +265,7 @@ function main() {
                           socAh,
                           // Latest full/empty/soft-empty anchor — the frontend's "last full / last empty" source.
                           latestAnchor,
-                          isCharging: () => isChargingOuterScope()?.()?.(),
+                          isCharging: () => isCharging()?.(),
                           elpatronState: () => elpatronReturn()?.elpatronHeating(),
                           // Object.fromEntries can't carry the per-key mapping — the cast restores
                           // what is provably true from mqttValueKeys.map
