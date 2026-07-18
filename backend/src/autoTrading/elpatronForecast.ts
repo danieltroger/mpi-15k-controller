@@ -13,7 +13,7 @@
 
 import Influx from "influx";
 import { warnLog } from "../utilities/logging.ts";
-import { readHeatingGpio } from "../utilities/heatingPi.ts";
+import { readElpatronGpioIsOn } from "../utilities/heatingPi.ts";
 import { resolveElpatronMode } from "../sharedTypes.ts";
 import type { Config } from "../config/config.types.ts";
 
@@ -22,12 +22,6 @@ export type ElpatronForecast = {
   wattsAt: (ms: number) => number;
   armed: boolean;
   tankTempC: number | undefined;
-  /**
-   * Whether the pellet stove output is on (undefined = heating pi unreachable). While the stove
-   * is definitely off, the element is the tank's only heat source — which is what licenses the
-   * consumption history subtraction regardless of the element's current armed state.
-   */
-  stoveOn: boolean | undefined;
 };
 
 /**
@@ -38,17 +32,6 @@ export type ElpatronForecast = {
  * Exported for the selftest so a changed horizon is tested, not a stale copy.
  */
 export const MANUAL_ON_MODEL_HORIZON_MS = 24 * 3600 * 1000;
-
-/**
- * Whether the learned-baseline subtraction may run (see consumptionForecast.ts): while the pellet
- * stove is definitely off, the element is the tank's only heat source, so its historical share is
- * strippable regardless of the element's CURRENT armed state — element days linger in the 14-day
- * median after disarming. Unknown stove state (heating pi unreachable) falls back to the armed
- * gate, which is safe in both seasons. One helper so the planner and planPreview cannot drift.
- */
-export function shouldSubtractElpatronHistory(elpatron: Pick<ElpatronForecast, "armed" | "stoveOn">): boolean {
-  return elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
-}
 
 export async function fetchElpatronForecast({
   elpatronConfig,
@@ -61,12 +44,11 @@ export async function fetchElpatronForecast({
   solarWattsAt: (ms: number) => number;
   nowMs: number;
 }): Promise<ElpatronForecast> {
-  // Always read the gpio: even with a switching mode active (armed either way), the stove state
-  // decides whether the history subtraction may run
-  const gpio = await readHeatingGpio(elpatronConfig.heating_pi_ip);
+  // Armed = we actively switch it (solar or always-on mode), or someone left the element GPIO
+  // on manually — that last case is only knowable by asking the heating pi
   const elpatronMode = resolveElpatronMode(elpatronConfig);
-  const armed = elpatronMode !== "off" || gpio?.elementOn === true;
-  if (!armed) return { wattsAt: () => 0, armed: false, tankTempC: undefined, stoveOn: gpio?.stoveOn };
+  const armed = elpatronMode !== "off" || (await readElpatronGpioIsOn(elpatronConfig.heating_pi_ip)) === true;
+  if (!armed) return { wattsAt: () => 0, armed: false, tankTempC: undefined };
 
   const tankTempC = await fetchTankTemperature(influxClient);
   // Without a tank reading, assume mid-band: still predicts a plausible dawn burn + top-ups
@@ -87,7 +69,7 @@ export async function fetchElpatronForecast({
     tank_cooling_degrees_per_hour: elpatronConfig.tank_cooling_degrees_per_hour,
     tank_max_temperature: elpatronConfig.tank_max_temperature,
   });
-  return { wattsAt, armed: true, tankTempC, stoveOn: gpio?.stoveOn };
+  return { wattsAt, armed: true, tankTempC };
 }
 
 /**

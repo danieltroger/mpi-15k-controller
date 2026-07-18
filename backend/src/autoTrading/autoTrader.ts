@@ -10,7 +10,7 @@ import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedVal
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { fetchElpatronForecast, shouldSubtractElpatronHistory } from "./elpatronForecast.ts";
+import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import {
   type AutoTraderState,
   type AutoTraderStatus,
@@ -351,7 +351,7 @@ async function buildPlannerInput(
   const consumption = await fetchConsumptionForecast(
     ctx.influxClient(),
     tradingConfig.fallback_house_load_watts,
-    shouldSubtractElpatronHistory(elpatron) ? cfg.elpatron_switching : undefined
+    cfg.elpatron_switching
   );
   const { sells, buys } = userWindows(ctx, cfg);
   return {
