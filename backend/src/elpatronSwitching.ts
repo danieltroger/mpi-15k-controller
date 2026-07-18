@@ -3,7 +3,12 @@ import { random_string, wait } from "./vendor/depictUtilishared.ts";
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower.ts";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers.ts";
-import { getHeatingPiSocket, primeElpatronGpioCache, readElpatronGpioIsOn } from "./utilities/heatingPi.ts";
+import {
+  getHeatingPiSocket,
+  primeElpatronGpioCache,
+  primeHeatingGpioFromBroadcast,
+  readElpatronGpioIsOn,
+} from "./utilities/heatingPi.ts";
 import { logLog, warnLog } from "./utilities/logging.ts";
 import { type ElpatronDisplayState, type ElpatronMode, resolveElpatronMode } from "./sharedTypes.ts";
 import type { DepictAPIWS } from "./vendor/depictUtilishared.ts";
@@ -75,8 +80,9 @@ export function elpatronSwitching(config: Accessor<Config>) {
     const ip = heatingPiIp();
     if (!ip) return;
     const socket = getHeatingPiSocket(ip);
+    // No cache prime here: the readNow path just did a real (cache-refreshing) read, and the
+    // broadcast path primes the full outputs snapshot itself in onMessage
     const applyState = (elementIsOn: boolean | undefined) => {
-      if (elementIsOn !== undefined) primeElpatronGpioCache(ip, elementIsOn);
       setElpatronHeating(elementIsOn);
       if (elementIsOn !== undefined) enforceAlwaysOnAfterExternalOff(elementIsOn);
     };
@@ -88,9 +94,12 @@ export function elpatronSwitching(config: Accessor<Config>) {
       try {
         const decoded = JSON.parse(String((event as MessageEvent).data));
         if (decoded?.type !== "change" || decoded.key !== "gpio") return;
-        const rawState = decoded.value?.outputs?.electric_heating_element;
-        if (rawState === undefined) return;
-        applyState(rawState === 0); // active-low
+        const outputs = decoded.value?.outputs;
+        if (outputs?.electric_heating_element === undefined) return;
+        // The broadcast carries every output's fresh state — including the stove, which the
+        // consumption model's subtraction gate reads
+        primeHeatingGpioFromBroadcast(ip, outputs);
+        applyState(outputs.electric_heating_element === 0); // active-low
       } catch (e) {
         warnLog("Elpatron: couldn't parse heating pi broadcast", e);
       }

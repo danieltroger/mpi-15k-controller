@@ -35,8 +35,20 @@ export type ElpatronForecast = {
  * a policy: extrapolating it as permanent projected ~11 kWh/day of phantom thermostat top-ups for
  * the whole horizon (the 2026-07-16/17 over-forecast + guard churn). Model it for one day ahead —
  * the 15-min guard re-plans keep rolling that window forward for as long as it actually stays on.
+ * Exported for the selftest so a changed horizon is tested, not a stale copy.
  */
-const MANUAL_ON_MODEL_HORIZON_MS = 24 * 3600 * 1000;
+export const MANUAL_ON_MODEL_HORIZON_MS = 24 * 3600 * 1000;
+
+/**
+ * Whether the learned-baseline subtraction may run (see consumptionForecast.ts): while the pellet
+ * stove is definitely off, the element is the tank's only heat source, so its historical share is
+ * strippable regardless of the element's CURRENT armed state — element days linger in the 14-day
+ * median after disarming. Unknown stove state (heating pi unreachable) falls back to the armed
+ * gate, which is safe in both seasons. One helper so the planner and planPreview cannot drift.
+ */
+export function shouldSubtractElpatronHistory(elpatron: Pick<ElpatronForecast, "armed" | "stoveOn">): boolean {
+  return elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
+}
 
 export async function fetchElpatronForecast({
   elpatronConfig,
