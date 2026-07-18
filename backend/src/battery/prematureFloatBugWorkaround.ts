@@ -167,11 +167,16 @@ function queueVoltageSyncIfNeeded({
   confirmedBulk: number | undefined;
   deparallelizedSetChargeVoltages: (targetVoltage: number) => void;
 }) {
+  // Compare at decivolt resolution — the resolution MCHGV writes and BATS reads back. Comparing
+  // the raw config value would never match for >1-decimal configs (e.g. 53.75 wires as 53.8) and
+  // the retry interval would re-send the same MCHGV forever.
+  const wantDecivolts = wantsVoltage == undefined ? undefined : Math.round(wantsVoltage * 10);
   if (
     !wantsVoltage ||
+    wantDecivolts == undefined ||
     confirmedFloat == undefined ||
     confirmedBulk == undefined ||
-    (wantsVoltage === confirmedFloat && wantsVoltage === confirmedBulk)
+    (wantDecivolts === Math.round(confirmedFloat * 10) && wantDecivolts === Math.round(confirmedBulk * 10))
   ) {
     return;
   }

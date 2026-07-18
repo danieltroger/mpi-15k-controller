@@ -51,6 +51,7 @@ export function useGetUsbValues({
             .map(line => line.trim())
             .filter(line => line);
 
+          const parsedKeys = new Set<string>();
           for (const line of lines) {
             const [key, value] = line
               .split(" ")
@@ -58,6 +59,17 @@ export function useGetUsbValues({
               .filter(v => v);
             if (keys.has(key)) {
               setUsbValues(key as keyof UsbValues, value);
+              parsedKeys.add(key);
+            }
+          }
+          // The voltage workaround silently stalls if these stop parsing (a future mpp-solar
+          // rewording e.g. adding a space to the "(c.v.)" key would split it into two tokens), so
+          // scream rather than go quiet.
+          if (command === "BATS") {
+            for (const expectedKey of ["battery_constant_charge_voltage(c.v.)", "battery_floating_charge_voltage"]) {
+              if (!parsedKeys.has(expectedKey)) {
+                warnLog("BATS poll came back without", expectedKey, "- full stdout:", stdout);
+              }
             }
           }
         },
