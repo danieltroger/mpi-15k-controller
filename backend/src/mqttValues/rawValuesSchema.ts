@@ -1,9 +1,13 @@
 import { z } from "zod";
 
-// 1. Define the Zod schema for raw mqtt values
+// 1. Define the Zod schema for raw inverter values (field names are mpp-solar's influx naming —
+// historically parsed back off the MQTT broker, now decoded natively from the serial PI17 session)
 export const rawMQTTValuesSchema = z.object({
   solar_input_power_1: z.number(),
   solar_input_power_2: z.number(),
+  // Defined in the PS response but sent empty by the MPI 15K firmware in every live capture —
+  // kept so the decoder has a home for it if a firmware update starts filling it in
+  battery_power: z.number(),
   ac_input_active_power_r: z.number(),
   ac_input_active_power_s: z.number(),
   ac_input_active_power_t: z.number(),

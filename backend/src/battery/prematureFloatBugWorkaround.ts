@@ -1,10 +1,10 @@
-import { type Accessor, createEffect, createMemo, onCleanup, type Setter, untrack } from "solid-js";
+import { type Accessor, createEffect, createMemo, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import { deparallelize_no_drop } from "../vendor/depictUtilishared.ts";
 import { reactiveBatteryCurrent, reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
-import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
-import type { CommandQueue } from "../usbInverterConfiguration/usb.types.ts";
+import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
+import type { SetterQueueItem } from "../inverterComms/inverterComms.types.ts";
 
 let lastVoltageSetAt = 0;
 
@@ -15,7 +15,7 @@ export function prematureFloatBugWorkaround({
   config: Accessor<Config>;
   clampedSocAh: Accessor<number | undefined>;
 }) {
-  const { $usbValues, setCommandQueue } = useUsbInverterConfiguration();
+  const { $usbValues, queueSetter } = useInverterComms();
   // Wh discharged below full, derived from the Ah SOC: (100 − SOC)% of the usable pack energy
   // (capacity_ah × mean discharge-branch voltage). Same meaning — and same config key
   // start_bulk_charge_after_wh_discharged — as the deleted Wh energyRemovedSinceFull it replaces.
@@ -25,8 +25,8 @@ export function prematureFloatBugWorkaround({
     const { capacity_ah, v_discharge } = config().soc_calculations.ah_ledger;
     return ((100 - soc) / 100) * capacity_ah * v_discharge;
   });
-  // Confirmed values come from the periodic BATS readback over serial (plus the immediate +10 s
-  // refresh after every write), which replaces the old Shinemonitor cloud readback resource.
+  // Confirmed values come from the periodic BATS readback over serial (plus the session's targeted
+  // BATS confirm after every write's quiet gap), which replaced the old Shinemonitor cloud readback.
   const localStateOfConfiguredVoltageFloat = createMemo(() =>
     parseConfirmedVoltage($usbValues.battery_floating_charge_voltage, "battery_floating_charge_voltage")
   );
@@ -34,7 +34,7 @@ export function prematureFloatBugWorkaround({
     parseConfirmedVoltage($usbValues["battery_constant_charge_voltage(c.v.)"], "battery_constant_charge_voltage(c.v.)")
   );
   const deparallelizedSetChargeVoltages = deparallelize_no_drop((targetVoltage: number) =>
-    setChargeVoltagesWithThrottling(targetVoltage, setCommandQueue)
+    setChargeVoltagesWithThrottling(targetVoltage, queueSetter)
   );
   const wantVoltagesToBeSetTo = createMemo<number | undefined>(prev => {
     const voltage = reactiveBatteryVoltage();
@@ -118,9 +118,10 @@ export function prematureFloatBugWorkaround({
   // interval is the self-heal for that case (the 60 s throttle in the setter keeps it polite).
   const retryInterval = setInterval(
     () => {
-      // The inverter ACKs MCHGV immediately but BATS reflects the new values only after ~6 s
-      // (verified live) — a tick landing in that window would see stale values and re-send a write
-      // that already succeeded, so skip while a recent write's confirmation may still be in flight.
+      // The inverter ACKs MCHGV immediately but commits it only seconds later, and the session's
+      // confirm sequence (12 s quiet gap + one 30 s backoff re-check) may still be in flight — a
+      // tick landing in that window would see stale values and re-send a write that already
+      // succeeded, so skip while a recent write's confirmation may still be pending.
       if (+new Date() - lastVoltageSetAt < 90_000) return;
       untrack(() =>
         queueVoltageSyncIfNeeded({
@@ -197,7 +198,7 @@ function queueVoltageSyncIfNeeded({
   deparallelizedSetChargeVoltages(wantsVoltage);
 }
 
-async function setChargeVoltagesWithThrottling(targetVoltage: number, setCommandQueue: Setter<CommandQueue>) {
+async function setChargeVoltagesWithThrottling(targetVoltage: number, queueSetter: (item: SetterQueueItem) => void) {
   const now = +new Date();
   const setMaxEvery = 60_000;
   const setAgo = now - lastVoltageSetAt;
@@ -206,13 +207,13 @@ async function setChargeVoltagesWithThrottling(targetVoltage: number, setCommand
     logLog("Waiting with setting voltage to", targetVoltage, "for", waitFor, "ms, because it was set very recently");
     await new Promise(resolve => setTimeout(resolve, waitFor));
   }
-  queueChargeVoltagesCommand(targetVoltage, setCommandQueue);
+  queueChargeVoltagesCommand(targetVoltage, queueSetter);
   lastVoltageSetAt = +new Date();
 }
 
-function queueChargeVoltagesCommand(targetVoltage: number, setCommandQueue: Setter<CommandQueue>) {
-  // MCHGV wants 4-digit decivolts (58.0 V → 0580) and mpp-solar's PI17 command regex only accepts
-  // 0400–0599, i.e. 40.0–59.9 V — outside that we'd enqueue a command that can never be sent.
+function queueChargeVoltagesCommand(targetVoltage: number, queueSetter: (item: SetterQueueItem) => void) {
+  // MCHGV wants 4-digit decivolts (58.0 V → 0580) and the inverter only accepts
+  // 0400–0599, i.e. 40.0–59.9 V — outside that we'd enqueue a command that can never work.
   const constantChargeDecivolts = Math.round(targetVoltage * 10);
   const floatChargeDecivolts = constantChargeDecivolts;
   if (constantChargeDecivolts < 400 || constantChargeDecivolts > 599) {
@@ -238,30 +239,21 @@ function queueChargeVoltagesCommand(targetVoltage: number, setCommandQueue: Sett
   }
   const command =
     `MCHGV${decivoltsToWireFormat(constantChargeDecivolts)},${decivoltsToWireFormat(floatChargeDecivolts)}` as const;
-  setCommandQueue(prev => {
+  queueSetter({
+    command,
     // Replace any not-yet-sent MCHGV so a stale target can't be applied after this newer one
-    const newQueue = new Set([...prev].filter(queueItem => !queueItem.command.startsWith("MCHGV")));
-    newQueue.add({
-      command,
-      // Confirm via BATS readback, which feeds localStateOfConfiguredVoltage*. The inverter ACKs
-      // immediately but BATS only reflects the new values after ~6 s (verified live), so the
-      // immediate refresh may still show the old values — the second refresh 10 s later is the
-      // one that actually confirms.
-      refreshAfterSend: ["BATS"],
-      onSucceeded: ({ stdout }) => {
-        // mpp-solar exits 0 even when the inverter NAKs a setter. Observed live over serial
-        // (2026-07-18): an accepted write prints an "mchgv     ACK" row; a rejection prints
-        // "NAK" or a "warning0 ... rejected" row. Anything else is an unknown format — treat it
-        // as a failure so drift screams instead of passing silently.
-        const rejected = stdout.includes("rejected") || /\bNAK\b/.test(stdout);
-        const accepted = /\bACK\b/.test(stdout) || stdout.includes("Successful");
-        if (rejected || !accepted) {
-          errorLog("Inverter did not accept", command, "— full mpp-solar output:", stdout);
-          return;
-        }
+    replacesPrefix: "MCHGV",
+    // Confirm via BATS readback, which feeds localStateOfConfiguredVoltage*. The session runs it
+    // after the post-write quiet gap the inverter's delayed commit requires (ACK ≠ applied — see
+    // inverterComms/schedulerCore.ts for the measured behaviour).
+    refreshAfterSend: ["BATS"],
+    onResult: ({ acknowledged }) => {
+      // The session classifies the raw ^1/^0 frame — no CLI stdout parsing anymore. NAKs and
+      // timeouts are already errorLogged centrally by the session; the accept is logged here for
+      // the voltage-change audit trail.
+      if (acknowledged) {
         logLog("Inverter acknowledged", command, "(CV/bulk and float charge voltage →", targetVoltage, "V)");
-      },
-    });
-    return newQueue;
+      }
+    },
   });
 }
