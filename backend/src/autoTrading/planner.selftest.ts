@@ -595,14 +595,25 @@ function check(name: string, cond: boolean, detail = "") {
     dayKwh > 8 && dayKwh < 16,
     `(${dayKwh.toFixed(1)} kWh)`
   );
-  // GPIO on without solar switching: only the thermostat limits it — top-ups continue at night
+  // always_on mode: only the thermostat limits it — top-ups continue at night
   const ungated = buildElpatronLoadModel({
     nowMs: t0,
     startTempC: 50,
     heatingAllowedAt: () => true,
     ...elpatronKnobs,
   });
-  check("elpatron: manual-on holds the band around the clock", ungated(t0 + 20 * H) === 480);
+  check("elpatron: always-on mode holds the band around the clock", ungated(t0 + 20 * H) === 480);
+  // A hand-switched GPIO is a point-in-time observation: modeled for one day, not extrapolated
+  // forever (the 2026-07-16/17 over-forecast). Rolling re-plans re-extend while it stays on.
+  const manualOnHorizonMs = 24 * H;
+  const manual = buildElpatronLoadModel({
+    nowMs: t0,
+    startTempC: 50,
+    heatingAllowedAt: ms => ms - t0 < manualOnHorizonMs,
+    ...elpatronKnobs,
+  });
+  check("elpatron: manual-on modeled within the first day", manual(t0 + 20 * H) === 480);
+  check("elpatron: manual-on not extrapolated past a day", manual(t0 + 30 * H) === 0, `(${manual(t0 + 30 * H)} W)`);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");

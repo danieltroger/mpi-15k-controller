@@ -348,10 +348,15 @@ async function buildPlannerInput(
     solarWattsAt: solar.wattsAt,
     nowMs,
   });
+  // Strip the element's share out of the learned history whenever the stove is off — element
+  // days linger in the 14-day median after disarming, so gating on "armed now" re-inflated the
+  // baseline the moment guests left. Unknown stove state (pi unreachable) falls back to the
+  // armed gate, which is safe in both seasons.
+  const subtractElpatronHistory = elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
   const consumption = await fetchConsumptionForecast(
     ctx.influxClient(),
     tradingConfig.fallback_house_load_watts,
-    elpatron.armed ? cfg.elpatron_switching : undefined
+    subtractElpatronHistory ? cfg.elpatron_switching : undefined
   );
   const { sells, buys } = userWindows(ctx, cfg);
   return {

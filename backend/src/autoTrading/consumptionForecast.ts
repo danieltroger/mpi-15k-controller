@@ -14,6 +14,7 @@ export type ElpatronHistoryKnobs = {
   element_watts: number;
   tank_wh_per_degree: number;
   tank_cooling_degrees_per_hour: number;
+  tank_max_temperature: number;
 };
 
 let cache: (ConsumptionForecast & { elpatronKey: string }) | undefined;
@@ -30,11 +31,13 @@ function localHour(ms: number): number {
  * Median over days is used so that rare heavy loads (EV charging sessions) don't inflate the baseline —
  * those are exactly what the user handles manually via the extra-reserve knob.
  *
- * When `subtractElpatron` is set (the water heater element is currently armed — see
- * elpatronForecast.ts), the element's share is stripped from each historical hour first, using the
- * tank sensor: energy into the tank ≈ heat capacity × (ΔT + standing loss). The planner adds the
- * element back as a modeled forward load, so leaving it in the baseline would double-count it.
- * Not applied in stove season (element unarmed), where tank warming is the pellet stove's doing.
+ * When `subtractElpatron` is set (the pellet stove is off, so the element is the tank's only heat
+ * source — the caller gates on live stove state, see buildPlannerInput), the element's share is
+ * stripped from each historical hour, using the tank sensor: energy into the tank ≈ heat capacity
+ * × (ΔT + standing loss). The forward model adds the element back whenever it's armed, so leaving
+ * it in the baseline would double-count it — and element days linger in this 14-day window after
+ * disarming, which is why the gate is the stove, not the element's current armed state.
+ * Not applied in stove season, where tank warming is the boiler's doing.
  */
 export async function fetchConsumptionForecast(
   influxClient: Influx.InfluxDB | undefined,
@@ -151,7 +154,15 @@ async function estimateElpatronHistory(
     const nextTank = tankByMs.get(ms + hourMs);
     if (nextTank === undefined) continue;
     const deltaDegrees = nextTank - tank;
-    const estimatedW = knobs.tank_wh_per_degree * (deltaDegrees + knobs.tank_cooling_degrees_per_hour);
+    // The standing-loss term only belongs to hours the element could have been compensating it:
+    // a rising tank, or a flat one held near the thermostat band. A tank coasting well below the
+    // band cools slower than the (hot-tank-calibrated) constant, and crediting the difference to
+    // the element invented a few hundred phantom watts on quiet nights — enough to out-dominate
+    // a small house load and get real samples dropped.
+    const elementCouldBeActive = deltaDegrees > 0 || tank >= knobs.tank_max_temperature - 5;
+    const estimatedW = elementCouldBeActive
+      ? knobs.tank_wh_per_degree * (deltaDegrees + knobs.tank_cooling_degrees_per_hour)
+      : 0;
     elpatronWByMs.set(ms, Math.min(knobs.element_watts, Math.max(0, estimatedW)));
   }
   return elpatronWByMs;

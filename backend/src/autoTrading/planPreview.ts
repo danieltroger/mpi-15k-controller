@@ -60,12 +60,14 @@ const elpatron = await fetchElpatronForecast({
   nowMs: Date.now(),
 });
 console.log(
-  `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}\n`
+  `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}, stove on: ${elpatron.stoveOn ?? "unknown"}\n`
 );
+// Same gate as buildPlannerInput: stove off ⇒ history subtraction runs regardless of armed state
+const subtractElpatronHistory = elpatron.stoveOn === false || (elpatron.stoveOn === undefined && elpatron.armed);
 const consumption = await fetchConsumptionForecast(
   influxClient,
   at.fallback_house_load_watts,
-  elpatron.armed ? elpatronConfig : undefined
+  subtractElpatronHistory ? elpatronConfig : undefined
 );
 
 const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
