@@ -21,7 +21,7 @@ export function useSetBuyingParameters({
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
-          newQueue.add({ command: "EDB1", refreshAfterSend: true });
+          newQueue.add({ command: "EDB1", refreshAfterSend: ["HECS"] });
           return newQueue;
         });
       }
@@ -30,7 +30,7 @@ export function useSetBuyingParameters({
         setCommandQueue(prev => {
           // Remove any not yet executed commands regarding what we want to charge from
           const newQueue = new Set([...prev].filter(item => !item.command.startsWith("EDB")));
-          newQueue.add({ command: "EDB0", refreshAfterSend: true });
+          newQueue.add({ command: "EDB0", refreshAfterSend: ["HECS"] });
           return newQueue;
         });
       }
@@ -46,7 +46,7 @@ export function useSetBuyingParameters({
       const newQueue = new Set([...prev].filter(item => !item.command.startsWith("MUCHGC")));
       newQueue.add({
         command: `MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`,
-        refreshAfterSend: false,
+        refreshAfterSend: [],
       });
       return newQueue;
     });

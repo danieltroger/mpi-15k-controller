@@ -247,7 +247,7 @@ function queueChargeVoltagesCommand(targetVoltage: number, setCommandQueue: Sett
       // immediately but BATS only reflects the new values after ~6 s (verified live), so the
       // immediate refresh may still show the old values — the second refresh 10 s later is the
       // one that actually confirms.
-      refreshAfterSend: true,
+      refreshAfterSend: ["BATS"],
       onSucceeded: ({ stdout }) => {
         // mpp-solar exits 0 even when the inverter NAKs a setter. Observed live over serial
         // (2026-07-18): an accepted write prints an "mchgv     ACK" row; a rejection prints

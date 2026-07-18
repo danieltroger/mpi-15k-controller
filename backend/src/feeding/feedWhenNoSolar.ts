@@ -250,7 +250,7 @@ export function feedWhenNoSolar({
         const newQueue = new Set([...prev].filter(item => !item.command.startsWith(command)));
         newQueue.add({
           command: `${command}${+wantFeedIntoGrid ? 1 : 0}`,
-          refreshAfterSend: true,
+          refreshAfterSend: ["HECS"],
         });
         return newQueue;
       });
@@ -291,7 +291,7 @@ export function feedWhenNoSolar({
         const newQueue = new Set([...prev].filter(item => !item.command.startsWith("GPMP0")));
         newQueue.add({
           command: `GPMP0${(target + "").padStart(5, "0")}`,
-          refreshAfterSend: true,
+          refreshAfterSend: ["GPMP"],
         });
         return newQueue;
       });

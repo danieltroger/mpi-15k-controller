@@ -42,9 +42,12 @@ type USBCommands =
    */
   | { command: "BATS" };
 
+export type UsbQueryCommandName = "GPMP" | "HECS" | "BATS";
+
 export type CommandQueueItem = USBCommands & {
   onSucceeded?: (result: { stdout: string; stderr: string }) => void;
-  refreshAfterSend: boolean;
+  /** Query commands to re-run (immediately + 10 s later) to confirm this write; [] = none */
+  refreshAfterSend: readonly UsbQueryCommandName[];
 };
 
 export type CommandQueue = Set<CommandQueueItem>;
@@ -56,7 +59,7 @@ export type UsbConfiguration = {
    * $ indicates this is a reactive store and not a normal object
    */
   $usbValues: UsbValues;
-  triggerGettingUsbValues: () => void;
+  triggerGettingUsbValues: (subset?: readonly UsbQueryCommandName[]) => void;
 };
 
 export type UsbValues = Partial<{

@@ -54,8 +54,13 @@ async function sendUsbCommands() {
   const { stdout: disableStdout, stderr: disableStderr } = await exec("systemctl --user stop mpp-solar", { env });
   debugLog("Turned off MQTT value reading daemon", { disableStdout, disableStderr });
 
-  // Allow things to be added to the queue while we're processing it
-  while (untrack(commandQueue).size > 0) {
+  // Allow things to be added to the queue while we're processing it, but bound a single drain:
+  // the MQTT poller daemon is stopped for the whole drain, and in evening feed mode the
+  // feed-target oscillation plus refresh timers can keep the queue non-empty for minutes
+  // (observed 5m48s on 2026-07-18 -> stale-MQTT P2). Leftover items run next cycle instead.
+  let commandsSentThisDrain = 0;
+  const MAX_COMMANDS_PER_DRAIN = 8;
+  while (untrack(commandQueue).size > 0 && commandsSentThisDrain < MAX_COMMANDS_PER_DRAIN) {
     let queueItem: CommandQueueItem;
     // Get first command in queue, and instantly update the queue
     setCommandQueue(prev => {
@@ -74,14 +79,21 @@ async function sendUsbCommands() {
         `/home/ubuntu/mpp-solar/.venv/bin/mpp-solar -p ${INVERTER_SERIAL_DEVICE} -P PI17 -c ${queueItem!.command}`
       );
       queueItem!.onSucceeded?.({ stdout, stderr });
-      if (queueItem!.refreshAfterSend) {
-        triggerGettingUsbValues();
+      commandsSentThisDrain++;
+      const refreshTargets = queueItem!.refreshAfterSend;
+      if (refreshTargets.length) {
+        triggerGettingUsbValues(refreshTargets);
         // Sometimes the inverter will still return the old value even though it accepted a write, so check again in 10seconds
-        setTimeout(triggerGettingUsbValues, 10_000);
+        setTimeout(() => triggerGettingUsbValues(refreshTargets), 10_000);
       }
     } catch (e) {
       errorLog("Failed to send USB command", queueItem!, e);
     }
+  }
+
+  const leftInQueue = untrack(commandQueue).size;
+  if (leftInQueue > 0) {
+    debugLog("Drain cap reached, leaving", leftInQueue, "command(s) for the next cycle");
   }
 
   debugLog("Turning on MQTT value reading daemon");

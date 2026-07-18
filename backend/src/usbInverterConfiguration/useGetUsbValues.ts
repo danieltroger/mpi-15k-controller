@@ -1,5 +1,5 @@
 import { type Accessor, createEffect, createMemo, onCleanup, type Setter, untrack } from "solid-js";
-import type { CommandQueue, CommandQueueItem, UsbValues } from "./usb.types.ts";
+import type { CommandQueue, CommandQueueItem, UsbQueryCommandName, UsbValues } from "./usb.types.ts";
 import type { Config } from "../config/config.types.ts";
 import { createStore } from "solid-js/store";
 import { warnLog } from "../utilities/logging.ts";
@@ -35,9 +35,10 @@ export function useGetUsbValues({
   const [$usbValues, setUsbValues] = createStore<UsbValues>({});
   const pollValuesIntervalSeconds = createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds);
 
-  const triggerGettingUsbValues = () => {
+  const triggerGettingUsbValues = (subset?: readonly UsbQueryCommandName[]) => {
     const existingCommandsInQueue = new Set([...untrack(commandQueue)].map(command => command.command));
-    const commandsToRun = commands.difference(existingCommandsInQueue);
+    const requestedCommands = subset ? new Set(subset) : commands;
+    const commandsToRun = requestedCommands.difference(existingCommandsInQueue);
     for (const command of commandsToRun) {
       const commandQueueItem = {
         command,
@@ -73,7 +74,7 @@ export function useGetUsbValues({
             }
           }
         },
-        refreshAfterSend: false,
+        refreshAfterSend: [],
       } satisfies CommandQueueItem;
       setCommandQueue(prev => {
         const newCommandQueue = new Set(prev);
