@@ -4,12 +4,7 @@ import { useVisibilityState } from "@depict-ai/ui/latest";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { isServer } from "solid-js/web";
-import type {
-  WsAction,
-  WsExposedSignals,
-  WsSignalKey,
-  WsWritableSignalKey,
-} from "../../../backend/src/wsContract.types";
+import type { WsAction, WsExposedSignals, WsSignalKey } from "../../../backend/src/wsContract.types";
 
 /** Fire a backend action (command: "action") and return its result string, or undefined on failure. */
 export async function sendBackendAction(
@@ -26,15 +21,11 @@ export async function sendBackendAction(
   throw new Error(response.message || "Action failed");
 }
 
-/** Only `config` is writable server-side; for every other key the setter type is `never`. */
-type BackendSetter<K extends WsSignalKey> = K extends WsWritableSignalKey
-  ? (new_value: WsExposedSignals[K]) => Promise<boolean | undefined>
-  : never;
-
 /**
  * A signal mirroring one backend-exposed value, typed by the ws contract (wsContract.types.ts):
  * the key must exist there and the value type is inferred from it — a typo'd key or a wrongly
- * assumed shape fails to compile instead of failing at runtime.
+ * assumed shape fails to compile instead of failing at runtime. Read-only: config, the one
+ * writable value, is written through path-scoped patches (useConfigPatcher), never wholesale.
  */
 // With a default value the accessor never yields undefined
 export function getBackendSyncedSignal<K extends WsSignalKey>(
@@ -42,14 +33,14 @@ export function getBackendSyncedSignal<K extends WsSignalKey>(
   default_value: WsExposedSignals[K],
   refetchOnVisibilityChange?: boolean,
   silentReadErrors?: boolean
-): readonly [Accessor<WsExposedSignals[K]>, BackendSetter<K>];
+): readonly [Accessor<WsExposedSignals[K]>];
 // Without one, undefined means "hasn't arrived yet"
 export function getBackendSyncedSignal<K extends WsSignalKey>(
   key: K,
   default_value?: undefined,
   refetchOnVisibilityChange?: boolean,
   silentReadErrors?: boolean
-): readonly [Accessor<WsExposedSignals[K] | undefined>, BackendSetter<K>];
+): readonly [Accessor<WsExposedSignals[K] | undefined>];
 export function getBackendSyncedSignal<K extends WsSignalKey>(
   key: K,
   default_value?: WsExposedSignals[K],
@@ -62,37 +53,7 @@ export function getBackendSyncedSignal<K extends WsSignalKey>(
   const owner = getOwner();
   const [get_value, set_actual_signal] = createSignal<Value>(default_value);
 
-  const write = async (new_value: WsExposedSignals[K]) => {
-    set_actual_signal(() => new_value); // set the signal immediately, since that's what's expected of a signal and we kind of want to emulate that
-    try {
-      const [response] = (await socket?.ensure_sent({
-        id: random_string(),
-        command: "write",
-        key,
-        value: new_value,
-      })) as [
-        {
-          id: string;
-          status: "ok" | "not-ok";
-          value: unknown;
-          message?: string;
-        },
-        string,
-      ];
-      if (response.status === "ok") {
-        return true;
-      }
-      console.error(response);
-      throw response.message;
-    } catch (e) {
-      console.error(e);
-      if (owner) await showToastWithMessage(owner, () => `Error writing ${key}: ${e}`);
-    }
-    return false;
-  };
-  // The runtime write function exists for every key (the backend rejects non-writable ones);
-  // the conditional type narrows it away at compile time for read-only keys.
-  const result = [get_value, write] as unknown as readonly [Accessor<Value>, BackendSetter<K>];
+  const result = [get_value] as const;
 
   if (isServer) {
     return result;

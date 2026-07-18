@@ -20,32 +20,11 @@ export async function wsMessaging({
   exposedAccessors: WsExposedAccessorMap;
   actions: Record<WsAction, () => Promise<string>>;
 }) {
+  // Every exposed signal is read-only over the ws; config is written exclusively through the
+  // path-scoped patch command below (the whole-object write reverted concurrent backend updates
+  // from stale client copies — the 2026-07-16 drain_a incident — and no longer exists).
   const exposed_signals = {
-    config: {
-      getter: get_config,
-      // Clients write the WHOLE config object from their own (possibly stale) copy — a phone tab that
-      // re-synced 80 min ago and then saved reverted an Ah-ledger drain update on 2026-07-16. The
-      // machine-owned EMA state must therefore always be taken from the live value, never the client's:
-      // these fields are only ever written by the ledger's parameter tracking. To seed them manually,
-      // stop the service and edit config.json.
-      setter: (value: Config) =>
-        set_config(current => ({
-          ...value,
-          soc_calculations: {
-            ...value.soc_calculations,
-            ah_ledger: {
-              ...value.soc_calculations.ah_ledger,
-              drain_a: current.soc_calculations.ah_ledger.drain_a,
-              capacity_ah: current.soc_calculations.ah_ledger.capacity_ah,
-            },
-          },
-        })),
-      validator: (value: Config) => {
-        if (typeof value !== "object") {
-          return "Can't write config, not an object: " + value;
-        }
-      },
-    },
+    config: { getter: get_config },
     temperatures: {
       getter: () => serializeTemperatures(temperatures),
     },
@@ -94,7 +73,16 @@ export async function wsMessaging({
       }
     }
 
-    if (command === "read" || command === "write") {
+    if (command === "write") {
+      // Loud tombstone for pre-patch frontends still holding the old protocol in a stale tab
+      return JSON.stringify({
+        id,
+        status: "not-ok",
+        message: `The whole-object write command no longer exists — config is written through path-scoped "patch" commands. Reload the page if this tab is old.`,
+      });
+    }
+
+    if (command === "read") {
       const specifier = exposed_signals[key as keyof typeof exposed_signals];
       if (!specifier) {
         return JSON.stringify({
@@ -103,26 +91,7 @@ export async function wsMessaging({
           message: `No signal with key: ${key}, allowed keys: ${Object.keys(exposed_signals).join(", ")}`,
         });
       }
-      const { getter } = specifier;
-      if (command === "read") {
-        return JSON.stringify({ id, status: "ok", value: untrack(getter as Accessor<any>) });
-      } else if (command === "write") {
-        if (!("setter" in specifier)) {
-          return JSON.stringify({
-            id,
-            status: "not-ok",
-            message: `Can't write to signal with key: ${key}, it is read-only`,
-          });
-        }
-        if ("validator" in specifier) {
-          const error = specifier.validator(value);
-          if (error) {
-            return JSON.stringify({ id, status: "not-ok", message: error });
-          }
-        }
-        specifier.setter(value);
-        return JSON.stringify({ id, status: "ok", value });
-      }
+      return JSON.stringify({ id, status: "ok", value: untrack(specifier.getter as Accessor<any>) });
     }
     return JSON.stringify({
       id,

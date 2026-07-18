@@ -47,9 +47,6 @@ export type WsExposedSignals = {
 
 export type WsSignalKey = keyof WsExposedSignals;
 
-/** Keys the frontend may write; everything else is read-only over the ws. */
-export type WsWritableSignalKey = "config";
-
 export type ConfigPatchOp = "set" | "unset";
 
 /**
