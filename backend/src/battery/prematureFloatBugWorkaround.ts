@@ -249,9 +249,13 @@ function queueChargeVoltagesCommand(targetVoltage: number, setCommandQueue: Sett
       // one that actually confirms.
       refreshAfterSend: true,
       onSucceeded: ({ stdout }) => {
-        // mpp-solar exits 0 even when the inverter NAKs a setter — rejection only shows up as a
-        // "warning0 ... rejected" row in stdout, an accepted write as an "ack ... Successful" row
-        if (stdout.includes("rejected") || !stdout.includes("Successful")) {
+        // mpp-solar exits 0 even when the inverter NAKs a setter. Observed live over serial
+        // (2026-07-18): an accepted write prints an "mchgv     ACK" row; a rejection prints
+        // "NAK" or a "warning0 ... rejected" row. Anything else is an unknown format — treat it
+        // as a failure so drift screams instead of passing silently.
+        const rejected = stdout.includes("rejected") || /\bNAK\b/.test(stdout);
+        const accepted = /\bACK\b/.test(stdout) || stdout.includes("Successful");
+        if (rejected || !accepted) {
           errorLog("Inverter did not accept", command, "— full mpp-solar output:", stdout);
           return;
         }
