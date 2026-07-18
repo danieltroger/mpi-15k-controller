@@ -13,7 +13,7 @@
 
 import Influx from "influx";
 import { warnLog } from "../utilities/logging.ts";
-import { readElpatronGpioIsOn } from "../utilities/heatingPi.ts";
+import { readHeatingGpio } from "../utilities/heatingPi.ts";
 import { resolveElpatronMode } from "../sharedTypes.ts";
 import type { Config } from "../config/config.types.ts";
 
@@ -22,9 +22,21 @@ export type ElpatronForecast = {
   wattsAt: (ms: number) => number;
   armed: boolean;
   tankTempC: number | undefined;
+  /**
+   * Whether the pellet stove output is on (undefined = heating pi unreachable). While the stove
+   * is definitely off, the element is the tank's only heat source — which is what licenses the
+   * consumption history subtraction regardless of the element's current armed state.
+   */
+  stoveOn: boolean | undefined;
 };
 
-const UNARMED: Omit<ElpatronForecast, "armed"> = { wattsAt: () => 0, tankTempC: undefined };
+/**
+ * A manually-switched-on element (mode off, GPIO on by hand) is a point-in-time observation, not
+ * a policy: extrapolating it as permanent projected ~11 kWh/day of phantom thermostat top-ups for
+ * the whole horizon (the 2026-07-16/17 over-forecast + guard churn). Model it for one day ahead —
+ * the 15-min guard re-plans keep rolling that window forward for as long as it actually stays on.
+ */
+const MANUAL_ON_MODEL_HORIZON_MS = 24 * 3600 * 1000;
 
 export async function fetchElpatronForecast({
   elpatronConfig,
@@ -37,30 +49,33 @@ export async function fetchElpatronForecast({
   solarWattsAt: (ms: number) => number;
   nowMs: number;
 }): Promise<ElpatronForecast> {
-  // Armed = we actively switch it (solar or always-on mode), or someone left the element GPIO on
-  // manually. The gpio read is skipped when a mode is active — armed either way.
+  // Always read the gpio: even with a switching mode active (armed either way), the stove state
+  // decides whether the history subtraction may run
+  const gpio = await readHeatingGpio(elpatronConfig.heating_pi_ip);
   const elpatronMode = resolveElpatronMode(elpatronConfig);
-  let armed = elpatronMode !== "off";
-  if (!armed) {
-    armed = (await readElpatronGpioIsOn(elpatronConfig.heating_pi_ip)) === true;
-  }
-  if (!armed) return { ...UNARMED, armed: false };
+  const armed = elpatronMode !== "off" || gpio?.elementOn === true;
+  if (!armed) return { wattsAt: () => 0, armed: false, tankTempC: undefined, stoveOn: gpio?.stoveOn };
 
   const tankTempC = await fetchTankTemperature(influxClient);
   // Without a tank reading, assume mid-band: still predicts a plausible dawn burn + top-ups
   const startTempC = tankTempC ?? elpatronConfig.tank_max_temperature - 5;
+  const heatingAllowedAt =
+    elpatronMode === "solar"
+      ? (ms: number) => solarWattsAt(ms) > elpatronConfig.min_solar_input
+      : elpatronMode === "always_on"
+        ? () => true
+        : // Armed only via the hand-switched GPIO — see MANUAL_ON_MODEL_HORIZON_MS
+          (ms: number) => ms - nowMs < MANUAL_ON_MODEL_HORIZON_MS;
   const wattsAt = buildElpatronLoadModel({
     nowMs,
     startTempC,
-    // In always-on mode — or off mode with the GPIO left on by hand — only the tank thermostat
-    // limits the element
-    heatingAllowedAt: elpatronMode === "solar" ? ms => solarWattsAt(ms) > elpatronConfig.min_solar_input : () => true,
+    heatingAllowedAt,
     element_watts: elpatronConfig.element_watts,
     tank_wh_per_degree: elpatronConfig.tank_wh_per_degree,
     tank_cooling_degrees_per_hour: elpatronConfig.tank_cooling_degrees_per_hour,
     tank_max_temperature: elpatronConfig.tank_max_temperature,
   });
-  return { wattsAt, armed: true, tankTempC };
+  return { wattsAt, armed: true, tankTempC, stoveOn: gpio?.stoveOn };
 }
 
 /**

@@ -23,30 +23,46 @@ export function getHeatingPiSocket(heatingPiIp: string): DepictAPIWS {
   return socket;
 }
 
-let gpioReadCache: { heatingPiIp: string; atMs: number; value: boolean | undefined } | undefined;
+/** Both pins are active-low (raw 0 = powered); undefined = the output was missing in the reply */
+export type HeatingGpioSnapshot = { elementOn: boolean | undefined; stoveOn: boolean | undefined };
+
+let gpioReadCache: { heatingPiIp: string; atMs: number; value: HeatingGpioSnapshot | undefined } | undefined;
 
 /**
- * Whether the element GPIO is currently on (the pin is active-low: raw 0 = element powered).
- * Returns undefined when the heating pi doesn't answer in time — ensure_sent retries forever, and
- * a plan run must not hang on an unreachable pi in another building. Results (including failures)
- * are cached (default 10 minutes) so the guard's 15-min ticks don't hammer or stall on the pi;
- * the frontend's live state poll passes a shorter maxAge.
+ * Current heating-pi output states: the water heater element and the pellet stove (the latter
+ * tells the consumption model whether the element can be assumed to be the tank's only heat
+ * source). Returns undefined when the heating pi doesn't answer in time — ensure_sent retries
+ * forever, and a plan run must not hang on an unreachable pi in another building. Results
+ * (including failures) are cached (default 10 minutes) so the guard's 15-min ticks don't hammer
+ * or stall on the pi; the frontend's live state poll passes a shorter maxAge.
  */
-export async function readElpatronGpioIsOn(heatingPiIp: string, maxAgeMs = 10 * 60_000): Promise<boolean | undefined> {
+export async function readHeatingGpio(
+  heatingPiIp: string,
+  maxAgeMs = 10 * 60_000
+): Promise<HeatingGpioSnapshot | undefined> {
   if (gpioReadCache && gpioReadCache.heatingPiIp === heatingPiIp && Date.now() - gpioReadCache.atMs < maxAgeMs) {
     return gpioReadCache.value;
   }
-  const value = await readElpatronGpioUncached(heatingPiIp);
+  const value = await readHeatingGpioUncached(heatingPiIp);
   gpioReadCache = { heatingPiIp, atMs: Date.now(), value };
   return value;
 }
 
-/** After we wrote the GPIO ourselves the state is known — spare the next reader a roundtrip. */
-export function primeElpatronGpioCache(heatingPiIp: string, isOn: boolean) {
-  gpioReadCache = { heatingPiIp, atMs: Date.now(), value: isOn };
+/** Whether the element GPIO is currently on. See readHeatingGpio for semantics and caching. */
+export async function readElpatronGpioIsOn(heatingPiIp: string, maxAgeMs = 10 * 60_000): Promise<boolean | undefined> {
+  return (await readHeatingGpio(heatingPiIp, maxAgeMs))?.elementOn;
 }
 
-async function readElpatronGpioUncached(heatingPiIp: string): Promise<boolean | undefined> {
+/**
+ * After we wrote the element GPIO ourselves the state is known — spare the next reader a
+ * roundtrip. Keeps the previously-read stove state; a write only changes the element.
+ */
+export function primeElpatronGpioCache(heatingPiIp: string, isOn: boolean) {
+  const previousStoveOn = gpioReadCache?.heatingPiIp === heatingPiIp ? gpioReadCache.value?.stoveOn : undefined;
+  gpioReadCache = { heatingPiIp, atMs: Date.now(), value: { elementOn: isOn, stoveOn: previousStoveOn } };
+}
+
+async function readHeatingGpioUncached(heatingPiIp: string): Promise<HeatingGpioSnapshot | undefined> {
   const socket = getHeatingPiSocket(heatingPiIp);
   const request = socket.ensure_sent({ id: random_string(), command: "read", key: "gpio" }) as Promise<
     [{ status: string; value?: { outputs?: Record<string, number> } }, unknown]
@@ -57,10 +73,13 @@ async function readElpatronGpioUncached(heatingPiIp: string): Promise<boolean | 
     warnLog("Heating pi: gpio read failed or timed out", heatingPiIp, result);
     return undefined;
   }
-  const rawState = result.value?.outputs?.electric_heating_element;
-  if (rawState === undefined) {
+  const outputs = result.value?.outputs;
+  if (outputs?.electric_heating_element === undefined) {
     warnLog("Heating pi: gpio response has no electric_heating_element output", result.value);
     return undefined;
   }
-  return rawState === 0;
+  return {
+    elementOn: outputs.electric_heating_element === 0,
+    stoveOn: outputs.stove === undefined ? undefined : outputs.stove === 0,
+  };
 }
