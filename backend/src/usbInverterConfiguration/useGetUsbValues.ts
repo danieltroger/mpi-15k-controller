@@ -4,7 +4,7 @@ import type { Config } from "../config/config.types.ts";
 import { createStore } from "solid-js/store";
 import { warnLog } from "../utilities/logging.ts";
 
-const commands = new Set(["GPMP", "HECS"] as const);
+const commands = new Set(["GPMP", "HECS", "BATS"] as const);
 
 const keys = new Set([
   "solar_energy_distribution_priority",
@@ -16,6 +16,8 @@ const keys = new Set([
   "battery_discharge_to_feed_grid_when_solar_input_normal",
   "battery_discharge_to_feed_grid_when_solar_input_loss",
   "maximum_feeding_grid_power",
+  "battery_constant_charge_voltage(c.v.)",
+  "battery_floating_charge_voltage",
 ]);
 
 /**
@@ -49,6 +51,7 @@ export function useGetUsbValues({
             .map(line => line.trim())
             .filter(line => line);
 
+          const parsedKeys = new Set<string>();
           for (const line of lines) {
             const [key, value] = line
               .split(" ")
@@ -56,6 +59,17 @@ export function useGetUsbValues({
               .filter(v => v);
             if (keys.has(key)) {
               setUsbValues(key as keyof UsbValues, value);
+              parsedKeys.add(key);
+            }
+          }
+          // The voltage workaround silently stalls if these stop parsing (a future mpp-solar
+          // rewording e.g. adding a space to the "(c.v.)" key would split it into two tokens), so
+          // scream rather than go quiet.
+          if (command === "BATS") {
+            for (const expectedKey of ["battery_constant_charge_voltage(c.v.)", "battery_floating_charge_voltage"]) {
+              if (!parsedKeys.has(expectedKey)) {
+                warnLog("BATS poll came back without", expectedKey, "- full stdout:", stdout);
+              }
             }
           }
         },

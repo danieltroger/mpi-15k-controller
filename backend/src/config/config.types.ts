@@ -265,24 +265,4 @@ export type Config = {
     peak_min_change: number;
   };
   start_bulk_charge_after_wh_discharged: number;
-  shinemonitor_password?: string;
-  shinemonitor_user?: string;
-  shinemonitor_company_key: string;
-  inverter_sn?: string;
-  inverter_pn?: string;
-  savedAuth_do_not_edit?: {
-    createdAt: number;
-    authApiReturn: {
-      err: number;
-      desc: string;
-      dat: {
-        secret: string;
-        expire: number;
-        token: string;
-        role: number;
-        usr: string;
-        uid: number;
-      };
-    };
-  };
 };
