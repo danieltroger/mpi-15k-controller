@@ -1,9 +1,9 @@
-import { getOwner, Show } from "solid-js";
+import { Show } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
-import { showToastWithMessage } from "~/helpers/showToastWithMessage";
+import { configSet } from "~/helpers/configPatches";
+import { useConfigPatcher } from "~/helpers/useConfigPatcher";
 import { formatClockTime, formatShortDateTime, formatWatts, useNowMs } from "~/helpers/format";
 import { resolveElpatronMode, type ElpatronMode } from "../../../../backend/src/sharedTypes";
-import type { Config } from "../../../../backend/src/config/config.types";
 import type { ElpatronDisplayState } from "../../../../backend/src/sharedTypes";
 
 /**
@@ -12,9 +12,9 @@ import type { ElpatronDisplayState } from "../../../../backend/src/sharedTypes";
  * pushed from the heating pi via the controller so what the card claims is what the element does.
  */
 export function WaterHeaterCard() {
-  const [config, setConfig] = getBackendSyncedSignal("config");
+  const [config] = getBackendSyncedSignal("config");
   const [elpatronState] = getBackendSyncedSignal("elpatronState", undefined, true, true);
-  const owner = getOwner()!;
+  const { sendPatch, sendPatches } = useConfigPatcher();
   const now = useNowMs(5000);
   const switching = () => config()?.elpatron_switching;
   const activeMode = () => {
@@ -22,27 +22,12 @@ export function WaterHeaterCard() {
     return elpatron && resolveElpatronMode(elpatron);
   };
 
-  const writeMode = async (mode: ElpatronMode) => {
-    const current = config();
-    if (!current?.elpatron_switching) {
-      await showToastWithMessage(owner, () => "Config not loaded yet");
-      return;
-    }
-    await setConfig!({
-      ...current,
+  const writeMode = (mode: ElpatronMode) =>
+    sendPatches([
+      configSet(["elpatron_switching", "mode"], mode),
       // `enabled` mirrored for backends that predate `mode`
-      elpatron_switching: { ...current.elpatron_switching, mode, enabled: mode === "solar" },
-    });
-  };
-
-  const writeElpatronConfig = async (patch: Partial<Config["elpatron_switching"]>) => {
-    const current = config();
-    if (!current?.elpatron_switching) {
-      await showToastWithMessage(owner, () => "Config not loaded yet");
-      return;
-    }
-    await setConfig!({ ...current, elpatron_switching: { ...current.elpatron_switching, ...patch } });
-  };
+      configSet(["elpatron_switching", "enabled"], mode === "solar"),
+    ]);
 
   return (
     <section class="card wh-card" aria-label="Water heater">
@@ -111,9 +96,12 @@ export function WaterHeaterCard() {
                   step="50"
                   value={elpatron().min_solar_input}
                   onChange={event =>
-                    void writeElpatronConfig({
-                      min_solar_input: Math.max(0, Math.round(parseFloat(event.currentTarget.value) || 0)),
-                    })
+                    void sendPatch(
+                      configSet(
+                        ["elpatron_switching", "min_solar_input"],
+                        Math.max(0, Math.round(parseFloat(event.currentTarget.value) || 0))
+                      )
+                    )
                   }
                 />{" "}
                 W and nothing is being imported from the grid.
