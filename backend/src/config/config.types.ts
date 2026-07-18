@@ -242,7 +242,6 @@ export type Config = {
   full_battery_voltage: number;
   float_charging_voltage: number;
   start_bulk_charge_voltage: number;
-  temperature_report_interval: number;
   thermometers: { [key: string]: string };
   mqtt_host: string;
   temperature_saving: {

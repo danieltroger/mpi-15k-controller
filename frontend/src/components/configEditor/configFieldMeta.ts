@@ -61,9 +61,9 @@ export type ConfigSectionMeta = {
 };
 
 /** Top-level keys deliberately not rendered anywhere (with the reason shown to the user). */
-export const HIDDEN_TOP_LEVEL_KEYS: Record<string, string> = {
-  savedAuth_do_not_edit: "The saved ShineMonitor login token is managed automatically and is not editable here.",
-};
+// Currently empty — the ShineMonitor auth blob this existed for died with the cloud dependency.
+// Kept for the next machine-owned blob that should stay off the page (with its reason shown).
+export const HIDDEN_TOP_LEVEL_KEYS: Record<string, string> = {};
 
 const f = (
   path: readonly string[],
@@ -785,7 +785,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     id: "thermometers",
     title: "Thermometers",
     description: "Names for the 1-wire temperature sensors and where their history goes.",
-    rootKeys: ["thermometers", "temperature_report_interval", "temperature_saving"],
+    rootKeys: ["thermometers", "temperature_saving"],
     fields: [
       f(
         ["thermometers"],
@@ -803,9 +803,6 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
           },
         }
       ),
-      f(["temperature_report_interval"], "Read interval", "How often temperatures are read and broadcast.", {
-        unit: "ms",
-      }),
       f(["temperature_saving", "database"], "History database", "InfluxDB database temperature history is written to."),
       f(["temperature_saving", "table"], "History table", "InfluxDB table temperature history is written to."),
     ],
@@ -814,16 +811,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     id: "connections",
     title: "Inverter & connections",
     description: "How the controller talks to the inverter and the outside world. Rarely touched.",
-    rootKeys: [
-      "usb_parameter_setting",
-      "mqtt_host",
-      "shinemonitor_user",
-      "shinemonitor_password",
-      "shinemonitor_company_key",
-      "inverter_sn",
-      "inverter_pn",
-      "savedAuth_do_not_edit",
-    ],
+    rootKeys: ["usb_parameter_setting", "mqtt_host"],
     fields: [
       f(
         ["usb_parameter_setting", "min_seconds_between_commands"],
@@ -838,13 +826,6 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         { unit: "s" }
       ),
       f(["mqtt_host"], "MQTT broker", "Host publishing the inverter telemetry the controller consumes."),
-      f(["shinemonitor_user"], "ShineMonitor user", "Cloud login used to set inverter parameters remotely.", {
-        heading: "ShineMonitor cloud",
-      }),
-      f(["shinemonitor_password"], "ShineMonitor password", "Cloud login password.", { secret: true }),
-      f(["shinemonitor_company_key"], "Company key", "Vendor constant for the ShineMonitor API."),
-      f(["inverter_sn"], "Inverter serial", "Auto-detected when blank."),
-      f(["inverter_pn"], "Inverter part number", "Auto-detected when blank."),
     ],
   },
   {
