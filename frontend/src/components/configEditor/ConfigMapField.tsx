@@ -24,8 +24,9 @@ export function ConfigMapField(props: { state: ConfigEditorState; meta: ConfigFi
     return [...keys].sort();
   });
   const entryPath = (key: string) => [...path(), key];
-  const entryFor = (key: string) => props.state.effectiveValue(entryPath(key));
   const isRemoved = (key: string) => props.state.pendingFor(entryPath(key))?.op === "unset";
+  // A staged-removed row keeps showing its server values (struck-through) instead of blanking
+  const entryFor = (key: string) => (isRemoved(key) ? serverMap()[key] : props.state.effectiveValue(entryPath(key)));
   const isDirty = (key: string) => !!props.state.pendingFor(entryPath(key));
   const serverHas = (key: string) => key in serverMap();
 

@@ -77,12 +77,6 @@ const f = (
   ...extra,
 });
 
-function nextFullHourIso(): string {
-  const start = new Date();
-  start.setMinutes(60, 0, 0);
-  return start.toISOString();
-}
-
 function hourAfterNextFullHourIso(): string {
   const start = new Date();
   start.setMinutes(120, 0, 0);
