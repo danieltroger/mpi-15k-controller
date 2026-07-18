@@ -124,9 +124,14 @@ export type Config = {
   automatic_trading: AutomaticTradingConfig;
   alerting: AlertingConfig;
   usb_parameter_setting: {
+    /**
+     * Legacy knob of the retired mpp-solar CLI command queue — unused by the native serial engine
+     * (which self-paces via its quiet-gap scheduler); kept so existing config.json files load.
+     */
     min_seconds_between_commands: number;
     /**
-     * We'll check all values after setting them, but apart from that we also poll sometimes.
+     * Cadence of the slow settings poll (GPMP/HECS/BATS). GS+PS poll continuously at the serial
+     * engine's own natural rate; targeted confirms after writes happen regardless of this value.
      */
     poll_values_interval_seconds: number;
   };

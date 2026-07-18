@@ -1,10 +1,19 @@
+/**
+ * Historically this subscribed to the mpp-solar daemon's MQTT topic and parsed our own inverter
+ * telemetry back out of the broker (a silly ts→mqtt→ts loop). The values now come straight from
+ * the native serial decoder (inverterComms) — same store shape, same field names, same per-key
+ * timestamps, so every consumer including the staleness alerting is unchanged. The MQTT client
+ * itself remains: the backend still PUBLISHES to the broker (inverter values for telegraf →
+ * InfluxDB via publishInverterRoundsToMqtt, plus temperatures/SOC/current measurements elsewhere).
+ */
 import MQTT from "async-mqtt";
-import { type Accessor, createEffect, createResource, createSignal, getOwner, onCleanup, runWithOwner } from "solid-js";
-import { logLog, warnLog } from "../utilities/logging.ts";
-import { createStore } from "solid-js/store";
-import { type RawMQTTValues, validateMessage } from "./rawValuesSchema.ts";
+import { type Accessor, createEffect, createResource, createSignal, onCleanup } from "solid-js";
+import { logLog } from "../utilities/logging.ts";
+import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
+import { publishInverterRoundsToMqtt } from "../inverterComms/publishInverterRoundsToMqtt.ts";
 
 export function useMQTTValues(mqttHost: Accessor<string>) {
+  const { inverterValues, lastDecodedRound } = useInverterComms();
   const [reconnectToggle, setReconnectToggle] = createSignal(1); // Needs to be truthy or createResource won't fetch
   const [client] = createResource(
     () => [mqttHost(), reconnectToggle()] as const,
@@ -14,53 +23,19 @@ export function useMQTTValues(mqttHost: Accessor<string>) {
       return c;
     }
   );
-  const [subscription] = createResource(client, client => client.subscribe("#"));
-  const [values, setValues] = createStore<
-    Partial<{
-      [key in keyof RawMQTTValues]: { value: RawMQTTValues[key]; time: number };
-    }>
-  >({});
-  const owner = getOwner();
 
   createEffect(() => {
     const clientValue = client();
     if (!clientValue) return;
-    let receivedFirstValue = false;
     logLog("We have MQTT client");
     clientValue.on("error", e => {
       logLog("MQTT error, re-starting connection in 2s", e);
       setTimeout(() => setReconnectToggle(t => (t === 1 ? 2 : 1)), 2000);
     });
     clientValue.on("connect", e => logLog("MQTT connected", e));
-    clientValue.on("message", (topic, message) =>
-      runWithOwner(owner, () => {
-        if (topic == "mpp-solar") {
-          const [topicInMsg, payload] = message.toString().split(",");
-          const [commandString, ...keyValuePair] = payload.split(" ");
-          const [key, value] = keyValuePair.join(" ").split("=");
-          let parsed = value;
-          if (!receivedFirstValue) {
-            receivedFirstValue = true;
-            logLog("Got first value for connection", key, value);
-          }
-
-          try {
-            parsed = JSON.parse(value);
-          } catch (e) {}
-          try {
-            validateMessage(key as keyof RawMQTTValues, parsed);
-          } catch (e) {
-            warnLog("Validation for MQTT message failed", e);
-          }
-          setValues(key as keyof RawMQTTValues, {
-            value: parsed as RawMQTTValues[keyof RawMQTTValues],
-            time: +new Date(),
-          });
-        }
-      })
-    );
   });
-  createEffect(() => subscription() && logLog("We have MQTT subscription", subscription()));
 
-  return { mqttValues: values, mqttClient: client };
+  publishInverterRoundsToMqtt({ mqttClient: client, lastDecodedRound });
+
+  return { mqttValues: inverterValues, mqttClient: client };
 }
