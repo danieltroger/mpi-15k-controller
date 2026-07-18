@@ -16,7 +16,7 @@ import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedVal
 import { fetchPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
-import { fetchElpatronForecast, shouldSubtractElpatronHistory } from "./elpatronForecast.ts";
+import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { generatePlan } from "./planner.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
@@ -60,13 +60,9 @@ const elpatron = await fetchElpatronForecast({
   nowMs: Date.now(),
 });
 console.log(
-  `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}, stove on: ${elpatron.stoveOn ?? "unknown"}\n`
+  `Elpatron: ${elpatron.armed ? `armed, tank ${elpatron.tankTempC ?? "?"}°C — modeled as known load` : "not armed"}\n`
 );
-const consumption = await fetchConsumptionForecast(
-  influxClient,
-  at.fallback_house_load_watts,
-  shouldSubtractElpatronHistory(elpatron) ? elpatronConfig : undefined
-);
+const consumption = await fetchConsumptionForecast(influxClient, at.fallback_house_load_watts, elpatronConfig);
 
 const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
   .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))

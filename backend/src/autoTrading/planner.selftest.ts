@@ -6,6 +6,7 @@ import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { fitSolarModel, fitIsPlausibleVsCurrent } from "./solarCalibration.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
 import { buildElpatronLoadModel, MANUAL_ON_MODEL_HORIZON_MS } from "./elpatronForecast.ts";
+import { estimateElpatronWattsByHour } from "./consumptionForecast.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
 const H = 3600_000;
@@ -613,6 +614,55 @@ function check(name: string, cond: boolean, detail = "") {
   });
   check("elpatron: manual-on modeled within the first day", manual(t0 + 20 * H) === 480);
   check("elpatron: manual-on not extrapolated past a day", manual(t0 + 30 * H) === 0, `(${manual(t0 + 30 * H)} W)`);
+}
+
+// ---------- Scenario 14: elpatron history estimator — element fingerprint vs pellet boiler ----------
+// The estimator must attribute element burns (≤ ~12 °C/h, capped ~55 °C) and band-holding hours,
+// but nothing to coasting far below the band, and nothing to boiler firings (> 57 °C peaks, up to
+// 19 °C/h) or the hours around them — including the post-firing dwell back through the element's
+// band, which would otherwise be credited phantom maintenance.
+{
+  const estimatorKnobs = {
+    element_watts: 6200,
+    tank_wh_per_degree: 480,
+    tank_cooling_degrees_per_hour: 1,
+    tank_max_temperature: 55,
+  };
+  const tankAtHour: [number, number][] = [
+    [0, 36],
+    [1, 35.6],
+    [2, 35.2],
+    [3, 34.8],
+    [4, 34.4],
+    [5, 34], // slow coast far below band
+    [6, 34],
+    [7, 45],
+    [8, 54],
+    [9, 55],
+    [10, 54.5],
+    [11, 54], // element burn then thermostat band
+    [29, 45.5],
+    [30, 45],
+    [31, 60],
+    [32, 66],
+    [33, 58], // boiler firing: +15 °C/h to 66
+    [34, 56.5],
+    [35, 55.8],
+    [36, 55.2],
+    [37, 54.6], // post-firing dwell back through the band
+  ];
+  const tankByMs = new Map(tankAtHour.map(([hour, temperature]) => [t0 + hour * H, temperature]));
+  const estimate = estimateElpatronWattsByHour(tankByMs, estimatorKnobs);
+  const atHour = (hour: number) => estimate.get(t0 + hour * H);
+  check("history: slow coast far below band attributes nothing", atHour(2) === 0, `(${atHour(2)} W)`);
+  check("history: element burn attributed at ~full power", (atHour(6) ?? 0) > 5000, `(${atHour(6)} W)`);
+  check("history: band-holding hour credited the standing loss", atHour(10) === 240, `(${atHour(10)} W)`);
+  check(
+    "history: boiler firing attributes nothing",
+    atHour(30) === 0 && atHour(31) === 0,
+    `(${atHour(30)}/${atHour(31)} W)`
+  );
+  check("history: post-firing dwell in the band attributes nothing", atHour(34) === 0, `(${atHour(34)} W)`);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");

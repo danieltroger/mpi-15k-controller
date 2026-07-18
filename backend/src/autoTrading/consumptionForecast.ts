@@ -31,13 +31,11 @@ function localHour(ms: number): number {
  * Median over days is used so that rare heavy loads (EV charging sessions) don't inflate the baseline —
  * those are exactly what the user handles manually via the extra-reserve knob.
  *
- * When `subtractElpatron` is set (the pellet stove is off, so the element is the tank's only heat
- * source — the caller gates on live stove state, see buildPlannerInput), the element's share is
- * stripped from each historical hour, using the tank sensor: energy into the tank ≈ heat capacity
- * × (ΔT + standing loss). The forward model adds the element back whenever it's armed, so leaving
- * it in the baseline would double-count it — and element days linger in this 14-day window after
- * disarming, which is why the gate is the stove, not the element's current armed state.
- * Not applied in stove season, where tank warming is the boiler's doing.
+ * The water heater element's share is stripped from each historical hour using the tank sensor
+ * (see estimateElpatronWattsByHour) — the forward model adds the element back whenever it's
+ * armed, so leaving it in the baseline would double-count it, and element days linger in this
+ * 14-day window after disarming. The subtraction runs unconditionally: it self-gates per hour by
+ * detecting boiler-heated hours from the tank data itself, so stove season degrades to a no-op.
  */
 export async function fetchConsumptionForecast(
   influxClient: Influx.InfluxDB | undefined,
@@ -122,16 +120,6 @@ export async function fetchConsumptionForecast(
   return cache;
 }
 
-/**
- * Estimate the element's average watts for each historical hour from the tank sensor: energy in ≈
- * tank_wh_per_degree × (temperature rise + what standing loss ate). Hot-water usage hours show a
- * steep temperature DROP and clamp to 0; hours holding the thermostat band land near the standing
- * loss — both are what actually happened electrically, to within the calibration.
- *
- * Assumes the element is the ONLY thing heating the tank. The caller guarantees that by gating
- * on the stove GPIO being off (shouldSubtractElpatronHistory); only the unknown-stove-state
- * fallback (heating pi unreachable ⇒ gate on armed) still leans on armed-implies-stove-cold.
- */
 async function estimateElpatronHistory(
   influxClient: Influx.InfluxDB,
   knobs: ElpatronHistoryKnobs,
@@ -142,23 +130,69 @@ async function estimateElpatronHistory(
       `SELECT mean(akkumulator) as tank FROM "frendebo_thermometers" WHERE time > now() - 14d GROUP BY time(1h)`
     )
   )) as unknown as { time: { getNanoTime(): number }; tank: number | null }[];
-  const hourMs = 3600 * 1000;
   const tankByMs = new Map<number, number>();
   for (const row of rows) {
     if (row.tank == null) continue;
     tankByMs.set(Math.round(row.time.getNanoTime() / 1e6), row.tank);
   }
+  return estimateElpatronWattsByHour(tankByMs, knobs);
+}
+
+/**
+ * Estimate the element's average watts for each historical hour from the tank sensor: energy in ≈
+ * tank_wh_per_degree × (temperature rise + what standing loss ate). Hot-water usage hours show a
+ * steep temperature DROP and clamp to 0; hours holding the thermostat band land near the standing
+ * loss — both are what actually happened electrically, to within the calibration.
+ *
+ * The element is NOT assumed to be the only heat source — the pellet boiler is detected and its
+ * hours excluded via a physics fingerprint on the same data: the element's thermostat cuts around
+ * tank_max_temperature (observed maxima ≤ ~56 °C) and it can't heat the sensor faster than
+ * ~12 °C/h, while boiler firings push to 62–70 °C at 8–19 °C/h (measured 2026-06-16..18). Any
+ * sample above tank_max + 2 marks its ±6 h neighbourhood as boiler-heated (firings rise through
+ * the element's band on the way up and coast back down through it for hours), and an
+ * implausibly-fast rise is excluded on its own. In deep stove season the daily firings blanket
+ * the whole window, so the subtraction self-disables without any signal from the heating pi —
+ * its stove GPIO turned out to be a call-for-heat line (asserted all summer) and its
+ * stove_disabled config flag flips with operator fiddling, so neither is trusted here.
+ *
+ * Residual risks, for the record: a PARTIAL firing that never crests tank_max + 2 and rises
+ * ≤15 °C/h would be subtracted as element — the one misclassification that UNDER-forecasts
+ * (all others over-forecast, the safe direction). Real firings reach 62–70 °C, so this is the
+ * tail case. And tank_max_temperature does double duty as the element band edge (−5) and the
+ * boiler ceiling (+2): recalibrating it moves both, which at worst mislabels element burns as
+ * boiler (safe direction, element stays in the baseline).
+ *
+ * Pure and exported for the selftest.
+ */
+export function estimateElpatronWattsByHour(
+  tankByMs: Map<number, number>,
+  knobs: ElpatronHistoryKnobs
+): Map<number, number> {
+  const hourMs = 3600 * 1000;
+  const boilerTemperatureC = knobs.tank_max_temperature + 2;
+  const maxElementRiseDegreesPerHour = 15;
+  const boilerNeighbourhoodHours = 6;
+
+  const boilerContaminatedMs = new Set<number>();
+  for (const [ms, tank] of tankByMs) {
+    if (tank <= boilerTemperatureC) continue;
+    for (let offset = -boilerNeighbourhoodHours; offset <= boilerNeighbourhoodHours; offset++) {
+      boilerContaminatedMs.add(ms + offset * hourMs);
+    }
+  }
+
   const elpatronWByMs = new Map<number, number>();
   for (const [ms, tank] of tankByMs) {
     const nextTank = tankByMs.get(ms + hourMs);
     if (nextTank === undefined) continue;
     const deltaDegrees = nextTank - tank;
+    const boilerHeated = boilerContaminatedMs.has(ms) || deltaDegrees > maxElementRiseDegreesPerHour;
     // The standing-loss term only belongs to hours the element could have been compensating it:
     // a rising tank, or a flat one held near the thermostat band. A tank coasting well below the
     // band cools slower than the (hot-tank-calibrated) constant, and crediting the difference to
     // the element invented a few hundred phantom watts on quiet nights — enough to out-dominate
     // a small house load and get real samples dropped.
-    const elementCouldBeActive = deltaDegrees > 0 || tank >= knobs.tank_max_temperature - 5;
+    const elementCouldBeActive = !boilerHeated && (deltaDegrees > 0 || tank >= knobs.tank_max_temperature - 5);
     const estimatedW = elementCouldBeActive
       ? knobs.tank_wh_per_degree * (deltaDegrees + knobs.tank_cooling_degrees_per_hour)
       : 0;

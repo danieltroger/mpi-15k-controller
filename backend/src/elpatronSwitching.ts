@@ -3,12 +3,7 @@ import { random_string, wait } from "./vendor/depictUtilishared.ts";
 import { useTotalSolarPower } from "./utilities/useTotalSolarPower.ts";
 import { useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "./mqttValues/mqttHelpers.ts";
-import {
-  getHeatingPiSocket,
-  primeElpatronGpioCache,
-  primeHeatingGpioFromBroadcast,
-  readElpatronGpioIsOn,
-} from "./utilities/heatingPi.ts";
+import { getHeatingPiSocket, primeElpatronGpioCache, readElpatronGpioIsOn } from "./utilities/heatingPi.ts";
 import { logLog, warnLog } from "./utilities/logging.ts";
 import { type ElpatronDisplayState, type ElpatronMode, resolveElpatronMode } from "./sharedTypes.ts";
 import type { DepictAPIWS } from "./vendor/depictUtilishared.ts";
@@ -96,9 +91,8 @@ export function elpatronSwitching(config: Accessor<Config>) {
         if (decoded?.type !== "change" || decoded.key !== "gpio") return;
         const outputs = decoded.value?.outputs;
         if (outputs?.electric_heating_element === undefined) return;
-        // The broadcast carries every output's fresh state — including the stove, which the
-        // consumption model's subtraction gate reads
-        primeHeatingGpioFromBroadcast(ip, outputs);
+        // The broadcast carries the element's fresh state — cache it as just-observed
+        primeElpatronGpioCache(ip, outputs.electric_heating_element === 0);
         applyState(outputs.electric_heating_element === 0); // active-low
       } catch (e) {
         warnLog("Elpatron: couldn't parse heating pi broadcast", e);
