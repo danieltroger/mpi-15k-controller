@@ -27,6 +27,7 @@ export const default_config: Config = {
     grid_out_below_volts: 100,
     grid_out_p2_seconds: 60,
     error_log_p2: true,
+    trading_guard_p2: false,
     digest_p3: true,
     cooldown_minutes: 30,
     max_pushes_per_hour: 20,

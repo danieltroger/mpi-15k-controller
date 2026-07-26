@@ -108,6 +108,13 @@ export type AlertingConfig = {
   grid_out_p2_seconds: number;
   /** Forward every errorLog() as a deduped P2 */
   error_log_p2: boolean;
+  /**
+   * P2 when the trading guard sheds windows after a projected reserve breach. Off by default:
+   * three weeks of live operation showed this is the guard doing its routine job (36 of 50 recent
+   * alerts), not a hazard — and the failure modes that *are* worth waking up for (the re-plan
+   * itself erroring out) already page via error_log_p2.
+   */
+  trading_guard_p2: boolean;
   /** Quiet P3 pushes for the daily plan + settlement results */
   digest_p3: boolean;
   /** Per-alert-key re-send suppression window */

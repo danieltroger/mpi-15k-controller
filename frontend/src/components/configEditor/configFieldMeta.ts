@@ -448,6 +448,11 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         heading: "Delivery",
       }),
       f(["alerting", "digest_p3"], "Daily digests", "Quiet P3 pushes for the daily plan and settlement results."),
+      f(
+        ["alerting", "trading_guard_p2"],
+        "Trading guard alerts",
+        "P2 when the trading guard sheds windows after a projected reserve breach. Off by default — that is routine guard behaviour; a guard re-plan that actually fails still alerts via the error-log forwarding above."
+      ),
       f(["alerting", "cooldown_minutes"], "Cooldown", "Per-alert re-send suppression window.", { unit: "min" }),
       f(
         ["alerting", "max_pushes_per_hour"],

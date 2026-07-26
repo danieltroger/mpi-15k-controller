@@ -215,6 +215,7 @@ export function startAlertRules(ctx: {
     // previous === undefined covers boot: the persisted last_action must not re-alert on restart
     if (action === undefined || previous === undefined || action === previous) return;
     if (action.startsWith("ok") || action.startsWith("nothing")) return;
+    if (!untrack(alerting).trading_guard_p2) return;
     void ctx.manager.raise({ key: "trader-guard", severity: "P2", title: "Trading guard intervened", message: action });
   });
 
