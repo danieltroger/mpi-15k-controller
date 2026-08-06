@@ -180,7 +180,7 @@ export function startAlertRules(ctx: {
     staleMqttAlert.update(
       newestMqttMs === 0 ? undefined : nowMs - newestMqttMs > limits.stale_mqtt_p2_minutes * 60_000,
       "Inverter data stale",
-      () => `No mqtt updates for ${Math.round((nowMs - newestMqttMs) / 60_000)} min — USB reading daemon dead?`
+      () => `No inverter value updates for ${Math.round((nowMs - newestMqttMs) / 60_000)} min — serial session dead?`
     );
 
     const readings = untrack(() => Object.values(ctx.temperatures()).map(reading => reading()));
