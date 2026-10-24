@@ -106,6 +106,19 @@ export type AlertingConfig = {
   grid_out_below_volts: number;
   /** … for at least this long (P2) */
   grid_out_p2_seconds: number;
+  /**
+   * P2 when the inverter's DC side looks latched off: the 2026-10-21 failure, where battery, PV and
+   * grid charging all stayed dead for 59 h behind normal-looking telemetry until a power-cycle.
+   * Three signatures (DC side idle / PV stalled in daylight / buy window not charging) share one
+   * alert, followed by a quiet P3 once power flows again.
+   */
+  inverter_stuck_p2: boolean;
+  /** How long the DC-side-idle and PV-stalled signatures must hold before the P2 */
+  inverter_stuck_sustain_minutes: number;
+  /** How long a confirmed grid-charge window may go without the battery charging before the P2 */
+  inverter_stuck_buy_window_sustain_minutes: number;
+  /** Escalate to a P1 (pages through Do Not Disturb) when still stuck this long after the P2; 0 = never */
+  inverter_stuck_p1_after_minutes: number;
   /** Forward every errorLog() as a deduped P2 */
   error_log_p2: boolean;
   /**

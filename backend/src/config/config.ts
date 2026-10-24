@@ -26,6 +26,13 @@ export const default_config: Config = {
     stale_temperatures_p2_minutes: 10,
     grid_out_below_volts: 100,
     grid_out_p2_seconds: 60,
+    // Backtested over 2.5 years (the DC-idle rule over the year of hall data): it fires only on real
+    // failures, the 2026-10-21 latch and the 2024-05 empty-pack PV stalls. P1 stays opt-in: a stuck
+    // inverter costs backup and solar, not safety, and a P1 pages the family through DND.
+    inverter_stuck_p2: true,
+    inverter_stuck_sustain_minutes: 30,
+    inverter_stuck_buy_window_sustain_minutes: 5,
+    inverter_stuck_p1_after_minutes: 0,
     error_log_p2: true,
     trading_guard_p2: false,
     digest_p3: true,
