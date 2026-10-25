@@ -9,7 +9,8 @@
  * GS-decoded PS frame published battery_voltage −30.9 V. Here the pool can't run a single job, so
  * any threadpool dependency left in the serial path stalls the engine and fails the throughput
  * checks, while the fake replays the wire-level faults (stale frames of the wrong command, lost
- * and late answers, an implausible round, a CRC-corrupt frame) and a 3.5 s main-thread stall.
+ * and late answers, an implausible round, a CRC-corrupt frame, the firmware's CRC byte bump) and
+ * a 3.5 s main-thread stall.
  *
  * Run from backend/ with:  yarn node src/inverterComms/inverterSession.pty.selftest.ts
  * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~35 s.
@@ -28,8 +29,8 @@ import { implausibleFieldsIn } from "./plausibilityGate.ts";
 import { LINE_QUIET_BEFORE_SEND_MS, RESPONSE_TIMEOUT_MS } from "./serialExchange.ts";
 
 const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", import.meta.url));
-/** More blocked jobs than any pool this could run on has threads (default 4) */
-const THREADPOOL_BLOCKERS = 64;
+/** More blocked jobs than the pool has threads (default 4; production runs UV_THREADPOOL_SIZE=32) */
+const THREADPOOL_BLOCKERS = Math.max(64, 2 * Number(process.env.UV_THREADPOOL_SIZE ?? 4));
 const EVENT_LOOP_STALL_MS = 3_500;
 const CLEAN_WINDOW_MS = 4_000;
 const HARD_TIMEOUT_MS = 90_000;
@@ -60,6 +61,7 @@ type FakeInverterEvent =
   | { event: "fault"; t: number; fault: string }
   | { event: "faults_done"; t: number }
   | { event: "lost"; t: number; answering: string }
+  | { event: "crc_bumped_answer"; t: number; serial: number }
   | { event: "summary"; t: number; overlaps: number; counts: Record<string, number>; faults_remaining: string[] }
   | { event: "garbage" | "unparseable_command" | "unknown_query"; t: number };
 
@@ -269,7 +271,20 @@ function evaluate({
       counters.droppedImplausibleRounds >= 1 &&
       gsRounds.every(round => Number(round.fields.battery_voltage) >= 40)
   );
-  check("the CRC-corrupt frame was dropped as invalid", counters.invalidFrames >= 1);
+  check(
+    "the CRC-corrupt frame was the only invalid frame (every firmware-bumped CRC was accepted)",
+    counters.invalidFrames === 1,
+    `invalidFrames=${counters.invalidFrames}`
+  );
+  const bumpedAnswerSerial = fakeEvents.flatMap(event =>
+    event.event === "crc_bumped_answer" ? [event.serial] : []
+  )[0];
+  check(
+    "the answer whose CRC needed the firmware's byte bump was decoded",
+    bumpedAnswerSerial !== undefined &&
+      gsRounds.some(round => round.fields.inner_temperature === bumpedAnswerSerial % 100),
+    `serial ${bumpedAnswerSerial}`
+  );
 
   // ---- timeouts, retries and the quiet line ----
   const received = fakeEvents.flatMap(event => (event.event === "received" ? [event] : []));

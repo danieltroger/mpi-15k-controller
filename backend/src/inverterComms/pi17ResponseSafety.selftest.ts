@@ -8,7 +8,15 @@
  * the failing session on 2026-10-25 (their CRCs validate below, which proves the recovery exact).
  */
 import process from "process";
-import { ACK_FRAME, NAK_FRAME, classifyFrame, concatenateBuffers, createFrameAccumulator } from "./pi17Frames.ts";
+import {
+  ACK_FRAME,
+  NAK_FRAME,
+  classifyFrame,
+  concatenateBuffers,
+  crc16XModem,
+  crcAsTheInverterSendsIt,
+  createFrameAccumulator,
+} from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 import { influxFieldName, PI17_QUERY_RESPONSE_FIELDS } from "./pi17FieldTables.ts";
 import {
@@ -231,6 +239,58 @@ for (const chunkSize of [4, 64]) {
     "unknown_value_in_response_22" in gsDecodedAsPs && "unknown_value_in_response_24" in gsDecodedAsPs
   );
   check("GS-as-PS misdecode is rejected by shape", responseShapeMismatch("PS", payloadOf(GS_LIVE_1)) !== undefined);
+}
+
+// ---------- the firmware's CRC byte bump (found at the second cutover attempt, 2026-10-25) ----------
+// The inverter bumps a CRC byte that would be 0x28/0x0D/0x0A (mpp-solar's crcPI: also 0x00) by one.
+check("bump: live pair computed 0x5328 → sent 0x5329", crcAsTheInverterSendsIt(0x5328) === 0x5329);
+check("bump: live pair computed 0x0DEC → sent 0x0EEC", crcAsTheInverterSendsIt(0x0dec) === 0x0eec);
+check("bump: both bytes", crcAsTheInverterSendsIt(0x0a28) === 0x0b29 && crcAsTheInverterSendsIt(0x0000) === 0x0101);
+check(
+  "bump: ordinary CRCs untouched",
+  crcAsTheInverterSendsIt(0x1234) === 0x1234 && crcAsTheInverterSendsIt(0x0bc2) === 0x0bc2
+);
+function dataFrameWithCrc(payload: string, crcOf: (body: Buffer) => number): Buffer {
+  const body = latin1(`^D${String(payload.length + 3).padStart(3, "0")}${payload}`);
+  const crc = crcOf(body);
+  return concatenateBuffers([body, Buffer.from([crc >> 8, crc & 0xff, 0x0d])]);
+}
+/** A live-shaped GS payload whose plain XModem CRC has `crcByte` in the high or low position */
+function gsPayloadWhosePlainCrcHas(crcByte: number, position: "high" | "low"): string | undefined {
+  const tokens = payloadOf(GS_LIVE_1).split(",");
+  for (let componentTemperature = 0; componentTemperature <= 150; componentTemperature++) {
+    for (let externalTemperature = 0; externalTemperature <= 150; externalTemperature++) {
+      tokens[22] = String(componentTemperature).padStart(3, "0");
+      tokens[23] = String(externalTemperature).padStart(3, "0");
+      const payload = tokens.join(",");
+      const crc = crc16XModem(latin1(`^D${String(payload.length + 3).padStart(3, "0")}${payload}`));
+      if ((position === "high" ? crc >> 8 : crc & 0xff) === crcByte) return payload;
+    }
+  }
+  return undefined;
+}
+for (const crcByte of [0x00, 0x0a, 0x0d, 0x28]) {
+  for (const position of ["high", "low"] as const) {
+    const label = `0x${crcByte.toString(16).padStart(2, "0")} as the ${position} CRC byte`;
+    const payload = gsPayloadWhosePlainCrcHas(crcByte, position);
+    check(`bump: found a GS payload with ${label}`, payload !== undefined);
+    if (payload === undefined) continue;
+    const asSent = dataFrameWithCrc(payload, body => crcAsTheInverterSendsIt(crc16XModem(body)));
+    check(
+      `bump: frame with ${label} bumped (as the firmware sends it) is accepted`,
+      classifyFrame(asSent).kind === "data"
+    );
+    const plain = dataFrameWithCrc(payload, crc16XModem);
+    check(`bump: frame with ${label} unbumped is accepted too`, classifyFrame(plain).kind === "data");
+    const corrupted = concatenateBuffers([asSent]);
+    corrupted[12] ^= 0x01;
+    check(`bump: a corrupted payload with ${label} is still rejected`, classifyFrame(corrupted).kind === "invalid");
+    const { frames } = createFrameAccumulator().push(concatenateBuffers([asSent, ACK_FRAME]));
+    check(
+      `bump: frame with ${label} survives reassembly`,
+      frames.length === 2 && classifyFrame(frames[0]!).kind === "data" && classifyFrame(frames[1]!).kind === "ack"
+    );
+  }
 }
 
 // ---------- plausibility gate ----------

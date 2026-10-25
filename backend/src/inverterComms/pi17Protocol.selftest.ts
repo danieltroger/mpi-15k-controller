@@ -285,7 +285,8 @@ for (const chunkSize of [1, 7, 8, wireStream.length]) {
 }
 {
   // A CRC byte that happens to be \r (0x0d) must not split the frame — this is why extraction
-  // cuts at the declared length instead of the first \r (~1 in 128 frames would break otherwise)
+  // cuts at the declared length instead of the first \r (a plain XModem CRC has a 0x0d byte in
+  // ~1 in 128 frames; this firmware bumps those, but extraction must not rely on that)
   let frameWithCrInCrc: Buffer | undefined;
   for (let candidate = 0; candidate < 10_000 && !frameWithCrInCrc; candidate++) {
     const payload = `CRTEST${candidate}`;

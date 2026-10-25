@@ -8,9 +8,11 @@
  * uses a different QUERYEN form with an ASCII-sum checksum — unused here, see pi17FieldTables.ts).
  *
  * Responses end with \r; the two bytes before it are CRC16-XModem (poly 0x1021, init 0) over all
- * preceding bytes. ACK = ^1<crc>\r, NAK = ^0<crc>\r, data = ^D{lll}payload<crc>\r where lll is the
- * byte count after the 5-byte header (payload + 2 CRC bytes + \r) — verified against every live
- * capture, and what makes frame extraction immune to a CRC byte that happens to be 0x0d.
+ * preceding bytes — with the Voltronic firmware's byte bump, see crcAsTheInverterSendsIt().
+ * ACK = ^1<crc>\r, NAK = ^0<crc>\r, data = ^D{lll}payload<crc>\r where lll is the byte count
+ * after the 5-byte header (payload + 2 CRC bytes + \r) — verified against every live capture.
+ * Cutting frames at that declared length (not at the first \r) keeps extraction robust even
+ * though the bump means the real firmware never puts a 0x0d into a CRC byte.
  */
 
 const CARRIAGE_RETURN = 0x0d;
@@ -46,6 +48,26 @@ export function concatenateBuffers(parts: readonly Buffer[]): Buffer {
     offset += part.length;
   }
   return combined;
+}
+
+/**
+ * The inverter never transmits 0x28 "(", 0x0D "\r" or 0x0A "\n" as a CRC byte (mpp-solar's
+ * crcPI also lists 0x00): it bumps such a byte by one — the Voltronic family's way of keeping
+ * framing characters out of the checksum. Live proof from the second cutover attempt
+ * (2026-10-25): computed 0x5328 → sent 0x5329, computed 0x0DEC → sent 0x0EEC; a retry repeats
+ * the same payload and therefore the same rejection, so both attempts failed and the query
+ * errorLogged. The retired mpp-solar daemon's PI17 path never handled it either — it flagged
+ * 24 461 of 1 032 016 frames (2.37 % ≈ 2 bytes × 3/256) as "Error: CRC error P17" in the week
+ * before. Whether 0x00 is bumped too is unconfirmed, so both renderings are accepted.
+ */
+const CRC_BYTES_THE_FIRMWARE_BUMPS: ReadonlySet<number> = new Set([0x00, 0x0a, 0x0d, 0x28]);
+
+export function crcAsTheInverterSendsIt(crc: number): number {
+  return (bumpedCrcByte(crc >> 8) << 8) | bumpedCrcByte(crc & 0xff);
+}
+
+function bumpedCrcByte(crcByte: number): number {
+  return CRC_BYTES_THE_FIRMWARE_BUMPS.has(crcByte) ? crcByte + 1 : crcByte;
 }
 
 export function crc16XModem(bytes: Buffer): number {
@@ -84,7 +106,7 @@ export function classifyFrame(frame: Buffer): ClassifiedFrame {
   ) {
     const computedCrc = crc16XModem(frame.subarray(0, -3));
     const storedCrc = (frame[frame.length - 3]! << 8) | frame[frame.length - 2]!;
-    if (computedCrc !== storedCrc) {
+    if (storedCrc !== computedCrc && storedCrc !== crcAsTheInverterSendsIt(computedCrc)) {
       return {
         kind: "invalid",
         reason: `data frame CRC mismatch (computed 0x${computedCrc.toString(16)}, stored 0x${storedCrc.toString(16)}) in ${previewOf(frame)}`,
@@ -106,9 +128,10 @@ export type FrameAccumulatorPushResult = {
 
 /**
  * Reassembles the 2400-baud dribble into complete frames. ACK/NAK are fixed 5 bytes; data frames
- * are cut at their declared length (NOT at the first \r — a CRC byte is 0x0d in ~1 in 128 frames,
- * which would corrupt naive \r-splitting every few minutes at our poll rate). \r is only used as
- * a fallback resync point when a declared length turns out not to line up with a terminator.
+ * are cut at their declared length, NOT at the first \r: a plain XModem CRC has a 0x0d byte in
+ * ~1 in 128 frames, and while this firmware bumps those (crcAsTheInverterSendsIt), extraction
+ * shouldn't depend on a quirk. \r is only used as a fallback resync point when a declared length
+ * turns out not to line up with a terminator.
  */
 export function createFrameAccumulator() {
   let buffered = Buffer.alloc(0);

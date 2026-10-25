@@ -13,6 +13,10 @@ plan replays what broke the first production cutover (2026-10-25) and more:
   GS #7   answered 3.15 s late                                  (after the session's 3 s timeout)
   GS #9   a well-shaped GS with battery_voltage 30.9 V          (must be dropped by the gate)
   GS #11  a CRC-corrupted GS frame first, then the real answer
+  GS #13  an answer whose CRC needs the firmware's byte bump    (must be accepted)
+
+Like the real firmware, every CRC byte that would be 0x00/0x0A/0x0D/0x28 is sent bumped by one
+(found live at the second cutover attempt, 2026-10-25), so ~3 % of all frames exercise it anyway.
 
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
@@ -51,10 +55,24 @@ def crc16_xmodem(data):
     return crc
 
 
+CRC_BYTES_THE_FIRMWARE_BUMPS = {0x00, 0x0A, 0x0D, 0x28}
+
+
+def data_frame_body(payload):
+    return b"^D" + b"%03d" % (len(payload) + 3) + payload.encode("latin1")
+
+
+def crc_needs_bump(payload):
+    crc = crc16_xmodem(data_frame_body(payload))
+    return (crc >> 8) in CRC_BYTES_THE_FIRMWARE_BUMPS or (crc & 0xFF) in CRC_BYTES_THE_FIRMWARE_BUMPS
+
+
 def data_frame(payload):
-    body = b"^D" + b"%03d" % (len(payload) + 3) + payload.encode("latin1")
+    body = data_frame_body(payload)
     crc = crc16_xmodem(body)
-    return body + bytes([crc >> 8, crc & 0xFF, 0x0D])
+    crc_bytes = [crc >> 8, crc & 0xFF]
+    crc_bytes = [crc_byte + 1 if crc_byte in CRC_BYTES_THE_FIRMWARE_BUMPS else crc_byte for crc_byte in crc_bytes]
+    return body + bytes(crc_bytes + [0x0D])
 
 
 def emit(event, **fields):
@@ -75,19 +93,28 @@ class FakeInverter:
         self.last_tx_byte_at = time.monotonic()
         self.overlaps = 0
         self.next_command_follows_anomaly = False
-        self.faults_remaining = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11"}
+        self.faults_remaining = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13"}
 
     # ---------- frames ----------
     def next_serial(self):
         self.serial += 1
         return self.serial
 
-    def gs_frame(self, battery_voltage_token=None):
+    def gs_frame(self, battery_voltage_token=None, force_crc_bump=False):
         serial = self.next_serial()
         tokens = list(GS_TOKENS)
         tokens[GS_INNER_TEMPERATURE_INDEX] = "%03d" % (serial % 100)
         if battery_voltage_token:
             tokens[GS_BATTERY_VOLTAGE_INDEX] = battery_voltage_token
+        if force_crc_bump:
+            # Vary the two spare temperature fields (still plausible) until the CRC needs the bump
+            for component_temperature in range(151):
+                tokens[22] = "%03d" % component_temperature
+                for external_temperature in range(151):
+                    tokens[23] = "%03d" % external_temperature
+                    if crc_needs_bump(",".join(tokens)):
+                        return data_frame(",".join(tokens)), serial
+            raise RuntimeError("no GS variant needs the CRC bump")
         return data_frame(",".join(tokens)), serial
 
     def ps_frame(self):
@@ -208,6 +235,12 @@ class FakeInverter:
                 corrupt = corrupt[:10] + bytes([corrupt[10] ^ 0x01]) + corrupt[11:]
                 self.queue(corrupt, "GS", "GS", "corrupt", corrupt_serial)
                 self.next_command_follows_anomaly = True
+            if count == 13 and "gs13" in self.faults_remaining:
+                self.fault_done("gs13")
+                frame, serial = self.gs_frame(force_crc_bump=True)
+                self.queue(frame, "GS", "GS", "answer", serial)
+                emit("crc_bumped_answer", serial=serial)
+                return
             frame, serial = self.gs_frame()
             self.queue(frame, "GS", "GS", "answer", serial)
         elif command == "PS":

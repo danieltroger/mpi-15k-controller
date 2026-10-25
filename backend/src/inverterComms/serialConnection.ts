@@ -4,22 +4,28 @@
  *
  * Nothing here may touch the libuv threadpool. It is shared with every fs.promises call in the
  * process — on the pi chiefly the 15 one-wire thermometers, whose sysfs reads block a pool thread
- * for most of a second each — and at the first production cutover (2026-10-25) the old
- * FileHandle.write queued behind them for up to ~3 s. The session's response timer was already
- * running, so writes timed out before they reached the wire, retries doubled up (a GS retry and
- * the next PS hit the wire 1 ms apart) and responses got credited to the wrong command. So:
- * - reads: tty.ReadStream over a plain fd — libuv polls it on the event loop (verified by strace:
- *   read(2) runs on the main thread), and cable unplug surfaces as an EIO 'error';
- * - writes: writeSync on an O_NONBLOCK fd, on the main thread — a ≤20-byte frame lands in the
- *   ~4 kB tty output buffer at once, so it never blocks, and "written" means written;
- * - open/close: the sync calls (O_NONBLOCK, so a mis-set termios can't hang open(2) either).
+ * for ~750 ms each — and at the first production cutover (2026-10-25) the old FileHandle.write
+ * queued behind them for up to ~3 s. The session's response timer was already running, so writes
+ * timed out before they reached the wire, retries doubled up (a GS retry and the next PS hit the
+ * wire 1 ms apart) and responses got credited to the wrong command.
+ *
+ * So both directions go through ONE libuv tty stream on the event loop: the device is opened
+ * O_RDWR|O_NONBLOCK and wrapped in a tty.ReadStream, which — despite its name — is a full
+ * net.Socket Duplex over a uv_tty handle. libuv keeps the fd non-blocking, reads arrive as 'data'
+ * events, and stream.write() performs a non-blocking write(2) from the event loop (queueing on
+ * EAGAIN, never blocking JS) with its completion delivered as the write callback — which is what
+ * the session's response timer starts on. Verified on Node 24 with strace: read(2) and write(2)
+ * both run on the JS thread. The obvious alternatives are wrong here: tty.WriteStream forces the
+ * fd into BLOCKING mode (setBlocking(true), for terminal stdout ordering), net.Socket({ fd })
+ * rejects tty fds (ERR_INVALID_FD_TYPE), and fs writes are threadpool jobs.
+ *
+ * The open itself is a one-off openSync (O_NONBLOCK, so a mis-set termios can't hang it).
  * inverterSession.pty.selftest.ts runs the whole engine with every pool thread blocked.
  */
-import { closeSync, constants as fsConstants, openSync, writeSync } from "fs";
+import { closeSync, constants as fsConstants, openSync } from "fs";
 import tty from "tty";
 import { exec } from "../utilities/exec.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import { wait } from "../vendor/depictUtilishared.ts";
 
 // FTDI serial cable → inverter RS-232, NOT the inverter's USB-HID port: that port's firmware NAKs
 // every command longer than 16 bytes (so MCHGV/DAT/BCA can never work there), while serial accepts
@@ -31,8 +37,8 @@ const REOPEN_BACKOFF_MAX_MS = 30_000;
 
 export type SerialConnection = {
   /**
-   * Write raw bytes to the device on the main thread; resolves once they are in the kernel's tty
-   * buffer (immediately, in practice), rejects when the device is closed/unplugged
+   * Queue raw bytes on the device stream; resolves when libuv reports the write complete (the
+   * bytes are in the kernel's tty buffer), rejects when the device is closed/unplugged
    */
   write(bytes: Buffer): Promise<void>;
   isOpen(): boolean;
@@ -54,7 +60,7 @@ export function createSerialConnection({
     devicePath,
     onData,
     onOpen,
-    current: undefined,
+    deviceStream: undefined,
     closedForever: false,
     reopenTimer: undefined,
     backoffMs: REOPEN_BACKOFF_INITIAL_MS,
@@ -64,7 +70,7 @@ export function createSerialConnection({
   void openDevice(state);
   return {
     write: bytes => writeToDevice(state, bytes),
-    isOpen: () => state.current !== undefined,
+    isOpen: () => state.deviceStream !== undefined,
     close: () => {
       state.closedForever = true;
       clearTimeout(state.reopenTimer);
@@ -77,7 +83,8 @@ type ConnectionState = {
   devicePath: string;
   onData: (chunk: Buffer) => void;
   onOpen: () => void;
-  current: { readStream: tty.ReadStream; writeFd: number } | undefined;
+  /** The one read+write stream over the device (a tty.ReadStream opened O_RDWR — see the header) */
+  deviceStream: tty.ReadStream | undefined;
   closedForever: boolean;
   reopenTimer: ReturnType<typeof setTimeout> | undefined;
   backoffMs: number;
@@ -86,7 +93,7 @@ type ConnectionState = {
 };
 
 async function openDevice(state: ConnectionState): Promise<void> {
-  if (state.closedForever || state.current || state.openInProgress) return;
+  if (state.closedForever || state.deviceStream || state.openInProgress) return;
   state.openInProgress = true;
   try {
     // 8N1 raw line: `raw` switches off all line-discipline processing (incl. software flow
@@ -94,34 +101,29 @@ async function openDevice(state: ConnectionState): Promise<void> {
     // flow control, clocal = don't wait for a modem carrier the three-wire cable doesn't have.
     // Matches pyserial's effective settings that mpp-solar used on this same cable.
     await exec(`stty -F ${state.devicePath} 2400 raw -echo cs8 -parenb -cstopb -crtscts clocal`);
-    // Two independent opens of the same device: the read fd gets wrapped in tty.ReadStream, which
-    // then owns it (destroy() closes it); the write fd stays ours to writeSync to and close.
-    // O_NONBLOCK so a mis-set termios can never hang open(2); O_NOCTTY so the serial port cannot
-    // become our controlling terminal.
-    const readFd = openSync(state.devicePath, fsConstants.O_RDONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
-    let readStream: tty.ReadStream;
+    // O_NOCTTY so the serial port cannot become our controlling terminal. The stream owns the fd
+    // from here on (destroy() closes it).
+    const deviceFd = openSync(state.devicePath, fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    let deviceStream: tty.ReadStream;
     try {
-      readStream = new tty.ReadStream(readFd);
+      deviceStream = new tty.ReadStream(deviceFd);
     } catch (streamError) {
-      closeSync(readFd);
+      closeSync(deviceFd);
       throw streamError;
     }
-    let writeFd: number;
-    try {
-      writeFd = openSync(state.devicePath, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
-    } catch (openWriteError) {
-      readStream.destroy();
-      throw openWriteError;
+    if (!deviceStream.writable) {
+      deviceStream.destroy();
+      throw new Error(`tty stream over ${state.devicePath} is not writable — opened without write access?`);
     }
-    state.current = { readStream, writeFd };
-    readStream.on("data", chunk => state.onData(chunk));
-    readStream.on("error", streamError => {
-      errorLog("Inverter serial read stream errored (cable unplugged?)", streamError);
+    state.deviceStream = deviceStream;
+    deviceStream.on("data", (chunk: Buffer) => state.onData(chunk));
+    deviceStream.on("error", streamError => {
+      errorLog("Inverter serial stream errored (cable unplugged?)", streamError);
       teardownAndScheduleReopen(state);
     });
-    readStream.on("close", () => {
-      if (state.current?.readStream === readStream) {
-        warnLog("Inverter serial read stream closed unexpectedly — reopening");
+    deviceStream.on("close", () => {
+      if (state.deviceStream === deviceStream) {
+        warnLog("Inverter serial stream closed unexpectedly — reopening");
         teardownAndScheduleReopen(state);
       }
     });
@@ -145,45 +147,23 @@ async function openDevice(state: ConnectionState): Promise<void> {
   }
 }
 
-async function writeToDevice(state: ConnectionState, bytes: Buffer): Promise<void> {
-  const connection = state.current;
-  if (!connection) throw new Error(`Inverter serial device is not open (${state.devicePath})`);
-  // O_NONBLOCK writes can be partial or EAGAIN if the ~4 kB tty buffer were full — never expected
-  // for our ≤20-byte frames, one exchange at a time, but loop anyway so a partial write can't
-  // split a frame. The EAGAIN pause is a timer on the event loop, not a pool job.
-  let offset = 0;
-  let eagainRetries = 0;
-  while (offset < bytes.length) {
-    try {
-      // Runtime-wise Buffer IS a Uint8Array; the cast papers over @types/node 20 predating
-      // TS 5.9's generic typed arrays (their slice() return types clash structurally)
-      offset += writeSync(connection.writeFd, bytes as unknown as Uint8Array, offset);
-    } catch (writeError) {
-      const errorCode = (writeError as NodeJS.ErrnoException).code;
-      if (errorCode === "EAGAIN" && ++eagainRetries <= 20) {
-        await wait(10);
-        continue;
-      }
-      if (errorCode === "EIO" || errorCode === "ENXIO" || errorCode === "ENODEV" || errorCode === "EBADF") {
-        // The device is gone (unplug mid-write) — the read stream usually notices too, but don't rely on it
-        errorLog("Inverter serial write failed with", errorCode, "— reopening device", writeError);
-        teardownAndScheduleReopen(state);
-      }
-      throw writeError;
-    }
-  }
+function writeToDevice(state: ConnectionState, bytes: Buffer): Promise<void> {
+  const deviceStream = state.deviceStream;
+  if (!deviceStream) return Promise.reject(new Error(`Inverter serial device is not open (${state.devicePath})`));
+  return new Promise<void>((resolve, reject) => {
+    // A failed write also errors (and destroys) the stream, whose 'error' handler logs and reopens
+    // — so the callback only has to hand the failure to the waiting exchange.
+    // Runtime-wise Buffer IS a Uint8Array; the cast papers over @types/node 20 predating TS 5.9's
+    // generic typed arrays (their slice() return types clash structurally)
+    deviceStream.write(bytes as unknown as Uint8Array, writeError => (writeError ? reject(writeError) : resolve()));
+  });
 }
 
 function teardown(state: ConnectionState): void {
-  const connection = state.current;
-  if (!connection) return;
-  state.current = undefined;
-  connection.readStream.destroy(); // also closes the read fd the stream owns
-  try {
-    closeSync(connection.writeFd);
-  } catch (closeError) {
-    warnLog("Failed to close inverter serial write fd", closeError);
-  }
+  const deviceStream = state.deviceStream;
+  if (!deviceStream) return;
+  state.deviceStream = undefined;
+  deviceStream.destroy(); // also closes the fd the stream owns
 }
 
 function teardownAndScheduleReopen(state: ConnectionState): void {

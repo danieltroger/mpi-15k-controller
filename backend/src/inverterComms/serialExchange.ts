@@ -3,8 +3,9 @@
  * response from ever being credited to the wrong command (the first production cutover on
  * 2026-10-25 had to be rolled back because of exactly that; see pi17ResponseShapes.ts):
  *
- * 1. The response timer starts only once the frame is actually written (serialConnection writes
- *    synchronously on the main thread — no threadpool queue between "sent" and "on the wire").
+ * 1. The response timer starts only once the frame is actually written: serialConnection's write
+ *    resolves on libuv's write-completion event for the non-blocking tty stream — no threadpool
+ *    queue between "sent" and "on the wire".
  * 2. A frame is accepted only if it can answer the command in flight (setters: ACK/NAK; queries:
  *    a data frame of that query's shape). Anything else is rejected, counted and logged, and the
  *    exchange keeps waiting for its real answer.
@@ -183,6 +184,9 @@ async function exchangeOnce(
   if (staleByteCount)
     state.warnFlushedBytes("Flushed", staleByteCount, "stale buffered byte(s) before sending", description);
   if (!state.connection) throw new Error("Inverter serial exchange used before its connection exists");
+  // libuv runs write-completion callbacks in its pending phase, before the poll phase delivers
+  // reads, so the in-flight exchange below exists before any answer can be processed (and a frame
+  // that somehow beat it would only count as unsolicited — never be misattributed).
   await state.connection.write(frameBytes);
   state.counters.framesWritten++;
   return new Promise<SingleAttemptOutcome>(resolve => {
