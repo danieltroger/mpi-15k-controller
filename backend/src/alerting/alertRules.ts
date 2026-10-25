@@ -8,6 +8,8 @@ import type { AlertManager } from "./alertManager.ts";
 import type { AlertSeverity } from "./alerting.types.ts";
 import { formatSekForAlert, round1, thresholdState } from "./alertingLogic.ts";
 import { startInverterStuckAlerts } from "./inverterStuckAlerts.ts";
+import type { OverheatSellStopState } from "../feeding/overheatSellStop.ts";
+import { startOverheatSellStopAlerts } from "./overheatSellStopAlerts.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
 
 /**
@@ -23,6 +25,8 @@ export function startAlertRules(ctx: {
   config: Accessor<Config>;
   manager: AlertManager;
   temperatures: ReturnType<typeof useTemperatures>;
+  /** Whether selling is stopped because the inverter is near its 100 °C latch (feeding/overheatSellStop.ts) */
+  overheatSellStop: Accessor<OverheatSellStopState>;
   mqttValues: ReturnType<typeof useFromMqttProvider>["mqttValues"];
   averageSOC: Accessor<number | undefined>;
   currentBatteryPower: Accessor<CurrentBatteryPowerBroadcast | undefined>;
@@ -82,18 +86,8 @@ export function startAlertRules(ctx: {
     );
   });
 
-  // ——— inverter temperature (hard shutdown at 100 °C — the 97 °C threshold sits deliberately close) ———
-  const inverterTempAlert = edgeAlert("inverter-temp", "P1", { resolveNotice: true });
-  createEffect(() => {
-    const reading = ctx.mqttValues.component_max_temperature;
-    if (!reading) return;
-    const threshold = alerting().inverter_temp_p1_celsius;
-    inverterTempAlert.update(
-      thresholdState(reading.value, threshold, threshold - 5),
-      "Inverter near thermal shutdown",
-      () => `component_max_temperature ${round1(reading.value)}°C — the inverter shuts off at 100°C`
-    );
-  });
+  // ——— inverter temperature: P1 when selling stops for overheating, P3 when it resumes ———
+  startOverheatSellStopAlerts({ config: ctx.config, manager: ctx.manager, overheatSellStop: ctx.overheatSellStop });
 
   // ——— cooling outlet air: the early ventilation alarm (see cooling_outlet_temp_p2_celsius docs) ———
   const coolingOutletProbes = createMemo(() =>

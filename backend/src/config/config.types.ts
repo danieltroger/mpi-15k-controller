@@ -116,8 +116,6 @@ export type AlertingConfig = {
   site_name: string;
   /** P1 when any battery probe (cell/bus-bar thermometers) reaches this; clears 3° lower */
   battery_temp_p1_celsius: number;
-  /** P1 when component_max_temperature reaches this — the inverter hard-shuts-off at 100 °C */
-  inverter_temp_p1_celsius: number;
   /**
    * P2 when the hottest cooling_outlet_* probe reaches this — the early ventilation alarm. In the
    * 2025-06-30 shutdown (door + ventilation accidentally closed) outlets hit 39–41 °C vs a 34 °C
@@ -233,6 +231,14 @@ export type Config = {
     start_selling_again_above_soc: number;
     start_selling_again_above_voltage: number;
     only_sell_above_voltage: number;
+    /**
+     * Selling stops (every sell window feeds 0) once component_max_temperature reaches this, and a
+     * P1 goes out. The inverter latches fault 57 at 100 °C and stays off until power-cycled: on
+     * 2025-06-30 it got there after 2 h 20 min of ~14 kW selling with the room's ventilation shut.
+     */
+    only_sell_below_inverter_temp_celsius: number;
+    /** …and resumes (quiet P3) only once it has cooled below this — the gap keeps it from flapping */
+    start_selling_again_below_inverter_temp_celsius: number;
   };
   scheduled_power_buying: {
     schedule: Record<

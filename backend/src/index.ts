@@ -147,7 +147,7 @@ function main() {
                       );
                     });
 
-                    const { exportAmountForSelling } = shouldSellPower(config);
+                    const { exportAmountForSelling, overheatSellStop } = shouldSellPower(config);
                     const { chargingAmperageForBuying } = useShouldBuyPower({ config });
 
                     const { mqttValues } = useFromMqttProvider();
@@ -159,6 +159,7 @@ function main() {
                           config,
                           manager: alertManager,
                           temperatures,
+                          overheatSellStop,
                           mqttValues,
                           averageSOC: clampedSocAh,
                           currentBatteryPower: currentPower,
