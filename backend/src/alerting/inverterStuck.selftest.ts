@@ -10,6 +10,7 @@ import {
   evaluateDcSideIdle,
   evaluateInverterStuckRules,
   evaluatePvStalledInDaylight,
+  hallBlindWhileInverterTalks,
   type InverterStuckSnapshot,
 } from "./inverterStuckDetection.ts";
 import {
@@ -17,9 +18,12 @@ import {
   describeInverterStuckResolved,
   formatStockholmTime,
   type InverterStuckAlertAction,
+  inverterStuckAlertKey,
   type InverterStuckAlertState,
   type InverterStuckSettings,
   INVERTER_STUCK_IDLE_STATE,
+  persistableEpisode,
+  restoreEpisode,
   stepInverterStuckAlert,
 } from "./inverterStuckAlertPolicy.ts";
 import {
@@ -96,6 +100,20 @@ function snapshotAt(nowMs: number, values: SnapshotValues = {}): InverterStuckSn
 
 const nowMs = ONSET_MS + 20 * 60_000;
 
+// The reviewer's replays of #51: a November latch at 10:00 UTC (sun ~6° from 07:30 to 14:00 UTC,
+// strings at 450 V), power-cycled at 15:30 UTC in the dark.
+const WINTER_LATCH_MS = +new Date("2026-11-20T10:00:00Z");
+const WINTER_FIX_MS = +new Date("2026-11-20T15:30:00Z");
+const WINTER_RELATCH_MS = WINTER_FIX_MS + 3 * 86_400_000;
+const BUY_WINDOW_START_MS = +new Date("2026-11-21T02:00:00Z");
+const normalDischarge: SnapshotValues = {
+  hallWatts: -650,
+  batteryCurrent: -12,
+  batteryDirection: "Discharging",
+  dcAcDirection: "DC to AC",
+  gridWatts: 20,
+};
+
 // ——— Rule B: DC side idle ———
 check("incident signature → failing", evaluateDcSideIdle(snapshotAt(nowMs)).observation, "failing");
 check(
@@ -111,6 +129,23 @@ check(
 check(
   "float hold with the usual −187 W self-draw → indeterminate (between bands)",
   evaluateDcSideIdle(snapshotAt(nowMs, { hallWatts: -187, batteryVolts: 54.2, averageSOC: 100 })).observation,
+  "indeterminate"
+);
+check(
+  "latch from a full pack (SOC 97%, hall −25 W) → failing: the ledger SOC barely falls during a latch",
+  evaluateDcSideIdle(snapshotAt(nowMs, { hallWatts: -25, batteryVolts: 53.6, averageSOC: 97 })).observation,
+  "failing"
+);
+check(
+  "float hold as the inverter really reports it (0 A Charging/AC to DC, hall −183 W) → healthy",
+  evaluateDcSideIdle(
+    snapshotAt(nowMs, { hallWatts: -183, batteryDirection: "Charging", dcAcDirection: "AC to DC", averageSOC: 100 })
+  ).observation,
+  "healthy"
+);
+check(
+  "float hold misreported as Idle/Idle at its lowest observed hall (−66 W, SOC 99%) → indeterminate",
+  evaluateDcSideIdle(snapshotAt(nowMs, { hallWatts: -66, batteryVolts: 54.1, averageSOC: 99 })).observation,
   "indeterminate"
 );
 check(
@@ -285,9 +320,29 @@ check(
   "indeterminate"
 );
 check(
-  "BMS-stopped charge on a full pack (resting voltage, SOC 98%) → not checked",
-  evaluateBuyWindowNotCharging(snapshotAt(nowMs, { ...deadWindow, batteryVolts: 54.1, averageSOC: 98 })).observation,
+  "BMS-stopped charge on a full pack, inverter's own draw still visible (hall −150 W, SOC 98%) → not checked",
+  evaluateBuyWindowNotCharging(
+    snapshotAt(nowMs, { ...deadWindow, batteryVolts: 54.1, hallWatts: -150, averageSOC: 98 })
+  ).observation,
   "indeterminate"
+);
+check(
+  "latch inside a buy window on a full pack (SOC 95%, hall −20 W) → failing",
+  evaluateBuyWindowNotCharging(snapshotAt(nowMs, { ...deadWindow, batteryVolts: 53.8, averageSOC: 95 })).observation,
+  "failing"
+);
+
+// ——— hall blindness (wiring warns once per streak) ———
+check(
+  "hall stale while the inverter talks → blind",
+  hallBlindWhileInverterTalks(snapshotAt(nowMs, { hallAgeMs: 60_000 })),
+  true
+);
+check("hall fresh → not blind", hallBlindWhileInverterTalks(snapshotAt(nowMs)), false);
+check(
+  "inverter silent too → not blind (the stale-mqtt rule owns that)",
+  hallBlindWhileInverterTalks(snapshotAt(nowMs, { hallAgeMs: 60_000, inverterAgeMs: 5 * 60_000 })),
+  false
 );
 check(
   "CV taper above 57 V → not checked",
@@ -424,6 +479,126 @@ check(
   0
 );
 
+// ——— episodes: evidence from one signature closes the ones that are only held (review of #51) ———
+const winterSettings = { ...DEFAULT_SETTINGS, inverter_stuck_p1_after_minutes: 360 };
+const winterDay = runPolicy(
+  INVERTER_STUCK_IDLE_STATE,
+  WINTER_LATCH_MS,
+  WINTER_LATCH_MS + 20 * 3600_000,
+  winterDaySnapshot,
+  winterSettings
+);
+check(
+  "winter-day latch, power-cycled in the dark with A held: resolved 5 min after the fix, and no P1 later",
+  winterDay.actions.map(({ action, atMs }) => [action, new Date(atMs).toISOString().slice(11, 16)]),
+  [
+    ["raise_p2", "10:30"],
+    ["resolve", "15:35"],
+  ]
+);
+check(
+  "…and the held PV signature was released with the episode",
+  winterDay.state.rules.pv_stalled_in_daylight.active,
+  false
+);
+const relatch = runPolicy(
+  INVERTER_STUCK_IDLE_STATE,
+  WINTER_LATCH_MS,
+  WINTER_RELATCH_MS + 6 * 3600_000,
+  snowyRelatchSnapshot,
+  DEFAULT_SETTINGS
+);
+check(
+  "snow after a night fix, latch again 3 days later: a fresh P2 for the new episode",
+  relatch.actions.map(({ action, atMs }) => [action, new Date(atMs).toISOString().slice(5, 16)]),
+  [
+    ["raise_p2", "11-20T10:30"],
+    ["resolve", "11-20T15:35"],
+    ["raise_p2", "11-23T16:00"],
+  ]
+);
+const windowEpisodes = runPolicyCollectingKeys(
+  BUY_WINDOW_START_MS,
+  BUY_WINDOW_START_MS + 40 * 60_000,
+  relatchInsideWindowSnapshot
+);
+check(
+  "Rule C recovers and re-latches inside one window: P2, resolve, and a second P2 on its own key",
+  windowEpisodes.map(({ action, atMs }) => [action, new Date(atMs).toISOString().slice(11, 16)]),
+  [
+    ["raise_p2", "02:05"],
+    ["resolve", "02:13"],
+    ["raise_p2", "02:21"],
+  ]
+);
+check(
+  "…so the manager's per-key cooldown of the first P2 can't swallow the second",
+  windowEpisodes[0].key !== windowEpisodes[2].key && windowEpisodes[2].key.startsWith("inverter-stuck:"),
+  true
+);
+const heldOnly = runPolicy(
+  raisedAt.state,
+  ONSET_MS + 40 * 60_000 + 15_000,
+  ONSET_MS + 3 * 3600_000,
+  tickMs => snapshotAt(tickMs, { hallAgeMs: 60_000 }),
+  { ...DEFAULT_SETTINGS, inverter_stuck_p1_after_minutes: 120 }
+);
+check("P1 time passes while the only active signature is held (hall stale) → no P1, no resolve", heldOnly.actions, []);
+check(
+  "…the P1 goes out on the first tick that observes it failing again",
+  runPolicy(
+    heldOnly.state,
+    ONSET_MS + 3 * 3600_000 + 15_000,
+    ONSET_MS + 3 * 3600_000 + 60_000,
+    tickMs => snapshotAt(tickMs),
+    {
+      ...DEFAULT_SETTINGS,
+      inverter_stuck_p1_after_minutes: 120,
+    }
+  ).actions.map(({ action, atMs }) => [action, (atMs - ONSET_MS) / 60_000]),
+  [["escalate_p1", 180.25]]
+);
+
+// ——— the open episode survives a controller restart ———
+const persisted = persistableEpisode(raisedAt.state);
+check("an idle state persists nothing", persistableEpisode(INVERTER_STUCK_IDLE_STATE), undefined);
+check("persisted: raise time, onset and the active signature's onset", persisted, {
+  raised_at_ms: ONSET_MS + 30 * 60_000,
+  onset_ms: ONSET_MS,
+  escalated: false,
+  active_rule_onsets: { dc_side_idle: ONSET_MS },
+});
+const restored = restoreEpisode(persisted);
+check(
+  "restored: B held active with its onset, runs start over",
+  [restored.rules.dc_side_idle.active, restored.rules.dc_side_idle.onsetMs, restored.rules.dc_side_idle.failingSinceMs],
+  [true, ONSET_MS, undefined]
+);
+const restartMs = ONSET_MS + 3 * 3600_000;
+check(
+  "still stuck after the restart: no second P2",
+  runPolicy(restored, restartMs, restartMs + 45 * 60_000, tickMs => snapshotAt(tickMs), DEFAULT_SETTINGS).actions,
+  []
+);
+check(
+  "fixed during the downtime: resolved within 5 min of the restart",
+  runPolicy(
+    restored,
+    restartMs,
+    restartMs + 10 * 60_000,
+    tickMs =>
+      snapshotAt(tickMs, {
+        hallWatts: -620,
+        batteryCurrent: -11,
+        batteryDirection: "Discharging",
+        dcAcDirection: "DC to AC",
+      }),
+    DEFAULT_SETTINGS
+  ).actions.map(({ action, atMs }) => [action, (atMs - restartMs) / 60_000]),
+  [["resolve", 5]]
+);
+check("nothing persisted restores to idle", restoreEpisode(undefined), INVERTER_STUCK_IDLE_STATE);
+
 // ——— messages (Europe/Stockholm: still CEST on 2026-10-21) ———
 const p2Text = describeInverterStuckAlert(
   raisedAt.state,
@@ -482,6 +657,67 @@ function runPolicy(
     if (step.action) actions.push({ action: step.action, atMs: tickMs });
   }
   return { state, actions };
+}
+
+function runPolicyCollectingKeys(
+  fromMs: number,
+  toMs: number,
+  snapshotFor: (tickMs: number) => InverterStuckSnapshot
+): { action: InverterStuckAlertAction; atMs: number; key: string }[] {
+  let state = INVERTER_STUCK_IDLE_STATE;
+  const actions: { action: InverterStuckAlertAction; atMs: number; key: string }[] = [];
+  for (let tickMs = fromMs; tickMs <= toMs; tickMs += 15_000) {
+    const step = stepInverterStuckAlert(
+      state,
+      evaluateInverterStuckRules(snapshotFor(tickMs)),
+      tickMs,
+      DEFAULT_SETTINGS
+    );
+    if (step.action) {
+      // The wiring keys a resolve by the episode it closes, a P2/P1 by the episode it raises
+      const key = inverterStuckAlertKey(step.action === "resolve" ? state : step.state);
+      actions.push({ action: step.action, atMs: tickMs, key });
+    }
+    state = step.state;
+  }
+  return actions;
+}
+
+function winterSunElevation(atMs: number): number {
+  const utcHours = new Date(atMs).getUTCHours() + new Date(atMs).getUTCMinutes() / 60;
+  return utcHours >= 7.5 && utcHours <= 14 ? 6 : -10;
+}
+
+function winterDaySnapshot(atMs: number): InverterStuckSnapshot {
+  const sunElevation = winterSunElevation(atMs);
+  if (atMs < WINTER_FIX_MS) return snapshotAt(atMs, { sunElevation, pvVolts: sunElevation > 3 ? 450 : 0 });
+  return snapshotAt(atMs, { ...normalDischarge, sunElevation });
+}
+
+/** After the night fix, snow keeps the strings under 300 V (Rule A can't judge), then it latches again */
+function snowyRelatchSnapshot(atMs: number): InverterStuckSnapshot {
+  if (atMs < WINTER_FIX_MS) return winterDaySnapshot(atMs);
+  const sunElevation = winterSunElevation(atMs);
+  const pvVolts = sunElevation > 3 ? 150 : 0;
+  if (atMs < WINTER_RELATCH_MS) return snapshotAt(atMs, { ...normalDischarge, sunElevation, pvVolts });
+  return snapshotAt(atMs, { sunElevation, pvVolts });
+}
+
+/** Dead buy window from 02:00, power-cycled at 02:08 (charging), latched again at 02:16 */
+function relatchInsideWindowSnapshot(atMs: number): InverterStuckSnapshot {
+  const minute = (atMs - BUY_WINDOW_START_MS) / 60_000;
+  const window = { commandedAmps: minute < 60 ? 281 : 0, acChargingEnabled: minute < 60 };
+  if (minute >= 8 && minute < 16) {
+    return snapshotAt(atMs, {
+      ...window,
+      hallWatts: 14_800,
+      batteryCurrent: 270,
+      batteryDirection: "Charging",
+      dcAcDirection: "AC to DC",
+      batteryVolts: 54,
+    });
+  }
+  return snapshotAt(atMs, window);
 }
 
 /**

@@ -44,7 +44,7 @@ export type InverterStuckSnapshot = {
   nowMs: number;
   /** Same shape as the mqttValues store entries: value + the time it last arrived */
   inverter: Partial<{ [Field in InverterStuckField]: TimedReading<RawMQTTValues[Field]> }>;
-  /** Trailing mean of hall sensor 2 power (W, positive = charging); time = newest sample */
+  /** 1-min trailing mean of the signed hall sensor 2 power (W, positive = charging); time = newest sample */
   smoothedHallWatts: TimedReading<number> | undefined;
   averageSOC: number | undefined;
   sunElevationDegrees: number;
@@ -62,7 +62,13 @@ export const INVERTER_READING_MAX_AGE_MS = 2 * 60_000;
 export const HALL_READING_MAX_AGE_MS = 30_000;
 
 // ——— Rule B: DC side idle ———
-/** Normal operation's 1st percentile is 263 W: the inverter's own draw always flows through the battery. */
+/**
+ * Compared against |mean(P)|, not mean(|P|): an oscillation could average out, but the inverter
+ * must also report exactly 0 A Idle/Idle, which it doesn't while power sloshes. Normal operation's
+ * 1st percentile is 263 W (the inverter's own draw always flows through the battery); the latch
+ * read 10–115 W, the top end being ~2 A DC loads. A summer hall-zero drift can't be ruled out
+ * without a summer latch, but full-battery holds shift only ~100 W between winter and June.
+ */
 export const DC_IDLE_MAX_HALL_WATTS = 150;
 /**
  * Hall-only evidence of recovery sits well above the idle band: during the incident ~2 A DC loads
@@ -72,8 +78,16 @@ export const DC_RECOVERED_MIN_HALL_WATTS = 300;
 export const DC_IDLE_MIN_GRID_IMPORT_WATTS = 100;
 /** The low-voltage cut-off (warning 16, ≤ 49.5 V) idles the battery legitimately, ~30 h a year. */
 export const DC_IDLE_MIN_BATTERY_VOLTS = 50.5;
-/** Full-battery float holds show inverter 0 A + hall −130…−190 W; six of them fired without this gate. */
-export const DC_IDLE_MAX_SOC_PERCENT = 90;
+/**
+ * A full pack can't be gated out wholesale: the ledger SOC hardly falls during a latch (only
+ * drain_a moves it), so a latch from full would stay invisible at night for days. What separates
+ * a float hold from a latch is the inverter's report: in a year of hall data every float hold read
+ * 0 A "Charging", and 0 A Idle/Idle never occurred above 50 % SOC outside the incident. As a second
+ * guard in case that report ever misleads, a full pack also needs a near-zero hall: float holds
+ * read ≥ 56 W (the longest run under 60 W lasted 3 min; under 80 W, 34 min), the latch −27 W median.
+ */
+export const HIGH_SOC_PERCENT = 90;
+export const HIGH_SOC_IDLE_MAX_HALL_WATTS = 60;
 
 // ——— Rule A: PV stalled in daylight ———
 /** The 59.25 N winter maximum is only ~7°; dawn/dusk look-alikes all sit below 3° (report §4.3). */
@@ -96,16 +110,14 @@ export const BUY_CHECK_MIN_COMMANDED_WATTS = 2000;
  * 56.3–56.6 V; the taper near today's 58 V (2026-09-21: ~45 A at 57.9 V) is the same picture.
  */
 export const BUY_CHECK_MAX_BATTERY_VOLTS = 55.5;
-/** A full pack whose BMS stops the charge drops back to resting voltage, so voltage alone can't tell */
-export const BUY_CHECK_MAX_SOC_PERCENT = 90;
 /** Every healthy buy window reached 255–286 A of a ~281 A command within a minute */
 export const BUY_CHECK_MIN_DELIVERED_FRACTION = 0.3;
 
 /**
  * Rule B, the main one (works day and night): the battery carries nothing, not even the
  * inverter's own draw, the inverter agrees it's idle, and the house runs on the grid — while the
- * battery is neither empty (low-voltage cut-off) nor full (float hold), the two legitimate reasons
- * for that picture.
+ * battery isn't empty (low-voltage cut-off) and, when full, the hall is near zero rather than
+ * showing a float hold's self-draw.
  */
 export function evaluateDcSideIdle(snapshot: InverterStuckSnapshot): RuleEvaluation {
   const values = freshInverterValues(snapshot, [
@@ -132,7 +144,9 @@ export function evaluateDcSideIdle(snapshot: InverterStuckSnapshot): RuleEvaluat
   }
   if (values.battery_voltage <= DC_IDLE_MIN_BATTERY_VOLTS) return indeterminate(`${summary} (low-voltage cut-off)`);
   if (snapshot.averageSOC === undefined) return indeterminate(`${summary} (SOC unknown)`);
-  if (snapshot.averageSOC >= DC_IDLE_MAX_SOC_PERCENT) return indeterminate(`${summary} (full-battery float hold)`);
+  if (fullPackHallTooHigh(snapshot.averageSOC, hallWatts)) {
+    return indeterminate(`${summary} (full pack, hall not near zero: could be a float hold)`);
+  }
   return { observation: "failing", detail: summary };
 }
 
@@ -194,7 +208,7 @@ export function evaluateBuyWindowNotCharging(snapshot: InverterStuckSnapshot): R
 
   const commandedAmps = snapshot.commandedChargingAmps ?? 0;
   const commandedWatts = commandedAmps * values.battery_voltage;
-  const notCheckableBecause = buyCheckExclusion(snapshot, commandedWatts, values.battery_voltage);
+  const notCheckableBecause = buyCheckExclusion(snapshot, commandedWatts, values.battery_voltage, hallWatts);
   if (notCheckableBecause) {
     return batteryFlowEvidence(values, hallWatts)
       ? { observation: "healthy", detail: `battery flowing at ${Math.round(hallWatts)} W (${notCheckableBecause})` }
@@ -215,15 +229,32 @@ export function evaluateBuyWindowNotCharging(snapshot: InverterStuckSnapshot): R
 function buyCheckExclusion(
   snapshot: InverterStuckSnapshot,
   commandedWatts: number,
-  batteryVolts: number
+  batteryVolts: number,
+  hallWatts: number
 ): string | undefined {
   if (commandedWatts < BUY_CHECK_MIN_COMMANDED_WATTS) return `no buy window above ${BUY_CHECK_MIN_COMMANDED_WATTS} W`;
   if (!snapshot.acChargingEnabledOnInverter) return "AC charging not confirmed on the inverter yet";
   if (batteryVolts >= BUY_CHECK_MAX_BATTERY_VOLTS) return `battery at ${batteryVolts} V is held near CV`;
   if (batteryVolts <= DC_IDLE_MIN_BATTERY_VOLTS) return `battery at ${batteryVolts} V is in the low-voltage cut-off`;
   if (snapshot.averageSOC === undefined) return "SOC unknown";
-  if (snapshot.averageSOC >= BUY_CHECK_MAX_SOC_PERCENT) return `SOC ${Math.round(snapshot.averageSOC)}% is full`;
+  if (fullPackHallTooHigh(snapshot.averageSOC, hallWatts)) {
+    return `SOC ${Math.round(snapshot.averageSOC)}% with the hall at ${Math.round(hallWatts)} W could be a full pack's hold`;
+  }
   return undefined;
+}
+
+function fullPackHallTooHigh(averageSOC: number, hallWatts: number): boolean {
+  return averageSOC >= HIGH_SOC_PERCENT && Math.abs(hallWatts) >= HIGH_SOC_IDLE_MAX_HALL_WATTS;
+}
+
+/**
+ * Rules B and C can't run without the hall (current_measuring disabled, or the ADC loop errored and
+ * is restarting); the wiring warns when that persists while the inverter itself is still talking.
+ */
+export function hallBlindWhileInverterTalks(snapshot: InverterStuckSnapshot): boolean {
+  const batteryVoltage = snapshot.inverter.battery_voltage;
+  const inverterTalking = !!batteryVoltage && snapshot.nowMs - batteryVoltage.time <= INVERTER_READING_MAX_AGE_MS;
+  return inverterTalking && freshHallWatts(snapshot) === undefined;
 }
 
 /** Positive proof the battery converter is alive: the inverter's own report, or flow the hall clearly sees. */

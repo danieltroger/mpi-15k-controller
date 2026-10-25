@@ -117,7 +117,10 @@ export type AlertingConfig = {
   inverter_stuck_sustain_minutes: number;
   /** How long a confirmed grid-charge window may go without the battery charging before the P2 */
   inverter_stuck_buy_window_sustain_minutes: number;
-  /** Escalate to a P1 (pages through Do Not Disturb) when still stuck this long after the P2; 0 = never */
+  /**
+   * Escalate to a P1 (pages through Do Not Disturb) when a signature is still observed failing this
+   * long after the P2, never once a fix has shown up; 0 = never
+   */
   inverter_stuck_p1_after_minutes: number;
   /** Forward every errorLog() as a deduped P2 */
   error_log_p2: boolean;

@@ -453,7 +453,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["alerting", "inverter_stuck_sustain_minutes"],
         "Idle / PV-stall delay",
-        "How long the battery-idle or PV-stalled picture must hold before alerting. In October 2026 it would have alerted 35 min after the inverter stopped.",
+        "How long the battery-idle or PV-stalled picture must hold before alerting. Replaying October 2026, it alerts 31 min after the inverter stopped.",
         { unit: "min", min: 1 }
       ),
       f(
@@ -465,7 +465,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["alerting", "inverter_stuck_p1_after_minutes"],
         "Escalate to P1 after",
-        "Page as P1 (rings through Do Not Disturb) if it is still stuck this long after the first alert. 0 = never escalate.",
+        "Page as P1 (rings through Do Not Disturb) if it is still seen stuck this long after the first alert; never once a fix has shown up. 0 = never escalate.",
         { unit: "min", min: 0 }
       ),
       f(["alerting", "error_log_p2"], "Forward error logs", "Send every backend errorLog() as a deduplicated P2.", {

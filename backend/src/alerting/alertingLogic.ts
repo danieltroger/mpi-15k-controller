@@ -52,6 +52,22 @@ export function decideSend(input: {
   return "send";
 }
 
+const COOLDOWN_ENTRY_RETENTION_MS = 7 * 86_400_000;
+
+/**
+ * Cooldown entries that can no longer suppress anything. Keys aren't a fixed set (test-alert-<ms>
+ * per press, inverter-stuck:<onset> per episode), so without pruning alert_state.json would only
+ * ever grow. A week keeps every entry far past any sane cooldown.
+ */
+export function expiredCooldownKeys(
+  lastSentByKey: ReadonlyMap<string, { atMs: number }>,
+  nowMs: number,
+  cooldownMs: number
+): string[] {
+  const retentionMs = Math.max(cooldownMs, COOLDOWN_ENTRY_RETENTION_MS);
+  return [...lastSentByKey].filter(([, entry]) => nowMs - entry.atMs > retentionMs).map(([key]) => key);
+}
+
 /**
  * Dedupe key for forwarded errorLog() calls: the same logical error must map to the same key even
  * when it embeds timestamps, readings or ports, so digits collapse to '#'. Two args are enough
