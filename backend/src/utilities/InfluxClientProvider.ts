@@ -32,8 +32,10 @@ export function InfluxClientProvider(props: { children: JSX.Element; config: Acc
   });
 }
 
+export type InfluxClientAccessor = Accessor<Influx.InfluxDB | undefined>;
+
 /** Shared InfluxDB client accessor; undefined until the influxdb settings are fully configured. */
-export function useInfluxClient() {
+export function useInfluxClient(): InfluxClientAccessor {
   const contextValue = useContext(InfluxClientContext);
   if (!contextValue) {
     throw new Error("useInfluxClient must be used within an InfluxClientProvider");
