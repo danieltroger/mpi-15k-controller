@@ -10,7 +10,7 @@ import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
 import Influx from "influx";
-import { default_config } from "../config/config.ts";
+import { default_config, mergeWithDefaults } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedValues.ts";
 import { fetchPrices } from "./priceService.ts";
@@ -46,11 +46,17 @@ if (soc === undefined) {
 console.log(`\n=== Plan preview: SOC ${soc.toFixed(1)}%, area ${at.price_area} ===\n`);
 
 const prices = await fetchPrices(at.price_area);
-const solar = await fetchSolarForecast(
-  at.latitude,
-  at.longitude,
-  at.solar_model.watts_per_direct_radiation,
-  at.solar_model.watts_per_diffuse_radiation
+// Same merge the live config does, so a config.json predating the physical solar model still previews
+const tradingConfig = mergeWithDefaults(config).automatic_trading;
+const solar = await fetchSolarForecast(tradingConfig, influxClient);
+console.log(
+  `Solar: ${solar.model === "fitted" ? "fitted model" : "DEFAULT MASK (no fitted state)"} — daily kWh`,
+  Object.entries(solar.dailyKwh)
+    .map(([day, kwh]) => `${day}: ${kwh.toFixed(1)}`)
+    .join(", "),
+  "| snow nowcast",
+  JSON.stringify(solar.nowcast),
+  "\n"
 );
 const elpatronConfig = { ...default_config.elpatron_switching, ...config.elpatron_switching };
 const elpatron = await fetchElpatronForecast({
@@ -75,6 +81,7 @@ const input: PlannerInput = {
   nowMs: Date.now(),
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
+  solarAverageWattsBetween: solar.averageWattsBetween,
   houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
   parasiticWatts: inverterIdleWatts(config),
   socPercent: soc,

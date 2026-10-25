@@ -26,3 +26,8 @@ alert_state.json
 backend/alert_state.json
 inverter_stuck_state.json
 backend/inverter_stuck_state.json
+solar_model_state.json
+backend/solar_model_state.json
+backend/solar_cache/
+backend/solar_model_state.json.tmp
+solar_model_state.json.tmp

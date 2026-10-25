@@ -322,39 +322,111 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         { unit: "W" }
       ),
       f(
-        ["automatic_trading", "solar_model", "watts_per_direct_radiation"],
-        "Direct radiation coefficient",
-        "PV watts produced per W/m² of direct radiation — fitted against actual production.",
-        { heading: "Solar model (locally calibrated)" }
+        ["automatic_trading", "solar_model", "string1", "tilt_degrees"],
+        "String 1 (MPPT1) tilt",
+        "Panel tilt from horizontal (owner-measured). Changing it discards the learned shading mask until the next refit (retried every 3 hours).",
+        {
+          unit: "°",
+          min: 0,
+          max: 90,
+          heading: "Solar model (physical, per string)",
+        }
       ),
       f(
-        ["automatic_trading", "solar_model", "watts_per_diffuse_radiation"],
-        "Diffuse radiation coefficient",
-        "PV watts produced per W/m² of diffuse radiation — fitted against actual production."
+        ["automatic_trading", "solar_model", "string1", "azimuth_degrees"],
+        "String 1 (MPPT1) facing",
+        "Compass direction the panels face: 180 = south, 270 = west. Changing it discards the learned shading mask until the next refit.",
+        { unit: "°", min: 0, max: 360 }
       ),
       f(
-        ["automatic_trading", "solar_model", "refit_interval_days"],
+        ["automatic_trading", "solar_model", "string1", "nameplate_kwp"],
+        "String 1 (MPPT1) nameplate",
+        "Module nameplate total. Only a plausibility bound for the fitted capacity (a fit outside 50–105 % of it pages) — never used to predict.",
+        { unit: "kWp" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string1", "max_current_amps"],
+        "String 1 (MPPT1) current cap",
+        "The MPPT input's current limit; the model caps power at this × the typical MPP voltage. It has never bound in the history (max 10-min mean 22.65 A).",
+        { unit: "A" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string1", "typical_mpp_volts"],
+        "String 1 (MPPT1) MPP voltage",
+        "Typical string voltage at full power, for the current cap above.",
+        { unit: "V" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string2", "tilt_degrees"],
+        "String 2 (MPPT2) tilt",
+        "Panel tilt from horizontal (owner-measured). Changing it discards the learned shading mask until the next refit (retried every 3 hours).",
+        {
+          unit: "°",
+          min: 0,
+          max: 90,
+        }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string2", "azimuth_degrees"],
+        "String 2 (MPPT2) facing",
+        "Compass direction the panels face: 180 = south, 270 = west. Changing it discards the learned shading mask until the next refit.",
+        { unit: "°", min: 0, max: 360 }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string2", "nameplate_kwp"],
+        "String 2 (MPPT2) nameplate",
+        "Module nameplate total. Only a plausibility bound for the fitted capacity (a fit outside 50–105 % of it pages) — never used to predict.",
+        { unit: "kWp" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string2", "max_current_amps"],
+        "String 2 (MPPT2) current cap",
+        "The MPPT input's current limit; the model caps power at this × the typical MPP voltage. It has never bound in the history (max 10-min mean 22.65 A).",
+        { unit: "A" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "string2", "typical_mpp_volts"],
+        "String 2 (MPPT2) MPP voltage",
+        "Typical string voltage at full power, for the current cap above.",
+        { unit: "V" }
+      ),
+      f(
+        ["automatic_trading", "solar_model", "rewired_at"],
+        "Re-wiring date",
+        "Before this instant MPPT1 and MPPT2 were the two halves of string 1's roof, so the history counts both as string 1 and string 2 starts here. Empty = never re-wired."
+      ),
+      f(
+        ["automatic_trading", "solar_model", "history_start"],
+        "History start",
+        "Oldest production history the refit learns from (the shading mask needs at least a full year of sun positions)."
+      ),
+      f(
+        ["automatic_trading", "solar_model", "refit_every_days"],
         "Refit interval",
-        "Re-fit the two coefficients against actual production every N days (0 = never) — sun angles drift with the season.",
-        { unit: "days" }
+        "Re-learn capacity, sky factor and shading mask from all history this often (at night, in a separate process so the controller never stalls). Fit state lives in backend/solar_model_state.json.",
+        { unit: "days", min: 1 }
       ),
       f(
-        ["automatic_trading", "solar_model", "last_fitted_at"],
-        "Last fitted",
-        "When the model was last calibrated (written by the fitter).",
-        { readonly: true }
+        ["automatic_trading", "solar_model", "mask_half_life_days"],
+        "Recency half-life",
+        "An observation this old counts half in the refit. The trees have stopped growing, so the mask is nearly static; a cut-down tree is learned within one season of sun passing that sector. 0 = all history equal.",
+        { unit: "days", min: 0 }
       ),
       f(
-        ["automatic_trading", "solar_model", "fit_r2"],
-        "Fit quality",
-        "R² of the last calibration — 1 is a perfect fit (written by the fitter).",
-        { readonly: true }
+        ["automatic_trading", "solar_model", "mask_irradiance_source"],
+        "Mask irradiance",
+        "What the shading mask is fitted against. Satellite (EUMETSAT SARAH-3, ~2 days behind) is the best record of what the sun really did; the forecast archive is the automatic fallback and scored the same in the backtest.",
+        {
+          options: [
+            { value: "satellite", label: "Satellite (SARAH-3)" },
+            { value: "forecast_archive", label: "Forecast archive" },
+          ],
+        }
       ),
       f(
-        ["automatic_trading", "solar_model", "fit_samples"],
-        "Fit samples",
-        "Hours of production data behind the last fit (written by the fitter).",
-        { readonly: true }
+        ["automatic_trading", "solar_model", "snow_nowcast"],
+        "Snow nowcast",
+        "While the forecast says snow may be on the panels, scale each string down by its own recent production deficit (string 1 is never cleared, string 2 sometimes)."
       ),
     ],
   },
@@ -467,6 +539,28 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Escalate to P1 after",
         "Page as P1 (rings through Do Not Disturb) if it is still seen stuck this long after the first alert; never once a fix has shown up. 0 = never escalate.",
         { unit: "min", min: 0 }
+      ),
+      f(
+        ["alerting", "solar_forecast_accuracy_p2"],
+        "PV forecast accuracy",
+        "P2 when the day-ahead PV forecast has been badly off for a week, two daily checks in a row. One push per episode; snow and outage days don't count. Backtest: 1 push in 26 months, against 8 for the old model.",
+        { heading: "PV forecast accuracy" }
+      ),
+      f(
+        ["alerting", "solar_forecast_week_min_ratio"],
+        "Week too dark",
+        "…when actual/forecast PV over the last 7 days falls below this (only weeks forecasting at least 70 kWh).",
+        { min: 0, max: 1, step: 0.05 }
+      ),
+      f(["alerting", "solar_forecast_week_max_ratio"], "Week too bright", "…or rises above this.", {
+        min: 1,
+        step: 0.05,
+      }),
+      f(
+        ["alerting", "solar_forecast_week_max_error_share"],
+        "Week error share",
+        "…or the summed daily misses exceed this share of the week's forecast (at least 35 kWh as the base).",
+        { min: 0, step: 0.05 }
       ),
       f(["alerting", "error_log_p2"], "Forward error logs", "Send every backend errorLog() as a deduplicated P2.", {
         heading: "Delivery",
