@@ -11,6 +11,7 @@ import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
 import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
+import { batteryStateFeedingGate } from "./batteryStateFeedingGate.ts";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -32,6 +33,9 @@ export function feedWhenNoSolar({
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
+  // Wall clock via useNow() so the gate re-evaluates every tick; a forward NTP step at boot only ends
+  // the charging-unknown grace early, which is the safe direction.
+  const feedingStartedAt = Date.now();
   const { mqttValues } = useFromMqttProvider();
 
   const { $usbValues, queueSetter } = useInverterComms();
@@ -112,29 +116,27 @@ export function feedWhenNoSolar({
     const {
       full_battery_voltage,
       feed_from_battery_when_no_solar: {
-        disable_below_battery_voltage,
         allow_switching_to_solar_feeding_during_charging_x_volts_below_full,
         add_to_feed_below_when_currently_feeding,
         force_let_through_to_grid_over_pv_voltage1,
         force_let_through_to_grid_over_pv_voltage2,
       },
     } = config();
-    const batteryVoltage = reactiveBatteryVoltage();
-    const charging = isCharging();
+    // Unknown voltage/charging, the low-voltage cutoff, and the fallback for a SOC that stays unknown
+    // (InfluxDB down after a power cut) — see batteryStateFeedingGate.ts
+    const batteryGate = batteryStateFeedingGate({
+      batteryVoltage: reactiveBatteryVoltage(),
+      charging: isCharging(),
+      previousDecision: prev,
+      msSinceFeedingStarted: useNow() - feedingStartedAt,
+      ...config().feed_from_battery_when_no_solar,
+    });
+    if (batteryGate.settled) return doWithReason(batteryGate.decision, batteryGate.reason);
+    const { batteryVoltage, charging } = batteryGate;
     const startForceFeedingFromSolarAt =
       full_battery_voltage - allow_switching_to_solar_feeding_during_charging_x_volts_below_full;
-    // Wait for data to be known at program start before making a decision
-    if (batteryVoltage == undefined || charging == undefined) {
-      return doWithReason(prev, "battery voltage or charging unknown");
-    }
     if (batteryIsNearlyFull()) {
       return doWithReason(false, "battery is nearly full");
-    }
-    if (batteryVoltage <= disable_below_battery_voltage) {
-      return doWithReason(
-        false,
-        `battery voltage ${batteryVoltage}v is below disable threshold ${disable_below_battery_voltage}v`
-      );
     }
     if (
       // Switch back to feeding from solar already a bit before full to avoid a dip in harvested power, like here http://192.168.1.102:3000/d/cdhmg2rukhkw0d/first-dashboard?orgId=1&from=1716444771315&to=1716455606919
