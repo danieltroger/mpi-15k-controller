@@ -1,129 +1,146 @@
+import type Influx from "influx";
+import type { AutomaticTradingConfig } from "../config/config.types.ts";
 import { logLog, warnLog } from "../utilities/logging.ts";
+import { fetchLiveRadiation } from "../solar/openMeteoClient.ts";
+import { queryHourlyStringWatts } from "../solar/pvHistory.ts";
+import { defaultHorizonMask, type StringCoefficients } from "../solar/pvModel.ts";
+import { buildSolarForecast, SOLAR_STRING_KEYS, type BuiltSolarForecast } from "../solar/solarForecastModel.ts";
+import { loadSolarModelState } from "../solar/solarModelStore.ts";
+import { fittedGeometryMatches, stringGeometries } from "../solar/solarModelGeometry.ts";
+import type { RadiationHour, SolarModelState, SolarStringKey } from "../solar/solarModel.types.ts";
 
-const WEATHER_API_BASE = "https://api.open-meteo.com/v1/forecast";
-
-export type SolarForecast = {
-  /** Forecast PV production in watts for a given time (stepwise per hour). 0 outside the fetched range. */
-  wattsAt: (ms: number) => number;
+export type SolarForecast = BuiltSolarForecast & {
   fetchedAtMs: number;
-  rangeEndMs: number;
-  /** Daily kWh sums, keyed by YYYY-MM-DD (UTC), for logging/status */
-  dailyKwh: Record<string, number>;
+  /** "default_mask": no fit for the configured geometry yet — generic horizon instead of the learned shading */
+  model: "fitted" | "default_mask";
 };
 
-let cache: { key: string; value: SolarForecast } | undefined;
-
 /**
- * PV forecast from open-meteo direct + diffuse radiation with locally calibrated coefficients
- * (least-squares fit of actual inverter PV production vs open-meteo radiation history;
- * see automatic_trading.solar_model in the config).
+ * PV forecast for the planner from the physical per-string model (backend/src/solar/): open-meteo
+ * irradiance through each string's fitted geometry, capacity and shading mask, with a per-string
+ * snow nowcast from the last two weeks of production. Cached for an hour.
  */
 export async function fetchSolarForecast(
-  latitude: number,
-  longitude: number,
-  wattsPerDirect: number,
-  wattsPerDiffuse: number
+  tradingConfig: AutomaticTradingConfig,
+  influxClient: Influx.InfluxDB | undefined
 ): Promise<SolarForecast> {
-  const key = [latitude, longitude, wattsPerDirect, wattsPerDiffuse].join("/");
-  const maxAgeMs = 60 * 60 * 1000;
-  if (cache && cache.key === key && Date.now() - cache.value.fetchedAtMs < maxAgeMs) return cache.value;
+  const solarModel = tradingConfig.solar_model;
+  const stored = await loadSolarModelState();
+  const state = stored && fittedGeometryMatches(stored, solarModel) ? stored : undefined;
+  const key = JSON.stringify([tradingConfig.latitude, tradingConfig.longitude, solarModel, state?.fitted_at]);
+  if (cache && cache.key === key && Date.now() - cache.value.fetchedAtMs < CACHE_MAX_AGE_MS) return cache.value;
 
   let radiationHours: RadiationHour[];
   try {
-    radiationHours = await fetchRadiationByHour(latitude, longitude, { forecastDays: 4 });
-  } catch (e) {
+    radiationHours = await fetchLiveRadiation(tradingConfig.latitude, tradingConfig.longitude, {
+      pastDays: NOWCAST_HISTORY_DAYS,
+      forecastDays: FORECAST_DAYS,
+    });
+  } catch (error) {
     if (cache && cache.key === key) {
       warnLog(
         "Solar forecast fetch failed, using stale cache from",
         new Date(cache.value.fetchedAtMs).toISOString(),
-        e
+        error
       );
       return cache.value;
     }
-    throw e;
+    throw error;
   }
-
-  const byHourMs = new Map<number, number>();
-  const dailyKwh: Record<string, number> = {};
-  for (const { hourMs, direct, diffuse } of radiationHours) {
-    const watts = Math.max(0, wattsPerDirect * direct + wattsPerDiffuse * diffuse);
-    byHourMs.set(hourMs, watts);
-    const day = new Date(hourMs).toISOString().slice(0, 10);
-    dailyKwh[day] = (dailyKwh[day] ?? 0) + watts / 1000;
+  if (!state) {
+    warnLog(
+      "Solar forecast: no fitted model for the configured geometry yet — using the default horizon mask and 75 % of nameplate until the first refit"
+    );
   }
-  const rangeEndMs = Math.max(...byHourMs.keys()) + 3600_000;
-
-  const value: SolarForecast = {
-    wattsAt: ms => byHourMs.get(Math.floor(ms / 3600_000) * 3600_000) ?? 0,
-    fetchedAtMs: Date.now(),
-    rangeEndMs,
-    dailyKwh,
-  };
+  const nowMs = Date.now();
+  const recentActual = solarModel.snow_nowcast
+    ? await recentStringProduction(influxClient, nowMs, solarModel.rewired_at)
+    : undefined;
+  const geometries = stringGeometries(solarModel);
+  const strings = {} as Parameters<typeof buildSolarForecast>[0]["strings"];
+  for (const stringKey of SOLAR_STRING_KEYS) {
+    strings[stringKey] = {
+      tilt_degrees: geometries[stringKey].tilt_degrees,
+      azimuth_degrees: geometries[stringKey].azimuth_degrees,
+      coefficients: forecastCoefficients(
+        state,
+        stringKey,
+        solarModel[stringKey].nameplate_kwp,
+        geometries[stringKey].ceiling_watts
+      ),
+    };
+  }
+  const built = buildSolarForecast({
+    radiationHours,
+    nowMs,
+    latitude: tradingConfig.latitude,
+    longitude: tradingConfig.longitude,
+    strings,
+    recentActual,
+  });
+  const value: SolarForecast = { ...built, fetchedAtMs: nowMs, model: state ? "fitted" : "default_mask" };
   cache = { key, value };
+  const snowNotes = SOLAR_STRING_KEYS.filter(stringKey => built.nowcast[stringKey].gateOpen).map(
+    stringKey => `${stringKey} snow nowcast ×${built.nowcast[stringKey].ratio.toFixed(2)}`
+  );
   logLog(
     "Fetched solar forecast, daily kWh estimates:",
-    Object.entries(dailyKwh)
-      .map(([d, kwh]) => `${d}: ${kwh.toFixed(0)}`)
-      .join(", ")
+    Object.entries(built.dailyKwh)
+      .filter(([day]) => day >= new Date(nowMs).toISOString().slice(0, 10))
+      .map(([day, kwh]) => `${day}: ${kwh.toFixed(0)}`)
+      .join(", "),
+    snowNotes.length ? `(${snowNotes.join(", ")})` : ""
   );
   return value;
 }
 
-/** One open-meteo radiation reading, bucketed to the start of its UTC hour. */
-export type RadiationHour = { hourMs: number; direct: number; diffuse: number };
+let cache: { key: string; value: SolarForecast } | undefined;
+const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+/** Two weeks: deep-winter days give the nowcast only a few informative hours each */
+const NOWCAST_HISTORY_DAYS = 14;
+const FORECAST_DAYS = 4;
+/** Unfitted stand-in capacity: the fitted forecast k came out at 72–84 % of nameplate */
+const UNFITTED_CAPACITY_SHARE = 0.75;
 
-/**
- * Fetch open-meteo direct + diffuse radiation as one reading per UTC hour. Shared by the live PV
- * forecast (future hours, forecastDays) and the model calibration (trailing history, pastDays) so the
- * model is always fit on the exact same radiation signal it is later evaluated on — the requested
- * variables and endpoint live in one place and the two callers can't silently drift apart. Hours the
- * API reports as null are dropped.
- */
-export async function fetchRadiationByHour(
-  latitude: number,
-  longitude: number,
-  { pastDays, forecastDays }: { pastDays?: number; forecastDays?: number }
-): Promise<RadiationHour[]> {
-  const params = new URLSearchParams({
-    latitude: String(latitude),
-    longitude: String(longitude),
-    hourly: "direct_radiation,diffuse_radiation",
-    forecast_days: String(forecastDays ?? 1),
-    timezone: "UTC",
-  });
-  // open-meteo's forecast endpoint only serves ~3 months of history (currently 93 days);
-  // a longer window 400s (surfaced above) rather than being silently truncated
-  if (pastDays !== undefined) params.set("past_days", String(pastDays));
+function forecastCoefficients(
+  state: SolarModelState | undefined,
+  stringKey: SolarStringKey,
+  nameplateKwp: number,
+  ceilingWatts: number
+): StringCoefficients {
+  const fit = state?.strings[stringKey];
+  if (!fit) {
+    return {
+      k: nameplateKwp * UNFITTED_CAPACITY_SHARE,
+      sky_factor: 1,
+      mask: defaultHorizonMask(),
+      ceiling_watts: ceilingWatts,
+    };
+  }
+  return {
+    k: fit.forecast_k * fit.level_multiplier,
+    sky_factor: fit.forecast_sky_factor,
+    mask: fit.mask,
+    ceiling_watts: ceilingWatts,
+  };
+}
 
-  const controller = new AbortController();
-  // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
-  const timeout = setTimeout(() => controller.abort(), 60_000);
-  let data: any;
+/** Without recent production the nowcast stays neutral (factor 1) — never a reason to fail the forecast */
+async function recentStringProduction(
+  influxClient: Influx.InfluxDB | undefined,
+  nowMs: number,
+  rewiredAt: string
+): Promise<Map<number, Record<SolarStringKey, number>> | undefined> {
+  if (!influxClient) return undefined;
   try {
-    const response = await fetch(`${WEATHER_API_BASE}?${params}`, { signal: controller.signal });
-    if (!response.ok) {
-      console.error(
-        "Weather API response text",
-        await response.text(),
-        "headers",
-        Object.fromEntries(response.headers)
-      );
-      throw new Error(`Weather API returned ${response.status}`);
-    }
-    data = await response.json();
-  } finally {
-    clearTimeout(timeout);
+    return await queryHourlyStringWatts(
+      influxClient,
+      nowMs - NOWCAST_HISTORY_DAYS * 86_400_000,
+      nowMs,
+      rewiredAt ? Date.parse(rewiredAt) : Number.NaN
+    );
+  } catch (error) {
+    warnLog("Solar forecast: recent production unavailable, snow nowcast off for this forecast", error);
+    return undefined;
   }
-
-  const times: string[] = data.hourly.time;
-  const direct: (number | null)[] = data.hourly.direct_radiation;
-  const diffuse: (number | null)[] = data.hourly.diffuse_radiation;
-  const hours: RadiationHour[] = [];
-  for (let i = 0; i < times.length; i++) {
-    const directRadiation = direct[i];
-    const diffuseRadiation = diffuse[i];
-    if (directRadiation === null || diffuseRadiation === null) continue;
-    hours.push({ hourMs: +new Date(times[i] + ":00Z"), direct: directRadiation, diffuse: diffuseRadiation });
-  }
-  return hours;
 }

@@ -26,12 +26,14 @@ import { useShouldBuyPower } from "./buying/useShouldBuyPower.ts";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
 import { InverterCommsProvider, useInverterComms } from "./inverterComms/InverterCommsProvider.ts";
-import { InfluxClientProvider } from "./utilities/InfluxClientProvider.ts";
+import { InfluxClientProvider, useInfluxClient } from "./utilities/InfluxClientProvider.ts";
 import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 import { latestSpotPrices } from "./autoTrading/priceService.ts";
 import { pollSpotPricesForFrontend } from "./autoTrading/spotPricePolling.ts";
 import { alertOnMainCrash, createAlertManager } from "./alerting/alertManager.ts";
 import { startAlertRules } from "./alerting/alertRules.ts";
+import { startSolarModelRefits } from "./solar/solarRefitScheduler.ts";
+import { startSolarForecastAccuracy } from "./solar/solarForecastAccuracy.ts";
 
 while (true) {
   await new Promise<void>(r => {
@@ -168,6 +170,11 @@ function main() {
                       // is itself worth a push, which the errorLog hook provides.
                       e => errorLog("Alert rules crashed — alerting rules disabled until restart", e)
                     );
+
+                    // PV model upkeep: monthly refit (worker thread) + forecast-vs-actual logging and its rolling-week P2
+                    const influxClient = useInfluxClient();
+                    startSolarModelRefits({ config, influxClient });
+                    startSolarForecastAccuracy({ config, influxClient, raise: alertManager.raise });
 
                     const isCharging = createMemo(() => {
                       if (prematureWorkaroundErrored()) return;

@@ -1,0 +1,44 @@
+/**
+ * The rolling-week accuracy verdict (pure). Over the last 7 valid days of day-ahead forecasts:
+ * alarm when the week's actual/forecast ratio leaves [min_ratio, max_ratio] (only for weeks that
+ * forecast ≥ 70 kWh — dark weeks are all noise), or when the summed daily misses exceed
+ * max_error_share of the week's forecast (floored at 35 kWh). Defaults from the 26-month backtest:
+ * p1/p99 of the weekly ratio were 0.80/1.38 and of the error share 0.04/0.49.
+ */
+export function judgeForecastWeek(
+  days: DailyForecastAccuracy[],
+  thresholds: { min_ratio: number; max_ratio: number; max_error_share: number }
+): ForecastWeekVerdict | undefined {
+  const week = days.slice(-WEEK_DAYS);
+  if (week.length < MIN_VALID_DAYS) return undefined;
+  const forecastKwh = week.reduce((sum, day) => sum + day.forecast_kwh, 0);
+  const actualKwh = week.reduce((sum, day) => sum + day.actual_kwh, 0);
+  const missedKwh = week.reduce((sum, day) => sum + Math.abs(day.actual_kwh - day.forecast_kwh), 0);
+  const ratio = forecastKwh > 0 ? actualKwh / forecastKwh : Number.NaN;
+  const errorShare = missedKwh / Math.max(forecastKwh, MIN_ERROR_SHARE_BASE_KWH);
+  const ratioOff = forecastKwh >= MIN_RATIO_WEEK_KWH && (ratio < thresholds.min_ratio || ratio > thresholds.max_ratio);
+  return {
+    alarm: ratioOff || errorShare > thresholds.max_error_share,
+    days: week.length,
+    forecast_kwh: forecastKwh,
+    actual_kwh: actualKwh,
+    ratio,
+    error_share: errorShare,
+  };
+}
+
+export type DailyForecastAccuracy = { date: string; actual_kwh: number; forecast_kwh: number };
+
+export type ForecastWeekVerdict = {
+  alarm: boolean;
+  days: number;
+  forecast_kwh: number;
+  actual_kwh: number;
+  ratio: number;
+  error_share: number;
+};
+
+const WEEK_DAYS = 7;
+const MIN_VALID_DAYS = 5;
+const MIN_RATIO_WEEK_KWH = 70;
+const MIN_ERROR_SHARE_BASE_KWH = 35;

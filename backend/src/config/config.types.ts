@@ -58,16 +58,49 @@ export type AutomaticTradingConfig = {
   replan_retry_minutes: number;
   /** House load assumption if InfluxDB history is unavailable */
   fallback_house_load_watts: number;
-  /** Locally calibrated PV model: watts produced per W/m² of open-meteo radiation */
-  solar_model: {
-    watts_per_direct_radiation: number;
-    watts_per_diffuse_radiation: number;
-    /** Re-fit the coefficients against actual production every N days (0 = never) */
-    refit_interval_days: number;
-    last_fitted_at?: string;
-    fit_r2?: number;
-    fit_samples?: number;
-  };
+  /** Physical per-string PV model (backend/src/solar/) — geometry and knobs; the fitted state lives in solar_model_state.json */
+  solar_model: SolarModelConfig;
+};
+
+/** One PV string = one MPPT input. Owner-measured geometry; the monthly refit learns k, the sky factor and the shading mask. */
+export type SolarStringSpec = {
+  /** Panel tilt from horizontal */
+  tilt_degrees: number;
+  /** Compass direction the panels face: 180 = south, 270 = west, 300 = west-north-west */
+  azimuth_degrees: number;
+  /** Module nameplate total — only a plausibility bound for the fitted capacity, never used to predict */
+  nameplate_kwp: number;
+  /**
+   * The MPPT input's current limit (23 A per connector in the manual). The model caps power at
+   * max_current_amps × typical_mpp_volts; it has never bound in the history (max 10-min mean 22.65 A).
+   */
+  max_current_amps: number;
+  typical_mpp_volts: number;
+};
+
+export type SolarModelConfig = {
+  /** MPPT1 (solar_input_power_1) */
+  string1: SolarStringSpec;
+  /** MPPT2 (solar_input_power_2) */
+  string2: SolarStringSpec;
+  /**
+   * The strings were re-wired at this instant: before it MPPT1 and MPPT2 were the two halves of
+   * string 1's roof (so string 1 = MPPT1 + MPPT2 and string 2 has no history). Empty = never re-wired.
+   */
+  rewired_at: string;
+  /** Oldest production history the refit reads (ISO date) */
+  history_start: string;
+  /** Re-fit the mask and capacities against actual production this often */
+  refit_every_days: number;
+  /**
+   * Recency weighting of the refit: an observation this old counts half. Trees that stopped growing
+   * make the mask nearly static; a cut-down tree is learned within one season of sun passing that sector.
+   */
+  mask_half_life_days: number;
+  /** Irradiance the mask is fitted on: satellite (EUMETSAT SARAH-3, 2-day delay) or the forecast archive */
+  mask_irradiance_source: "satellite" | "forecast_archive";
+  /** Scale the forecast down per string while snow is likely on the panels, from each string's own recent production */
+  snow_nowcast: boolean;
 };
 
 export type AlertingConfig = {
@@ -122,6 +155,17 @@ export type AlertingConfig = {
    * long after the P2, never once a fix has shown up; 0 = never
    */
   inverter_stuck_p1_after_minutes: number;
+  /**
+   * P2 when the day-ahead PV forecast has been badly off for a week (rolling 7 days, two evaluations
+   * in a row): it would have fired twice in 26 months of backtest, the old linear model 13 times.
+   */
+  solar_forecast_accuracy_p2: boolean;
+  /** …when actual/forecast PV over the week falls below this (only weeks forecasting ≥ 70 kWh) */
+  solar_forecast_week_min_ratio: number;
+  /** …or rises above this */
+  solar_forecast_week_max_ratio: number;
+  /** …or the summed daily misses exceed this share of the week's forecast (min 35 kWh) */
+  solar_forecast_week_max_error_share: number;
   /** Forward every errorLog() as a deduped P2 */
   error_log_p2: boolean;
   /**

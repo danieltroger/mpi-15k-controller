@@ -18,7 +18,6 @@ import {
   loadAutoTraderState,
   saveAutoTraderState,
 } from "./autoTraderState.ts";
-import { maybeRefitSolarModel } from "./solarCalibration.ts";
 import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
 import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.ts";
@@ -94,7 +93,6 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
       refreshStatus(ctx);
       dailyTimer = setTimeout(async () => {
         await runPlanWithRecovery(ctx, "daily", true);
-        void maybeRefitSolarModel(ctx.config, ctx.setConfig, ctx.influxClient);
         void settleRecentDays(
           ctx.influxClient(),
           untrack(config).automatic_trading.price_area,
@@ -334,12 +332,7 @@ async function buildPlannerInput(
 ): Promise<PlannerInput> {
   const tradingConfig = cfg.automatic_trading;
   const nowMs = Date.now();
-  const solar = await fetchSolarForecast(
-    tradingConfig.latitude,
-    tradingConfig.longitude,
-    tradingConfig.solar_model.watts_per_direct_radiation,
-    tradingConfig.solar_model.watts_per_diffuse_radiation
-  );
+  const solar = await fetchSolarForecast(tradingConfig, ctx.influxClient());
   // The water heater element is our own scheduled load, not a forecastable one: model it forward
   // and strip its share out of the learned baseline so it isn't counted twice
   const elpatron = await fetchElpatronForecast({

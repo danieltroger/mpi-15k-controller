@@ -3,7 +3,7 @@ import { batch, createEffect, createSignal, type Owner, runWithOwner, type Signa
 import path from "path";
 import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import type { Config } from "./config.types.ts";
+import type { AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -33,6 +33,11 @@ export const default_config: Config = {
     inverter_stuck_sustain_minutes: 30,
     inverter_stuck_buy_window_sustain_minutes: 5,
     inverter_stuck_p1_after_minutes: 0,
+    // Backtested over 26 months: fires on a snow week and one forecast-miss week, never on normal weather
+    solar_forecast_accuracy_p2: true,
+    solar_forecast_week_min_ratio: 0.65,
+    solar_forecast_week_max_ratio: 1.5,
+    solar_forecast_week_max_error_share: 0.55,
     error_log_p2: true,
     trading_guard_p2: false,
     digest_p3: true,
@@ -76,12 +81,30 @@ export const default_config: Config = {
     opportunistic_replan_min_gain_sek: 5,
     replan_retry_minutes: 15,
     fallback_house_load_watts: 550,
-    // Least-squares fit of inverter PV production vs open-meteo direct/diffuse radiation (June 2026).
-    // Sun angles shift over the year — worth re-fitting seasonally (see planPreview/backtest tooling).
+    // Owner-measured geometry (2026-10). The data agree: free fits land at 30–40° / 180° for string 1
+    // and 40–45° / 290–310° for string 2 (see the solar model PR for the backtest).
     solar_model: {
-      watts_per_direct_radiation: 9.95,
-      watts_per_diffuse_radiation: 16.4,
-      refit_interval_days: 14,
+      string1: {
+        tilt_degrees: 36,
+        azimuth_degrees: 180,
+        nameplate_kwp: 11.25,
+        max_current_amps: 23,
+        typical_mpp_volts: 460,
+      },
+      string2: {
+        tilt_degrees: 45,
+        azimuth_degrees: 300,
+        nameplate_kwp: 6.16,
+        max_current_amps: 23,
+        typical_mpp_volts: 580,
+      },
+      // Found in the data (MPPT1 current doubled, MPPT2 voltage 480 → 590 V) and confirmed by the owner
+      rewired_at: "2024-06-16T00:00:00Z",
+      history_start: "2024-04-01",
+      refit_every_days: 30,
+      mask_half_life_days: 365,
+      mask_irradiance_source: "satellite",
+      snow_nowcast: true,
     },
   },
   usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
@@ -167,7 +190,7 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but alerting, automatic_trading, elpatron_switching and soc_calculations
+ * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model), elpatron_switching and soc_calculations
  * merge one level deeper: knobs get added over time, and a config.json written before a knob
  * existed must still pick up its default (the planner, the elpatron load model and the SOC ledger
  * do raw arithmetic on these — a missing knob would silently NaN every projection;
@@ -177,12 +200,12 @@ export const default_config: Config = {
  * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the
  * spreads copy unknown keys straight through and nothing reads them.
  */
-function mergeWithDefaults(partial: Partial<Config>): Config {
+export function mergeWithDefaults(partial: Partial<Config>): Config {
   return {
     ...default_config,
     ...partial,
     alerting: { ...default_config.alerting, ...partial.alerting },
-    automatic_trading: { ...default_config.automatic_trading, ...partial.automatic_trading },
+    automatic_trading: mergeAutomaticTrading(partial.automatic_trading),
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
     soc_calculations: {
       ...default_config.soc_calculations,
@@ -195,6 +218,26 @@ function mergeWithDefaults(partial: Partial<Config>): Config {
           ...partial.soc_calculations?.ah_ledger?.soft_empty,
         },
       },
+    },
+  };
+}
+
+/**
+ * solar_model and its per-string specs are nested one more level, so they merge deeper too. Keys
+ * from the deleted linear model (watts_per_direct_radiation, fit_r2, …) still sit in older config
+ * files; the spread passes them through untouched and nothing reads them.
+ */
+function mergeAutomaticTrading(partial: Partial<AutomaticTradingConfig> | undefined): AutomaticTradingConfig {
+  const defaults = default_config.automatic_trading;
+  const partialSolarModel: Partial<SolarModelConfig> = partial?.solar_model ?? {};
+  return {
+    ...defaults,
+    ...partial,
+    solar_model: {
+      ...defaults.solar_model,
+      ...partialSolarModel,
+      string1: { ...defaults.solar_model.string1, ...partialSolarModel.string1 },
+      string2: { ...defaults.solar_model.string2, ...partialSolarModel.string2 },
     },
   };
 }
