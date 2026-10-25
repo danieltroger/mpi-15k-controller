@@ -29,7 +29,9 @@ export function runSolarRefitInChildProcess(
       ],
       // No Yarn PnP in the child: its import graph is built-ins and relative modules only, and the
       // PnP runtime alone is ~40 MB of RSS
-      env: { ...process.env, NODE_OPTIONS: "" },
+      // and none of the controller's UV_THREADPOOL_SIZE=32 (sized for the serial engine, #48): the
+      // child's few file reads need libuv's default 4 threads
+      env: { ...process.env, NODE_OPTIONS: "", UV_THREADPOOL_SIZE: "4" },
       serialization: "advanced",
       stdio: ["ignore", "inherit", "inherit", "ipc"],
     });
