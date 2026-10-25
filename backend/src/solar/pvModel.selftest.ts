@@ -331,8 +331,33 @@ const HOUR_MS = 3600_000;
   );
   const dip = episodeDecisions([false, true, true, true, false, true, true, true, false, false, false]);
   check("week alert: a one-day dip mid-episode doesn't push again", count(dip, "push") === 1, `(${dip.join(",")})`);
+  const gap = episodeDecisions([false, true, true, undefined, undefined, true, true, false, false, false]);
+  check(
+    "week alert: missing settlements mid-episode don't push again",
+    count(gap, "push") === 1 && count(gap, "resolve") === 1,
+    `(${gap.join(",")})`
+  );
   const single = episodeDecisions([false, true, false, false]);
   check("week alert: a single alarming day never pushes", count(single, "push") === 0);
+
+  // A non-alerting re-settlement of the push day (startup catch-up racing the 03:30 run) must not
+  // clear the flag: the point omits week_episode_pushed then, and InfluxDB keeps the earlier true
+  {
+    const writeMerged = (stored: Episode | undefined, next: Episode, alerting: boolean): Episode => ({
+      ...next,
+      pushed: alerting || next.pushed ? next.pushed : stored?.pushed ?? false,
+    });
+    const dayOne: Episode = { alarm: true, episode_open: false, clear_days: 0, pushed: false };
+    const scheduled = advanceWeekAlertEpisode({ alarm: true, alerting: true, previous: dayOne });
+    let dayTwo = writeMerged(undefined, { alarm: true, ...scheduled }, true);
+    const catchUp = advanceWeekAlertEpisode({ alarm: true, alerting: false, previous: dayOne });
+    dayTwo = writeMerged(dayTwo, { alarm: true, ...catchUp }, false);
+    const nextNight = advanceWeekAlertEpisode({ alarm: true, alerting: true, previous: dayTwo });
+    check(
+      "week alert: a silent re-settlement of the push day doesn't make the next night push again",
+      scheduled.decision === "push" && dayTwo.pushed && nextNight.decision === "none"
+    );
+  }
 
   // The real settle loop: every night yesterday settles with alerting, missing days up to 3 back
   // are backfilled first without alerting. The alarm holds from day 2, so day 3 opens the episode;

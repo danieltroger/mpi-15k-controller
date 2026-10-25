@@ -4,7 +4,7 @@
  *   yarn node src/solar/influxQuery.selftest.ts
  */
 import { describeError } from "./errorDescription.ts";
-import { influxHttpQuery } from "./influxQuery.ts";
+import { influxHttpQuery, influxQueryEndpoint } from "./influxQuery.ts";
 import { emptyRefitStatus, recordFailure } from "./solarRefit.ts";
 
 const fails: string[] = [];
@@ -49,6 +49,22 @@ for (const host of ["192.168.1.1022", "192.168.1.102 ", "192.168.1.102:80860"]) 
     failure !== undefined && leaks.length === 0 && message.includes("invalid influxdb.host"),
     `(${message})`
   );
+}
+
+// ---------- hosts that must be accepted ----------
+for (const [host, expected] of [
+  ["influx_box.lan", "http://influx_box.lan:8086/query"],
+  ["192.168.1.102:8087", "http://192.168.1.102:8087/query"],
+  ["[fd00::102]", "http://[fd00::102]:8086/query"],
+  ["[fd00::102]:8087", "http://[fd00::102]:8087/query"],
+] as const) {
+  let endpoint = "";
+  try {
+    endpoint = influxQueryEndpoint(host).toString();
+  } catch (error) {
+    endpoint = `threw: ${describeError(error)}`;
+  }
+  check(`host: ${host} is accepted`, endpoint === expected, `(${endpoint})`);
 }
 
 // ---------- a good host: credentials only in the Authorization header ----------

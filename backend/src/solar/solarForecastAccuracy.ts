@@ -184,16 +184,19 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
     // InfluxDB rejects NaN — an all-zero forecast week has no ratio, but its error share still judges it
     if (verdict && Number.isFinite(verdict.ratio)) fields.week_ratio = Math.round(verdict.ratio * 1000) / 1000;
     if (verdict) fields.week_error_share = Math.round(verdict.error_share * 1000) / 1000;
+    const alerting = options.alert && config.alerting.solar_forecast_accuracy_p2;
     const episode = advanceWeekAlertEpisode({
       alarm: verdict?.alarm ?? false,
-      alerting: options.alert && config.alerting.solar_forecast_accuracy_p2,
+      alerting,
       previous: await previousWeekEpisode(influxClient, startMs),
     });
     // Written on every day so the next settlement can carry the episode forward
     fields.week_alarm = verdict?.alarm ?? false;
     fields.week_episode_open = episode.episode_open;
     fields.week_clear_days = episode.clear_days;
-    fields.week_episode_pushed = episode.pushed;
+    // A silent re-settlement of a day the scheduled run already pushed for must not clear the flag:
+    // InfluxDB merges fields of points with the same timestamp, so leaving it out keeps the earlier true
+    if (alerting || episode.pushed) fields.week_episode_pushed = episode.pushed;
     // Local noon, so the point lands unambiguously on its day in Grafana
     await influxClient.writePoints([
       { measurement: "solar_forecast_daily", fields, timestamp: new Date(startMs + 12 * 3600_000) },
@@ -207,7 +210,8 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
     );
     const decision = episode.decision;
     if (decision === "push") {
-      const weekSummary = verdict
+      // A late push (episode opened by a backfill) can land on a clear day — don't quote clear numbers then
+      const weekSummary = verdict?.alarm
         ? `Over the last ${verdict.days} valid days the panels made ${verdict.actual_kwh.toFixed(0)} kWh against a day-ahead forecast of ` +
           `${verdict.forecast_kwh.toFixed(0)} kWh (${Number.isFinite(verdict.ratio) ? `×${verdict.ratio.toFixed(2)}, ` : ""}daily misses ` +
           `${Math.round(verdict.error_share * 100)} % of the forecast; snow and outage days left out).`

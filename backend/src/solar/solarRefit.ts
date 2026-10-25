@@ -82,7 +82,8 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
     // A bug in judging or building the fit gets the same back-off and once-per-episode page as a failed child
     const failedStatus: SolarRefitStatus = structuredClone(stored?.refit ?? emptyRefitStatus());
     // Pages concludeRefit already sent before throwing stay recorded, so a retry doesn't repeat them
-    failedStatus.paged = { ...status.paged };
+    // (merged, not replaced: a re-arm concludeRefit did before throwing must not re-arm here)
+    failedStatus.paged = { ...failedStatus.paged, ...status.paged };
     recordFailure(failedStatus, { nowMs, incumbent, refit_every_days: solarModel.refit_every_days, error });
     const state: SolarModelState = { version: 2, fit: stored?.fit, refit: failedStatus };
     await persist(state);

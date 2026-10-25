@@ -59,15 +59,20 @@ export function influxQueryEndpoint(host: string): URL {
     );
   if (!HOST_PATTERN.test(host)) throw invalid();
   try {
-    return new URL("/query", host.includes(":") ? `http://${host}` : `http://${host}:${DEFAULT_PORT}`);
+    return new URL("/query", hasPort(host) ? `http://${host}` : `http://${host}:${DEFAULT_PORT}`);
   } catch {
     throw invalid(); // the parser's own message would only repeat the host
   }
 }
 
-/** Hostname or IPv4 with an optional port — no whitespace, userinfo, path or query */
-const HOST_PATTERN = /^[A-Za-z0-9.-]+(:[0-9]+)?$/;
+/** Hostname (underscores allowed, as some LAN names have them), IPv4, or [IPv6], with an optional port — no whitespace, userinfo, path or query */
+const HOST_PATTERN = /^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?$/;
 const DEFAULT_PORT = 8086;
+
+/** A port after the host — for [IPv6] only after the closing bracket */
+function hasPort(host: string): boolean {
+  return host.startsWith("[") ? /\]:[0-9]+$/.test(host) : host.includes(":");
+}
 
 type InfluxHttpResponse = {
   results?: { error?: string; series?: { columns: string[]; values: (number | string | boolean | null)[][] }[] }[];
