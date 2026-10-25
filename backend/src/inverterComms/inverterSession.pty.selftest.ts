@@ -113,9 +113,11 @@ async function runEndToEnd(): Promise<void> {
     session = createInverterSession({
       devicePath: device,
       poll_values_interval_seconds: () => 8,
+      // Harness speed only: the production quiet gap (12 s) / backoff (30 s) are unchanged. The
+      // silent strategy (any gap > 0) is what this run exercises; quietGapExperiment.pty covers 0.
+      quiet_gap_after_write_ms: () => 1_500,
       onDecodedRound: round => decodedRounds.push(round),
-      // Harness speed only: the production quiet gap (12 s) / backoff (30 s) are unchanged
-      schedulerTimingOverrides: { quietGapAfterWriteMs: 1_500, confirmBackoffMs: 3_000 },
+      schedulerTimingOverrides: { confirmBackoffMs: 3_000 },
     });
     return dispose;
   });

@@ -46,8 +46,14 @@ export const LINE_QUIET_MAX_WAIT_MS = 5_000;
 const ANOMALY_LOG_INTERVAL_MS = 60_000;
 
 export type AcceptedFrame = Exclude<ClassifiedFrame, { kind: "invalid" }>;
-/** `closed`: the exchange was abandoned because the owner closed the line — not a failure */
-export type ExchangeResult = { frame: AcceptedFrame } | { failed: string } | { closed: true };
+/**
+ * `closed`: the exchange was abandoned because the owner closed the line — not a failure.
+ * `answeredAfterWriteMs` runs from the write completion of the attempt that got the answer.
+ */
+export type ExchangeResult =
+  | { frame: AcceptedFrame; answeredAfterWriteMs: number; attempts: number }
+  | { failed: string }
+  | { closed: true };
 
 /** Cumulative counts since the session started — observability for harnesses and debugging */
 export type SerialExchangeCounters = {
@@ -123,13 +129,15 @@ export function createSerialExchange({
 type InFlightExchange = {
   expectation: ExchangeExpectation;
   description: string;
+  /** Monotonic ms when the frame's write completed */
+  writtenAtMs: number;
   rejectedFrameReasons: string[];
   settle: (outcome: SingleAttemptOutcome) => void;
   timer: ReturnType<typeof setTimeout> | undefined;
 };
 
 type SingleAttemptOutcome =
-  | { answered: AcceptedFrame }
+  | { answered: AcceptedFrame; answeredAfterWriteMs: number }
   | { timedOut: true; rejectedFrameReasons: string[] }
   | { closed: true };
 
@@ -175,7 +183,7 @@ async function exchangeWithRetry(
     if ("closed" in outcome) return { closed: true };
     if ("answered" in outcome) {
       if (attempt > 0) markLineNeedsQuiet(state); // the retry's own answer may still be on its way
-      return { frame: outcome.answered };
+      return { frame: outcome.answered, answeredAfterWriteMs: outcome.answeredAfterWriteMs, attempts: attempt + 1 };
     }
     rejectedAcrossAttempts.push(...outcome.rejectedFrameReasons);
     if (attempt < RESPONSE_RETRIES) {
@@ -213,10 +221,12 @@ async function exchangeOnce(
   await state.connection.write(frameBytes);
   if (state.closed) return { closed: true };
   state.counters.framesWritten++;
+  const writtenAtMs = performance.now();
   return new Promise<SingleAttemptOutcome>(resolve => {
     const inFlight: InFlightExchange = {
       expectation,
       description,
+      writtenAtMs,
       rejectedFrameReasons: [],
       settle: resolve,
       timer: undefined,
@@ -289,7 +299,7 @@ function handleIncomingBytes(state: ExchangeState, chunk: Buffer): void {
     state.counters.framesAccepted++;
     clearTimeout(inFlight.timer);
     state.inFlight = undefined;
-    inFlight.settle({ answered: classified });
+    inFlight.settle({ answered: classified, answeredAfterWriteMs: performance.now() - inFlight.writtenAtMs });
   }
 }
 

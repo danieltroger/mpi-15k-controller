@@ -4,6 +4,7 @@ import path from "path";
 import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
+import { QUIET_GAP_AFTER_WRITE_MS } from "../inverterComms/schedulerTiming.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -106,7 +107,11 @@ export const default_config: Config = {
       snow_nowcast: true,
     },
   },
-  usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 60 * 5 },
+  usb_parameter_setting: {
+    min_seconds_between_commands: 60,
+    poll_values_interval_seconds: 60 * 5,
+    quiet_gap_after_write_ms: QUIET_GAP_AFTER_WRITE_MS,
+  },
   scheduled_power_selling: {
     schedule: {
       "2024-08-25T22:00:00+02:00": { "end_time": "2024-08-25T22:02:00+02:00", power_watts: 1500 },
@@ -192,12 +197,14 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model), elpatron_switching,
- * scheduled_power_selling and soc_calculations merge one level deeper: knobs get added over time, and a config.json written before a knob
- * existed must still pick up its default (the planner, the elpatron load model and the SOC ledger
- * do raw arithmetic on these — a missing knob would silently NaN every projection;
- * a missing alerting threshold would silently never alert; a missing inverter-temperature limit
- * would silently never stop selling).
+ * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model),
+ * elpatron_switching, scheduled_power_selling, usb_parameter_setting and soc_calculations merge one
+ * level deeper: knobs get added over time, and a config.json written before a knob existed must
+ * still pick up its default (the planner, the elpatron load model and the SOC ledger do raw
+ * arithmetic on these — a missing knob would silently NaN every projection; a missing alerting
+ * threshold would silently never alert; a missing inverter-temperature limit would silently never
+ * stop selling; a missing usb_parameter_setting.quiet_gap_after_write_ms would leave the serial
+ * scheduler without its measured 12 s default).
  * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
  * predating it still boots with the validated defaults. Orphaned keys from the deleted Wh fitter
  * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the
@@ -228,6 +235,7 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
         : {}),
       ...partial.scheduled_power_selling,
     },
+    usb_parameter_setting: { ...default_config.usb_parameter_setting, ...partial.usb_parameter_setting },
     soc_calculations: {
       ...default_config.soc_calculations,
       ...partial.soc_calculations,

@@ -23,9 +23,11 @@ export function useInverterValues(config: Accessor<Config>) {
   const [$usbValues, setUsbValues] = createStore<UsbValues>({});
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
 
-  // No schedulerTimingOverrides: production runs the measured quiet-gap defaults (schedulerCore.ts)
+  // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts), and the
+  // quiet gap comes live from config
   const session = createInverterSession({
     poll_values_interval_seconds: createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds),
+    quiet_gap_after_write_ms: createMemo(() => config().usb_parameter_setting.quiet_gap_after_write_ms),
     onDecodedRound: round =>
       // One batch per round: consumers must never observe half a round. A BATS parse used to
       // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.

@@ -10,17 +10,19 @@ import {
   afterConfirmRun,
   afterPollRound,
   afterSetterSent,
-  CONFIRM_BACKOFF_MS,
   decideNextAction,
-  DEFAULT_SCHEDULER_TIMING,
-  IDENTICAL_SETTER_MIN_INTERVAL_MS,
   initialSchedulerState,
-  POLL_ROUND_GAP_AFTER_FAILURE_MS,
-  POLL_ROUND_GAP_MS,
-  QUIET_GAP_AFTER_WRITE_MS,
   withSetterDequeued,
   withSetterQueued,
 } from "./schedulerCore.ts";
+import {
+  CONFIRM_BACKOFF_MS,
+  DEFAULT_SCHEDULER_TIMING,
+  IDENTICAL_SETTER_MIN_INTERVAL_MS,
+  POLL_ROUND_GAP_AFTER_FAILURE_MS,
+  POLL_ROUND_GAP_MS,
+  QUIET_GAP_AFTER_WRITE_MS,
+} from "./schedulerTiming.ts";
 import { classifyFrame } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 
@@ -169,9 +171,9 @@ const bootTime = 1_000_000;
   state = retryResult.state;
   check(
     "unconfirmed write backs off",
-    retryResult.result.outcome === "retry" &&
-      retryResult.result.retryAt === confirmTime + CONFIRM_BACKOFF_MS &&
-      retryResult.result.failedChecks.length === 2
+    retryResult.result.retry?.retryAt === confirmTime + CONFIRM_BACKOFF_MS &&
+      retryResult.result.retry.pendingChecks.length === 2 &&
+      retryResult.result.gaveUpChecks.length === 0
   );
   const backoffDecision = decideNextAction(state, confirmTime + 1_000, SETTINGS_POLL_INTERVAL_MS);
   check(
@@ -184,7 +186,7 @@ const bootTime = 1_000_000;
   state = giveUpResult.state;
   check(
     "second failed confirm gives up",
-    giveUpResult.result.outcome === "gave_up" && giveUpResult.result.failedChecks.length === 2
+    giveUpResult.result.retry === undefined && giveUpResult.result.gaveUpChecks.length === 2
   );
   check("give-up clears the confirm phase", state.confirm === undefined);
   const afterGiveUp = decideNextAction(state, confirmTime + CONFIRM_BACKOFF_MS + 10, SETTINGS_POLL_INTERVAL_MS);
@@ -259,10 +261,7 @@ const bootTime = 1_000_000;
   state = afterSetterSent(state, "GPMP000950", ["GPMP"], bootTime, true);
   check("quiet-gap override is honoured", state.confirm!.dueAt === bootTime + 1_500);
   const retry = afterConfirmRun(state, { GPMP: { maximum_feeding_grid_power: 350 } }, bootTime + 1_600);
-  check(
-    "backoff override is honoured",
-    retry.result.outcome === "retry" && retry.result.retryAt === bootTime + 1_600 + 3_000
-  );
+  check("backoff override is honoured", retry.result.retry?.retryAt === bootTime + 1_600 + 3_000);
 }
 
 // ---------- multi-setter bursts merge into one confirm phase ----------
@@ -290,7 +289,9 @@ const bootTime = 1_000_000;
   const converged = afterConfirmRun(state, bothApplied, secondSentAt + QUIET_GAP_AFTER_WRITE_MS);
   check(
     "burst converges when both readbacks match",
-    converged.result.outcome === "converged" && converged.state.confirm === undefined
+    converged.result.confirmedChecks.length === 2 &&
+      converged.result.retry === undefined &&
+      converged.state.confirm === undefined
   );
 }
 
@@ -321,7 +322,9 @@ const bootTime = 1_000_000;
   const vacuous = afterConfirmRun(state, {}, bootTime + QUIET_GAP_AFTER_WRITE_MS);
   check(
     "checkless confirm converges vacuously (no false 'never applied' alarm)",
-    vacuous.result.outcome === "converged" && vacuous.state.confirm === undefined
+    vacuous.result.gaveUpChecks.length === 0 &&
+      vacuous.result.retry === undefined &&
+      vacuous.state.confirm === undefined
   );
 }
 
