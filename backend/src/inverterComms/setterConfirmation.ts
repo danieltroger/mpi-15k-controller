@@ -1,7 +1,7 @@
 /**
  * Maps each control write to the settings-query readback that proves the inverter actually
  * applied it — pure, no I/O. Needed because a PI17 ACK is only frame-level: the inverter commits
- * setters on an internal housekeeping cycle seconds later (see schedulerCore.ts for the measured
+ * setters on an internal housekeeping cycle seconds later (see schedulerTiming.ts for the measured
  * numbers), so "sent and ACKed" must never be confused with "in effect".
  */
 import type { DecodedFields, SettingsQueryCommandName } from "./pi17Protocol.types.ts";

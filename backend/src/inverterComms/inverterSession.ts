@@ -1,7 +1,8 @@
 /**
  * THE one persistent PI17 session: a single command mutex over the serial device, with priority
  * control writes > confirm queries > background polls, and the post-write quiet gap the inverter's
- * commit behaviour demands (see schedulerCore.ts for the measured numbers). Replaces both the
+ * commit behaviour demands (see schedulerTiming.ts for the measured numbers; the gap is the live
+ * knob usb_parameter_setting.quiet_gap_after_write_ms, 0 = keep polling). Replaces both the
  * external mpp-solar MQTT daemon and the per-command mpp-solar CLI spawns — and with them the
  * stop-daemon/run-CLI/start-daemon dance (5m48s MQTT blackout on 2026-07-18). No systemctl calls
  * anywhere in this path: the mpp-solar unit is retired at cutover.
@@ -9,13 +10,14 @@
  * Scheduling state lives in pure schedulerCore functions and wire-level exchange safety in
  * serialExchange.ts; this file is the async shell that runs the pump, decodes, gates implausible
  * rounds (plausibilityGate.ts) before any consumer sees them — escalating a persistent drop
- * (gateDropEscalation.ts) — plus the reactive surface (lastWriteAt / isOpen signals) for observers.
+ * (gateDropEscalation.ts) — measures every setter's ACK→commit (setterCommitTiming.ts), plus the
+ * reactive surface (lastWriteAt / isOpen signals) for observers.
  *
  * Shape: one SessionState object, module-level functions taking it (CLAUDE.md: no nested
  * function declarations). Scheduling times are monotonic (performance.now()); only the
  * externally visible timestamps (round decodedAt, lastWriteAt) are wall-clock.
  */
-import { type Accessor, createSignal, onCleanup, type Setter, untrack } from "solid-js";
+import { type Accessor, createEffect, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type {
   DecodedFields,
@@ -28,7 +30,8 @@ import { buildQueryFrame, buildSetterFrame } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 import { implausibleFieldsIn } from "./plausibilityGate.ts";
 import { afterGateAccept, afterGateDrop, type GateDropEpisodes } from "./gateDropEscalation.ts";
-import { createSerialExchange, type SerialExchange, type SerialExchangeCounters } from "./serialExchange.ts";
+import { createSerialExchange, type SerialExchange } from "./serialExchange.ts";
+import { logSessionStats, STATS_LOG_INTERVAL_MS, type InverterSessionCounters } from "./inverterSessionStats.ts";
 import { createRateLimitedWarnLog } from "../utilities/rateLimitedWarnLog.ts";
 import {
   afterConfirmRun,
@@ -41,17 +44,19 @@ import {
   withSetterDequeued,
   withSetterQueued,
   type SchedulerState,
-  type SchedulerTiming,
 } from "./schedulerCore.ts";
+import type { SchedulerTiming } from "./schedulerTiming.ts";
+import { quietGapFromConfig, schedulerWithQuietGapSetting } from "./quietGapSetting.ts";
+import {
+  reportAckedSetter,
+  reportConfirmOutcome,
+  type LineTraffic,
+  type SetterCommitTracker,
+} from "./setterCommitTiming.ts";
 import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
 
 /** Implausible rounds and decode problems log their first occurrence, then at most once a minute */
 const DROPPED_ROUND_LOG_INTERVAL_MS = 60_000;
-/**
- * Periodic counter deltas + poll cadence in the log: the anomaly warns are rate-limited, so this is
- * where "how many frames were rejected / rounds dropped, and how fast are rounds" is answered.
- */
-const STATS_LOG_INTERVAL_MS = 5 * 60_000;
 /** While the link is down, errorLog (a push candidate) at most this often; warnLog the rest */
 const FAILURE_ERRORLOG_INTERVAL_MS = 60_000;
 /** The continuous background poll: GS+PS every round, settings queries on their slower cadence */
@@ -60,18 +65,21 @@ const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HE
 
 export function createInverterSession({
   poll_values_interval_seconds,
+  quiet_gap_after_write_ms,
   onDecodedRound,
   devicePath = INVERTER_SERIAL_DEVICE,
   schedulerTimingOverrides = {},
 }: {
   /** Cadence of the slow settings poll — config().usb_parameter_setting.poll_values_interval_seconds */
   poll_values_interval_seconds: Accessor<number>;
+  /** config().usb_parameter_setting.quiet_gap_after_write_ms — live: a change applies from the next write */
+  quiet_gap_after_write_ms: Accessor<number>;
   /** Only ever called with rounds that passed the plausibility gate, and never after disposal */
   onDecodedRound: (round: DecodedRound) => void;
   /** Overridable only so harnesses can point the whole engine at a pty instead of the inverter */
   devicePath?: string;
-  /** Harnesses and the quiet-gap experiment only (see SchedulerTiming) — production passes nothing */
-  schedulerTimingOverrides?: Partial<SchedulerTiming>;
+  /** Harnesses only (they scale the windows down) — production passes nothing */
+  schedulerTimingOverrides?: Partial<Omit<SchedulerTiming, "quietGapAfterWriteMs">>;
 }) {
   const [lastWriteAt, setLastWriteAt] = createSignal<number | undefined>(undefined);
   const [serialIsOpen, setSerialIsOpen] = createSignal(false);
@@ -82,8 +90,14 @@ export function createInverterSession({
     setSerialIsOpen,
     // onOpen can only fire after stty's await, by when `state` is initialized
     serialExchange: createSerialExchange({ devicePath, onOpen: () => onSerialOpened(state) }),
-    scheduler: initialSchedulerState(schedulerTimingOverrides),
+    scheduler: initialSchedulerState({
+      ...schedulerTimingOverrides,
+      quietGapAfterWriteMs: quietGapFromConfig(untrack(quiet_gap_after_write_ms)),
+    }),
     queuedSetterItems: new Map(),
+    commitTracker: new Map(),
+    writesConfirmed: 0,
+    writesNeverApplied: 0,
     disposed: false,
     pumpWaiter: undefined,
     consecutiveTransactFailures: 0,
@@ -97,6 +111,10 @@ export function createInverterSession({
   };
   state.countersAtLastStatsLog = currentCounters(state);
   const statsTimer = setInterval(() => logStats(state), STATS_LOG_INTERVAL_MS);
+  createEffect(() => {
+    const configuredMs = quiet_gap_after_write_ms();
+    state.scheduler = schedulerWithQuietGapSetting(state.scheduler, configuredMs);
+  });
   void runPump(state);
 
   onCleanup(() => {
@@ -133,6 +151,9 @@ type SessionState = {
   scheduler: SchedulerState;
   /** The consumer items behind the scheduler's queued commands — always updated together */
   queuedSetterItems: Map<string, SetterQueueItem>;
+  commitTracker: SetterCommitTracker;
+  writesConfirmed: number;
+  writesNeverApplied: number;
   disposed: boolean;
   pumpWaiter: PumpWaiter | undefined;
   consecutiveTransactFailures: number;
@@ -144,11 +165,6 @@ type SessionState = {
   warnImplausibleRound: RateLimitedWarn;
   warnDecodeProblem: RateLimitedWarn;
   countersAtLastStatsLog: InverterSessionCounters | undefined;
-};
-
-type InverterSessionCounters = SerialExchangeCounters & {
-  droppedImplausibleRounds: number;
-  pollRoundsCompleted: number;
 };
 
 async function runPump(state: SessionState): Promise<void> {
@@ -265,13 +281,29 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
   }
   reportTransactSuccess(state);
   if (result.frame.kind === "ack") {
-    logLog("Inverter ACKed", command, "— confirming actual commit via readback after the quiet gap");
     state.scheduler = afterSetterSent(state.scheduler, command, refreshQueries, sentAt, true);
+    reportAckedSetter(
+      state.commitTracker,
+      {
+        command,
+        quietGapAfterWriteMs: state.scheduler.timing.quietGapAfterWriteMs,
+        ackLatencyMs: result.answeredAfterWriteMs,
+        ackAttempts: result.attempts,
+        ackedAtMs: sentAt,
+      },
+      state.scheduler.confirm,
+      lineTraffic(state)
+    );
     item?.onResult?.({ acknowledged: true });
     return;
   }
   if (result.frame.kind === "nak") {
-    errorLog("Inverter REJECTED (NAK)", command, "— settings unchanged");
+    errorLog(
+      "Inverter REJECTED (NAK)",
+      command,
+      "— settings unchanged",
+      `(answered in ${Math.round(result.answeredAfterWriteMs)} ms)`
+    );
   } else {
     // The setter expectation rejects data frames as late query responses — an attribution bug
     errorLog("Inverter answered setter", command, "with a data frame — treating as not applied");
@@ -288,24 +320,18 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
     if (fields) decodedByQuery[query] = fields;
   }
   if (state.disposed) return;
-  const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, performance.now());
+  const strategy = state.scheduler.confirm?.strategy;
+  const nowMs = performance.now();
+  const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, nowMs);
   state.scheduler = scheduler;
-  if (result.outcome === "converged" && result.confirmedChecks.length) {
-    logLog(
-      "Inverter write(s) confirmed applied:",
-      result.confirmedChecks.map(check => `${check.forCommand} → ${check.field}=${check.expectedValue}`).join(", ")
-    );
-  } else if (result.outcome === "retry") {
-    warnLog(
-      "Inverter write(s) not visible in readback yet — re-checking after quiet backoff:",
-      result.failedChecks.map(check => check.forCommand).join(", ")
-    );
-  } else if (result.outcome === "gave_up") {
-    errorLog(
-      "Inverter ACKed but never applied within quiet gap + backoff:",
-      result.failedChecks.map(check => `${check.forCommand} (wanted ${check.field}=${check.expectedValue})`).join(", "),
-      "— leaving any re-send to the owning control loop (rate-limited by the 60 s identical-setter gate)"
-    );
+  if (!strategy) {
+    // run_confirms is only ever decided from a confirm phase — reaching this is a scheduler bug
+    errorLog("Inverter session: ran confirm queries", queries.join(", "), "without a confirm phase");
+    return;
+  }
+  for (const record of reportConfirmOutcome(state.commitTracker, result, strategy, nowMs, lineTraffic(state))) {
+    if (record.verdict === "confirmed") state.writesConfirmed++;
+    if (record.verdict === "never_applied") state.writesNeverApplied++;
   }
 }
 
@@ -355,6 +381,13 @@ function reportTransactSuccess(state: SessionState): void {
   state.lastTransactFailureErrorLogAt = -Infinity;
 }
 
+function lineTraffic(state: SessionState): LineTraffic {
+  return {
+    pollRoundsCompleted: state.pollRoundsCompleted,
+    framesWritten: state.serialExchange.counters().framesWritten,
+  };
+}
+
 function onSerialOpened(state: SessionState): void {
   state.setSerialIsOpen(true);
   wakePump(state);
@@ -389,25 +422,13 @@ function currentCounters(state: SessionState): InverterSessionCounters {
     ...state.serialExchange.counters(),
     droppedImplausibleRounds: state.droppedImplausibleRounds,
     pollRoundsCompleted: state.pollRoundsCompleted,
+    writesConfirmed: state.writesConfirmed,
+    writesNeverApplied: state.writesNeverApplied,
   };
 }
 
 function logStats(state: SessionState): void {
   const counters = currentCounters(state);
-  const deltas = counterDeltas(counters, state.countersAtLastStatsLog ?? counters);
-  const intervalMinutes = STATS_LOG_INTERVAL_MS / 60_000;
-  logLog(
-    `Inverter serial stats, last ${intervalMinutes} min:`,
-    JSON.stringify(deltas),
-    `(${(deltas.pollRoundsCompleted / intervalMinutes).toFixed(1)} poll rounds/min)`
-  );
+  logSessionStats(counters, state.countersAtLastStatsLog ?? counters);
   state.countersAtLastStatsLog = counters;
-}
-
-function counterDeltas(current: InverterSessionCounters, previous: InverterSessionCounters): InverterSessionCounters {
-  const deltas = { ...current };
-  for (const key of Object.keys(current) as (keyof InverterSessionCounters)[]) {
-    deltas[key] = current[key] - previous[key];
-  }
-  return deltas;
 }

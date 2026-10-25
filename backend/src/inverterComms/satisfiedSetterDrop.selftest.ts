@@ -104,7 +104,7 @@ function setterSendsBetween(state: SchedulerState, fromMs: number, toMs: number)
   state = withSettingsReadback(state, "GPMP", gpmpReadback(290), seconds(13)); // not committed yet
   const confirm = afterConfirmRun(state, { GPMP: gpmpReadback(290) }, seconds(13));
   state = confirm.state;
-  check("setup: the confirm backs off", confirm.result.outcome === "retry");
+  check("setup: the confirm backs off", confirm.result.retry !== undefined);
   state = withSetterQueued(state, "GPMP000290", "GPMP0", seconds(14));
   check(
     "not dropped while a confirm on that field is pending",
@@ -268,7 +268,10 @@ function pumpSetters(state: SchedulerState, atMs: number, log: string[]): Schedu
   const afterConfirm = decideNextAction(converged.state, seconds(13.4), SETTINGS_POLL_INTERVAL_MS);
   check(
     "…and withdrawn once the confirm shows it applied",
-    converged.result.outcome === "converged" && afterConfirm.action === "drop_setter" && afterConfirm.command === "EDF1"
+    converged.result.confirmedChecks.length === 1 &&
+      converged.result.retry === undefined &&
+      afterConfirm.action === "drop_setter" &&
+      afterConfirm.command === "EDF1"
   );
   // Never applied: after the confirm gives up, the copy may go out — but not before the 60 s gate
   let gaveUp = withSettingsReadback(state, "HECS", hecsReadback("disabled", "disabled"), seconds(13.3));
