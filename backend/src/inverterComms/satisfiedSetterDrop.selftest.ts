@@ -144,6 +144,118 @@ function setterSendsBetween(state: SchedulerState, fromMs: number, toMs: number)
   );
 }
 
+// ---------- delta review: HECS readbacks are trusted per field, not per query ----------
+const hecsReadback = (feedNormal: string, feedLoss: string, acCharge = "disabled") => ({
+  battery_discharge_to_feed_grid_when_solar_input_normal: feedNormal,
+  battery_discharge_to_feed_grid_when_solar_input_loss: feedLoss,
+  ac_charge_battery: acCharge,
+});
+/** The pump's decisions at `atMs` until it would wait/poll/confirm: drops applied, setters "sent" and ACKed */
+function pumpSetters(state: SchedulerState, atMs: number, log: string[]): SchedulerState {
+  let current = state;
+  for (let iteration = 0; iteration < 20; iteration++) {
+    const decision = decideNextAction(current, atMs, SETTINGS_POLL_INTERVAL_MS);
+    if (decision.action === "drop_setter") {
+      log.push(`drop ${decision.command}@${atMs / 1000}s`);
+      current = withSetterDequeued(current, decision.command);
+    } else if (decision.action === "send_setter") {
+      log.push(`send ${decision.command}@${atMs / 1000}s`);
+      current = afterSetterSent(withSetterDequeued(current, decision.command), decision.command, ["HECS"], atMs, true);
+    } else {
+      return current;
+    }
+  }
+  throw new Error("pump did not settle");
+}
+{
+  // Evening feed starts with G already enabled; the effect re-runs 5 s into EDF1's quiet gap
+  const log: string[] = [];
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "enabled"), seconds(0));
+  state = withSetterQueued(state, "EDG1", "EDG", seconds(1));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1));
+  state = pumpSetters(state, seconds(1), log);
+  state = withSetterQueued(state, "EDG1", "EDG", seconds(6));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(6));
+  state = pumpSetters(state, seconds(6), log);
+  check(
+    "EDG1 re-queued 5 s into EDF1's quiet gap, G already enabled → dropped, not sent",
+    log.join(", ") === "drop EDG1@1s, send EDF1@1s, drop EDG1@6s",
+    log.join(", ")
+  );
+  check(
+    "…and the identical EDF1 re-queue stays behind its 60 s gate",
+    state.queuedSetters[0]?.notBefore === seconds(61)
+  );
+}
+{
+  // Buying's EDB0 queued during an EDF/EDG flip, the readback already showing AC charging disabled
+  const log: string[] = [];
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1));
+  state = withSetterQueued(state, "EDG1", "EDG", seconds(1));
+  state = pumpSetters(state, seconds(1), log);
+  state = withSetterQueued(state, "EDB0", "EDB", seconds(4));
+  state = pumpSetters(state, seconds(4), log);
+  check(
+    "EDB0 queued during an EDF/EDG flip, ac_charge_battery already disabled → dropped, not sent",
+    log.join(", ") === "send EDF1@1s, send EDG1@1s, drop EDB0@4s",
+    log.join(", ")
+  );
+}
+{
+  // Per field still means per field: a flag written after the readback can't be vouched for
+  const log: string[] = [];
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1));
+  state = pumpSetters(state, seconds(1), log);
+  state = withSetterQueued(state, "EDF0", "EDF", seconds(2)); // target flips back while EDF1 may still commit
+  state = pumpSetters(state, seconds(2), log);
+  check(
+    "EDF0 right after EDF1 is sent, although the older readback shows F disabled",
+    log.join(", ") === "send EDF1@1s, send EDF0@2s",
+    log.join(", ")
+  );
+}
+
+// ---------- delta review: an identical re-queue made while that setter is on the wire ----------
+{
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1));
+  const firstDecision = decideNextAction(state, seconds(1), SETTINGS_POLL_INTERVAL_MS);
+  check("setup: EDF1 is sent at t=1", firstDecision.action === "send_setter" && firstDecision.command === "EDF1");
+  state = withSetterDequeued(state, "EDF1"); // the session dequeues, then awaits the exchange…
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1.2)); // …during which the effect re-queues it
+  state = afterSetterSent(state, "EDF1", ["HECS"], seconds(1.3), true); // ACK at t=1.3
+  const afterAck = decideNextAction(state, seconds(1.3), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "the copy re-queued mid-send is not sent at t=1.3 (re-gated from this send)",
+    afterAck.action !== "send_setter" && state.queuedSetters[0]?.notBefore === seconds(61.3),
+    `${JSON.stringify(afterAck)} queued ${JSON.stringify(state.queuedSetters)}`
+  );
+  // Converged: the confirm readback shows F enabled → the copy is withdrawn
+  const converged = afterConfirmRun(
+    withSettingsReadback(state, "HECS", hecsReadback("enabled", "disabled"), seconds(13.3)),
+    { HECS: hecsReadback("enabled", "disabled") },
+    seconds(13.3)
+  );
+  const afterConfirm = decideNextAction(converged.state, seconds(13.4), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "…and withdrawn once the confirm shows it applied",
+    converged.result.outcome === "converged" && afterConfirm.action === "drop_setter" && afterConfirm.command === "EDF1"
+  );
+  // Never applied: after the confirm gives up, the copy may go out — but not before the 60 s gate
+  let gaveUp = withSettingsReadback(state, "HECS", hecsReadback("disabled", "disabled"), seconds(13.3));
+  gaveUp = afterConfirmRun(gaveUp, { HECS: hecsReadback("disabled", "disabled") }, seconds(13.3)).state;
+  gaveUp = withSettingsReadback(gaveUp, "HECS", hecsReadback("disabled", "disabled"), seconds(43.3));
+  gaveUp = afterConfirmRun(gaveUp, { HECS: hecsReadback("disabled", "disabled") }, seconds(43.3)).state;
+  const sendsAfterGiveUp = setterSendsBetween(gaveUp, seconds(44), seconds(70));
+  check(
+    "…or, if it never applied, re-sent no earlier than 60 s after the previous send",
+    sendsAfterGiveUp.length === 1 && sendsAfterGiveUp[0] === "EDF1@62s",
+    sendsAfterGiveUp.join(", ")
+  );
+}
+
 console.log(
   `\n${fails.length ? `${fails.length} FAILED: ${fails.join(", ")}` : "all satisfiedSetterDrop selftests passed"}`
 );
