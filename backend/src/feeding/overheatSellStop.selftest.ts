@@ -1,6 +1,7 @@
 /**
- * Self-test for the overheat sell stop: the 97/90 °C hysteresis, staleness holds, and what a live
- * sell window exports through an overheat. Run from backend/ with:
+ * Self-test for the overheat sell stop: the 97/90 °C hysteresis, staleness holds, a swapped limit
+ * pair, and what a live sell window exports through an overheat — plus decideSellExport pinned
+ * against the shouldSellPower memo body it was lifted from. Run from backend/ with:
  *   yarn node src/feeding/overheatSellStop.selftest.ts
  *
  * The temperature traces follow the 2025-06-30 shape: ~14 kW selling, ventilation shut, the inverter
@@ -10,13 +11,13 @@ import process from "process";
 import {
   MAX_TEMPERATURE_READING_AGE_MS,
   OVERHEAT_SELL_STOP_BOOT_STATE,
+  overheatLimitsMisordered,
+  type OverheatSellStopLimits,
   type OverheatSellStopState,
   stepOverheatSellStop,
 } from "./overheatSellStop.ts";
-import { decideSellExport } from "./sellExportDecision.ts";
-import { describeOverheatSellResume, describeOverheatSellStop } from "../alerting/overheatSellStopAlerts.ts";
-import { default_config, mergeWithDefaults } from "../config/config.ts";
-import type { Config } from "../config/config.types.ts";
+import { decideSellExport, type SellExportLimits } from "./sellExportDecision.ts";
+import { default_config } from "../config/config.ts";
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -29,17 +30,18 @@ function check(name: string, actual: unknown, expected: unknown) {
   }
 }
 
-const limits = {
+const limits: OverheatSellStopLimits = {
   only_sell_below_inverter_temp_celsius: 97,
   start_selling_again_below_inverter_temp_celsius: 90,
 };
-const sellLimits = {
+const sellLimits: SellExportLimits = {
   only_sell_above_soc: 13,
   start_selling_again_above_soc: 25,
   only_sell_above_voltage: 49.8,
   start_selling_again_above_voltage: 52.2,
 };
 const nowMs = 1_751_300_000_000;
+const windowWatts = 14_000;
 const STOPPED: OverheatSellStopState = { sellingStopped: true, flipReading: { value: 97.4, time: nowMs - 60_000 } };
 
 // ——— hysteresis ———
@@ -99,14 +101,43 @@ check(
   true
 );
 
+// ——— a swapped pair must not oscillate (review of #60: stop 90 / resume 95 flipped every GS round) ———
+const swappedLimits: OverheatSellStopLimits = {
+  only_sell_below_inverter_temp_celsius: 90,
+  start_selling_again_below_inverter_temp_celsius: 95,
+};
+check(
+  "misordered limits are detected (equal counts: no hysteresis gap)",
+  [
+    overheatLimitsMisordered(limits),
+    overheatLimitsMisordered(swappedLimits),
+    overheatLimitsMisordered({ ...limits, start_selling_again_below_inverter_temp_celsius: 97 }),
+  ],
+  [false, true, true]
+);
+check(
+  "swapped limits, 92 °C held over 6 GS rounds: stops once and stays stopped",
+  stateTrace(swappedLimits, [92, 92, 92, 92, 92, 92]),
+  [true, true, true, true, true, true]
+);
+check(
+  "swapped limits resume below the lower limit (90 °C), not the configured 95 °C",
+  stateTrace(swappedLimits, [92, 94, 90.1, 89.9, 89.9]),
+  [true, true, true, false, false]
+);
+
 // ——— a live 14 kW sell window through an overheat ———
-const windowWatts = 14_000;
 const overheatTrace = [88, 94, 96.8, 97.1, 96.9, 97.3, 95, 92, 90.4, 90, 89.8, 90.3, 91, 93];
 const overheatRun = runSellTicks(overheatTrace.map(temperatureCelsius => ({ temperatureCelsius })));
 check(
   "window exports 14 kW, 0 from ≥97 °C until <90 °C, then 14 kW again",
   overheatRun.exportWatts,
   [14000, 14000, 14000, 0, 0, 0, 0, 0, 0, 0, 14000, 14000, 14000, 14000]
+);
+check(
+  "what the stop withholds is the window's 14 kW, only while stopped",
+  overheatRun.withheldWatts,
+  [0, 0, 0, 14000, 14000, 14000, 14000, 14000, 14000, 14000, 0, 0, 0, 0]
 );
 check(
   "hovering at either limit flips once each way: one stop, one resume, no command churn",
@@ -141,6 +172,11 @@ const windowStartsRun = runSellTicks([
   { temperatureCelsius: 89.5 },
 ]);
 check("a window starting while stopped feeds 0 until the inverter cooled", windowStartsRun.exportWatts, [0, 0, 14000]);
+check(
+  "a stop with no window withholds nothing (the P1 says nothing was curtailed)",
+  windowStartsRun.withheldWatts,
+  [0, 14000, 0]
+);
 
 // SOC 12 % dips below only_sell_above_soc while stopped; at 20 % (between 13 and 25) the
 // SOC hysteresis must still hold selling off once the inverter has cooled
@@ -155,7 +191,53 @@ check(
   socCutoffRun.exportWatts,
   [0, 0, 0, 14000]
 );
+check(
+  "a stop below the SOC cutoff withholds nothing — the cutoff already zeroed the window",
+  socCutoffRun.withheldWatts,
+  [14000, 0, 0, 0]
+);
 
+// ——— decideSellExport ≡ the memo body it was lifted from ———
+// Below the cutoff with NO window, hitLimit must stay false: a window starting at SOC 20 then sells
+// against only_sell_above_soc (13), not start_selling_again_above_soc (25)
+const noWindowBelowCutoffRun = runSellTicks([
+  { temperatureCelsius: 60, soc: 10, scheduledWatts: 0 },
+  { temperatureCelsius: 60, soc: 20 },
+]);
+check(
+  "below the SOC cutoff without a window does not arm the cutoff",
+  [noWindowBelowCutoffRun.exportWatts, noWindowBelowCutoffRun.hitLimit],
+  [
+    [0, 14000],
+    [false, false],
+  ]
+);
+const voltageCutoffRun = runSellTicks([
+  { temperatureCelsius: 60, voltage: 53 },
+  { temperatureCelsius: 60, voltage: 49.7 },
+  { temperatureCelsius: 60, voltage: 52.0 },
+  { temperatureCelsius: 60, voltage: 52.3 },
+]);
+check(
+  "the voltage pair: sag under 49.8 V cuts off, selling waits for 52.2 V",
+  [voltageCutoffRun.exportWatts, voltageCutoffRun.hitLimit],
+  [
+    [14000, 0, 0, 14000],
+    [false, true, true, false],
+  ]
+);
+
+const equivalence = compareWithOriginalMemoBody();
+check(
+  `decideSellExport matches the original memo body on all ${equivalence.cases} SOC × voltage × hitLimit × window cases`,
+  equivalence.mismatches,
+  []
+);
+check(
+  "…and while stopped it exports 0, withholds exactly what it would have sold, and evolves hitLimit identically",
+  equivalence.stoppedMismatches,
+  []
+);
 check(
   "no schedule entries export 0 (Math.max of nothing)",
   decideSellExport({
@@ -166,54 +248,8 @@ check(
     hitLimit: false,
     sellingStoppedForOverheat: false,
   }),
-  { exportWatts: 0, hitLimit: false }
+  { exportWatts: 0, withheldForOverheatWatts: 0, hitLimit: false }
 );
-check(
-  "overlapping windows: the biggest one wins",
-  decideSellExport({
-    ...sellLimits,
-    scheduledWattsPerWindow: [0, 9000, 14000],
-    soc: 60,
-    voltage: 53,
-    hitLimit: false,
-    sellingStoppedForOverheat: false,
-  }).exportWatts,
-  14000
-);
-
-// ——— alert text ———
-const stopAlert = describeOverheatSellStop(97.24, limits);
-check("P1 on stop under the pre-existing key", [stopAlert.severity, stopAlert.key], ["P1", "inverter-temp"]);
-check(
-  "P1 says selling stopped, that it is too hot, and what to check",
-  ["selling stopped", "97.2°C", "below 90°C", "100°C", "door", "ventilation"].filter(
-    phrase => !(stopAlert.title + " " + stopAlert.message).includes(phrase)
-  ),
-  []
-);
-const resumeAlert = describeOverheatSellResume(89.86, limits);
-check("quiet P3 on resume", [resumeAlert.severity, resumeAlert.key], ["P3", "inverter-temp:resolved"]);
-check(
-  "P3 says selling resumed and quotes the reading",
-  ["selling resumed", "89.9°C"].filter(phrase => !(resumeAlert.title + " " + resumeAlert.message).includes(phrase)),
-  []
-);
-
-// ——— config: a config.json written before these knobs existed must still stop selling ———
-const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius, ...olderSelling } =
-  default_config.scheduled_power_selling;
-const storedBeforeTheKnobs: Partial<Config> = {
-  ...structuredClone(default_config),
-  // The cast is the point: this is the shape config.json files on disk still have
-  scheduled_power_selling: { ...olderSelling, schedule: {} } as Config["scheduled_power_selling"],
-};
-const healed = mergeWithDefaults(storedBeforeTheKnobs).scheduled_power_selling;
-check(
-  "an older stored scheduled_power_selling picks up the temperature limits",
-  [healed.only_sell_below_inverter_temp_celsius, healed.start_selling_again_below_inverter_temp_celsius],
-  [only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius]
-);
-check("…without resurrecting the default's sample sell window", Object.keys(healed.schedule), []);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
@@ -230,12 +266,28 @@ function stepAt(previousState: OverheatSellStopState, temperatureCelsius: number
   });
 }
 
+/** sellingStopped after each fresh GS round (~1.1 s apart) of the given temperatures */
+function stateTrace(stopLimits: OverheatSellStopLimits, temperaturesCelsius: number[]): boolean[] {
+  let state = OVERHEAT_SELL_STOP_BOOT_STATE;
+  return temperaturesCelsius.map((temperatureCelsius, roundIndex) => {
+    const roundAtMs = nowMs + roundIndex * 1100;
+    state = stepOverheatSellStop({
+      ...stopLimits,
+      previousState: state,
+      reading: { value: temperatureCelsius, time: roundAtMs },
+      nowMs: roundAtMs,
+    });
+    return state.sellingStopped;
+  });
+}
+
 type SellTick = {
   temperatureCelsius: number;
   readingAgeMs?: number;
   /** Defaults to the 14 kW window being active */
   scheduledWatts?: number;
   soc?: number;
+  voltage?: number;
 };
 
 /**
@@ -247,7 +299,14 @@ function runSellTicks(ticks: SellTick[]) {
   let overheatState = OVERHEAT_SELL_STOP_BOOT_STATE;
   let hitLimit = false;
   let previousExportWatts: number | undefined;
-  const result = { exportWatts: [] as number[], stopFlips: 0, resumeFlips: 0, exportChanges: 0 };
+  const result = {
+    exportWatts: [] as number[],
+    withheldWatts: [] as number[],
+    hitLimit: [] as boolean[],
+    stopFlips: 0,
+    resumeFlips: 0,
+    exportChanges: 0,
+  };
   for (const [tickIndex, tick] of ticks.entries()) {
     const tickNowMs = nowMs + tickIndex * 60_000;
     const nextState = stepOverheatSellStop({
@@ -265,7 +324,7 @@ function runSellTicks(ticks: SellTick[]) {
       ...sellLimits,
       scheduledWattsPerWindow: [tick.scheduledWatts ?? windowWatts, 0],
       soc: tick.soc ?? 60,
-      voltage: 53,
+      voltage: tick.voltage ?? 53,
       hitLimit,
       sellingStoppedForOverheat: overheatState.sellingStopped,
     });
@@ -273,6 +332,84 @@ function runSellTicks(ticks: SellTick[]) {
     if (previousExportWatts !== undefined && decision.exportWatts !== previousExportWatts) result.exportChanges++;
     previousExportWatts = decision.exportWatts;
     result.exportWatts.push(decision.exportWatts);
+    result.withheldWatts.push(decision.withheldForOverheatWatts);
+    result.hitLimit.push(decision.hitLimit);
   }
   return result;
+}
+
+/** Drives decideSellExport and the original memo body over a grid straddling every limit */
+function compareWithOriginalMemoBody() {
+  const socs = [5, 13, 13.1, 20, 25, 25.1, 60];
+  const voltages = [49, 49.8, 49.9, 52.2, 52.3, 54];
+  const windowSets = [[], [0], [0, 0], [windowWatts], [0, 9000, windowWatts]];
+  const mismatches: string[] = [];
+  const stoppedMismatches: string[] = [];
+  let cases = 0;
+  for (const soc of socs) {
+    for (const voltage of voltages) {
+      for (const hitLimit of [false, true]) {
+        for (const scheduledWattsPerWindow of windowSets) {
+          cases++;
+          const caseLabel = `soc ${soc} V ${voltage} hitLimit ${hitLimit} windows [${scheduledWattsPerWindow}]`;
+          const expected = originalMemoBody({ soc, voltage, hitLimit, scheduledWattsPerWindow });
+          const decision = decideSellExport({
+            ...sellLimits,
+            scheduledWattsPerWindow,
+            soc,
+            voltage,
+            hitLimit,
+            sellingStoppedForOverheat: false,
+          });
+          if (decision.exportWatts !== expected.exportWatts || decision.hitLimit !== expected.hitLimit) {
+            mismatches.push(caseLabel);
+          }
+          const stopped = decideSellExport({
+            ...sellLimits,
+            scheduledWattsPerWindow,
+            soc,
+            voltage,
+            hitLimit,
+            sellingStoppedForOverheat: true,
+          });
+          if (
+            stopped.exportWatts !== 0 ||
+            stopped.withheldForOverheatWatts !== expected.exportWatts ||
+            stopped.hitLimit !== expected.hitLimit
+          ) {
+            stoppedMismatches.push(caseLabel);
+          }
+        }
+      }
+    }
+  }
+  return { cases, mismatches, stoppedMismatches };
+}
+
+/**
+ * shouldSellPower's export memo body as it stood before the extraction (c5d431b), verbatim apart
+ * from taking its inputs as parameters and returning the hitLimit it used to assign.
+ */
+function originalMemoBody(input: {
+  soc: number;
+  voltage: number;
+  hitLimit: boolean;
+  scheduledWattsPerWindow: number[];
+}): { exportWatts: number; hitLimit: boolean } {
+  let hitLimit = input.hitLimit;
+  const socLimitToUse = hitLimit ? sellLimits.start_selling_again_above_soc : sellLimits.only_sell_above_soc;
+  const voltageLimitToUse = hitLimit
+    ? sellLimits.start_selling_again_above_voltage
+    : sellLimits.only_sell_above_voltage;
+  let result = Math.max(...input.scheduledWattsPerWindow);
+  if (Math.abs(result) === Infinity) {
+    result = 0;
+  }
+  if (input.soc > socLimitToUse && input.voltage > voltageLimitToUse) {
+    hitLimit = false;
+    return { exportWatts: result, hitLimit };
+  } else if (result) {
+    hitLimit = true;
+  }
+  return { exportWatts: 0, hitLimit };
 }

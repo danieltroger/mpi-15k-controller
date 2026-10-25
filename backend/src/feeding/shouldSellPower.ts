@@ -6,10 +6,11 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
 import { decideSellExport } from "./sellExportDecision.ts";
 import { useOverheatSellStop } from "./useOverheatSellStop.ts";
+import type { OverheatSellStopSignals } from "./overheatSellStop.ts";
 
 export function shouldSellPower(config: Accessor<Config>) {
   const { clampedSocAh } = useBatteryValuesProvider();
-  const overheatSellStop = useOverheatSellStop(config);
+  const overheatSellStopState = useOverheatSellStop(config);
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_selling.schedule),
@@ -60,7 +61,7 @@ export function shouldSellPower(config: Accessor<Config>) {
 
   let hitLimit = false;
 
-  const exportAmountForSelling = createMemo(() => {
+  const sellDecision = createMemo(() => {
     const soc = clampedSocAh();
     const voltage = reactiveBatteryVoltage();
     if (soc === undefined || voltage === undefined) return;
@@ -71,15 +72,20 @@ export function shouldSellPower(config: Accessor<Config>) {
       soc,
       voltage,
       hitLimit,
-      sellingStoppedForOverheat: overheatSellStop().sellingStopped,
+      sellingStoppedForOverheat: overheatSellStopState().sellingStopped,
     });
     hitLimit = decision.hitLimit;
-    return decision.exportWatts;
+    return decision;
   });
+  // Split into number memos: the decision object is new on every SOC/voltage change, the numbers
+  // only change when the export does — feedWhenNoSolar's command effects must only see the latter
+  const exportAmountForSelling = createMemo(() => sellDecision()?.exportWatts);
+  const withheldSellWatts = createMemo(() => sellDecision()?.withheldForOverheatWatts ?? 0);
 
   createEffect(() =>
     logLog("Feed in due to scheduled power selling wants to feed in", exportAmountForSelling(), "watts")
   );
 
+  const overheatSellStop: OverheatSellStopSignals = { state: overheatSellStopState, withheldSellWatts };
   return { exportAmountForSelling, overheatSellStop };
 }

@@ -1,8 +1,13 @@
 import { type Accessor, createEffect, createMemo, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
-import { logLog, warnLog } from "../utilities/logging.ts";
-import { OVERHEAT_SELL_STOP_BOOT_STATE, type OverheatSellStopState, stepOverheatSellStop } from "./overheatSellStop.ts";
+import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
+import {
+  OVERHEAT_SELL_STOP_BOOT_STATE,
+  overheatLimitsMisordered,
+  type OverheatSellStopState,
+  stepOverheatSellStop,
+} from "./overheatSellStop.ts";
 
 /**
  * Whether selling is stopped because the inverter is close to its over-temperature latch (fault 57
@@ -21,6 +26,17 @@ export function useOverheatSellStop(config: Accessor<Config>): Accessor<Overheat
       }),
     OVERHEAT_SELL_STOP_BOOT_STATE
   );
+
+  // A memo so the error fires once per misconfiguration, not on every config write
+  const limitsMisordered = createMemo(() => overheatLimitsMisordered(config().scheduled_power_selling));
+  createEffect(() => {
+    if (!limitsMisordered()) return;
+    const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius } =
+      untrack(config).scheduled_power_selling;
+    errorLog(
+      `Overheat sell stop misconfigured: start_selling_again_below_inverter_temp_celsius (${start_selling_again_below_inverter_temp_celsius}°C) must be below only_sell_below_inverter_temp_celsius (${only_sell_below_inverter_temp_celsius}°C) — resuming only below ${Math.min(only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius)}°C, with no hysteresis gap`
+    );
+  });
 
   createEffect(() => {
     const { sellingStopped, flipReading } = overheatSellStop();

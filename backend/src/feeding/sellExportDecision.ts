@@ -1,13 +1,5 @@
 import type { Config } from "../config/config.types.ts";
 
-export type SellExportLimits = Pick<
-  Config["scheduled_power_selling"],
-  | "only_sell_above_soc"
-  | "start_selling_again_above_soc"
-  | "only_sell_above_voltage"
-  | "start_selling_again_above_voltage"
->;
-
 /**
  * What scheduled selling asks the inverter to export right now — pure, so the selftest can walk a
  * live sell window through an overheat. `hitLimit` is the SOC/voltage hysteresis the caller carries
@@ -23,7 +15,7 @@ export function decideSellExport(
     hitLimit: boolean;
     sellingStoppedForOverheat: boolean;
   }
-): { exportWatts: number; hitLimit: boolean } {
+): SellExportDecision {
   const socLimit = input.hitLimit ? input.start_selling_again_above_soc : input.only_sell_above_soc;
   const voltageLimit = input.hitLimit ? input.start_selling_again_above_voltage : input.only_sell_above_voltage;
 
@@ -45,6 +37,23 @@ export function decideSellExport(
   // it weren't there, so a window resuming after the inverter cooled still honors a cutoff it hit.
   // 0 is also what a window's end or a SOC cutoff produce, so feedWhenNoSolar takes its well-worn
   // path: max feed-in power drops straight back to feed_amount_watts, no new command sequence.
-  const exportWatts = aboveLimits && !input.sellingStoppedForOverheat ? scheduledWatts : 0;
-  return { exportWatts, hitLimit };
+  const wouldExportWatts = aboveLimits ? scheduledWatts : 0;
+  return input.sellingStoppedForOverheat
+    ? { exportWatts: 0, withheldForOverheatWatts: wouldExportWatts, hitLimit }
+    : { exportWatts: wouldExportWatts, withheldForOverheatWatts: 0, hitLimit };
 }
+
+export type SellExportDecision = {
+  exportWatts: number;
+  /** What the overheat stop is holding back — 0 when nothing was curtailed (no window, or below a cutoff) */
+  withheldForOverheatWatts: number;
+  hitLimit: boolean;
+};
+
+export type SellExportLimits = Pick<
+  Config["scheduled_power_selling"],
+  | "only_sell_above_soc"
+  | "start_selling_again_above_soc"
+  | "only_sell_above_voltage"
+  | "start_selling_again_above_voltage"
+>;

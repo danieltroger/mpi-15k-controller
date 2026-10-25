@@ -8,7 +8,7 @@ import type { AlertManager } from "./alertManager.ts";
 import type { AlertSeverity } from "./alerting.types.ts";
 import { formatSekForAlert, round1, thresholdState } from "./alertingLogic.ts";
 import { startInverterStuckAlerts } from "./inverterStuckAlerts.ts";
-import type { OverheatSellStopState } from "../feeding/overheatSellStop.ts";
+import type { OverheatSellStopSignals } from "../feeding/overheatSellStop.ts";
 import { startOverheatSellStopAlerts } from "./overheatSellStopAlerts.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
 
@@ -26,7 +26,7 @@ export function startAlertRules(ctx: {
   manager: AlertManager;
   temperatures: ReturnType<typeof useTemperatures>;
   /** Whether selling is stopped because the inverter is near its 100 °C latch (feeding/overheatSellStop.ts) */
-  overheatSellStop: Accessor<OverheatSellStopState>;
+  overheatSellStop: OverheatSellStopSignals;
   mqttValues: ReturnType<typeof useFromMqttProvider>["mqttValues"];
   averageSOC: Accessor<number | undefined>;
   currentBatteryPower: Accessor<CurrentBatteryPowerBroadcast | undefined>;

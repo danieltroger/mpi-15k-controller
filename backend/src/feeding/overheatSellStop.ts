@@ -1,10 +1,43 @@
+import type { Accessor } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { MqttValue } from "../sharedTypes.ts";
 
 /**
- * The pure core of the overheat sell stop: no IO, no clock reads, no solid — the selftest drives it.
- * useOverheatSellStop.ts feeds it the live reading; shouldSellPower masks the sell export with it.
+ * The pure core of the overheat sell stop: no IO, no clock reads, no reactivity — the selftest
+ * drives it. useOverheatSellStop.ts feeds it the live reading; shouldSellPower masks the sell
+ * export with it.
+ *
+ * Stop at ≥ only_sell_below, resume at < start_selling_again_below, hold in between. Returns the
+ * previous state object itself whenever nothing flips: the memo around this re-runs on every GS
+ * round, and identity is what keeps those re-runs from reaching the inverter command effects.
  */
+export function stepOverheatSellStop(
+  input: OverheatSellStopLimits & {
+    previousState: OverheatSellStopState;
+    reading: MqttValue | undefined;
+    nowMs: number;
+  }
+): OverheatSellStopState {
+  const { previousState, reading } = input;
+  if (!reading || input.nowMs - reading.time > MAX_TEMPERATURE_READING_AGE_MS) return previousState;
+  // A swapped pair (resume limit ≥ stop limit) would flip on every GS round between the two and
+  // toggle 14 kW with it; the lower of the two leaves at worst a zero-width band that only flips
+  // when the reading itself moves. useOverheatSellStop errorLogs the misconfiguration.
+  const resumeBelowCelsius = Math.min(
+    input.start_selling_again_below_inverter_temp_celsius,
+    input.only_sell_below_inverter_temp_celsius
+  );
+  const crossedLimit = previousState.sellingStopped
+    ? reading.value < resumeBelowCelsius
+    : reading.value >= input.only_sell_below_inverter_temp_celsius;
+  if (!crossedLimit) return previousState;
+  return { sellingStopped: !previousState.sellingStopped, flipReading: { value: reading.value, time: reading.time } };
+}
+
+/** True when the resume limit leaves no hysteresis gap below the stop limit */
+export function overheatLimitsMisordered(limits: OverheatSellStopLimits): boolean {
+  return limits.start_selling_again_below_inverter_temp_celsius >= limits.only_sell_below_inverter_temp_celsius;
+}
 
 /**
  * component_max_temperature arrives with every GS round, seconds apart. A reading older than this
@@ -31,23 +64,9 @@ export type OverheatSellStopLimits = Pick<
   "only_sell_below_inverter_temp_celsius" | "start_selling_again_below_inverter_temp_celsius"
 >;
 
-/**
- * Stop at ≥ only_sell_below, resume at < start_selling_again_below, hold in between. Returns the
- * previous state object itself whenever nothing flips: the memo around this re-runs on every GS
- * round, and identity is what keeps those re-runs from reaching the inverter command effects.
- */
-export function stepOverheatSellStop(
-  input: OverheatSellStopLimits & {
-    previousState: OverheatSellStopState;
-    reading: MqttValue | undefined;
-    nowMs: number;
-  }
-): OverheatSellStopState {
-  const { previousState, reading } = input;
-  if (!reading || input.nowMs - reading.time > MAX_TEMPERATURE_READING_AGE_MS) return previousState;
-  const crossedLimit = previousState.sellingStopped
-    ? reading.value < input.start_selling_again_below_inverter_temp_celsius
-    : reading.value >= input.only_sell_below_inverter_temp_celsius;
-  if (!crossedLimit) return previousState;
-  return { sellingStopped: !previousState.sellingStopped, flipReading: { value: reading.value, time: reading.time } };
-}
+/** What shouldSellPower hands the alerting: the stop itself, and what it is holding back */
+export type OverheatSellStopSignals = {
+  state: Accessor<OverheatSellStopState>;
+  /** Watts scheduled selling would export right now if the stop weren't in force (0 while it isn't) */
+  withheldSellWatts: Accessor<number>;
+};
