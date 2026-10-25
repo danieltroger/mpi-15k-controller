@@ -217,6 +217,33 @@ function pumpSetters(state: SchedulerState, atMs: number, log: string[]): Schedu
   );
 }
 
+{
+  // A NAKed or unanswered write arms no confirm check: only the per-field write time stops the
+  // pre-write readback from vouching for that field
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
+  state = afterSetterSent(state, "EDF1", ["HECS"], seconds(7.6), false);
+  state = withSetterQueued(state, "EDF0", "EDF", seconds(8));
+  const decision = decideNextAction(state, seconds(8), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "EDF0 after an unanswered/NAKed EDF1 is sent, not dropped against the pre-write readback",
+    decision.action === "send_setter" && decision.command === "EDF0",
+    JSON.stringify(decision)
+  );
+}
+{
+  // The same for BATS: an unanswered MCHGV may still have committed
+  const batsReadback = { "battery_constant_charge_voltage(c.v.)": 56, battery_floating_charge_voltage: 56 };
+  let state = withSettingsReadback(initialSchedulerState(), "BATS", batsReadback, seconds(0));
+  state = afterSetterSent(state, "MCHGV0580,0580", ["BATS"], seconds(5), false);
+  state = withSetterQueued(state, "MCHGV0560,0560", "MCHGV", seconds(6));
+  const decision = decideNextAction(state, seconds(6), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "MCHGV0560,0560 after an unanswered MCHGV0580,0580 is sent, not dropped against the pre-write BATS",
+    decision.action === "send_setter" && decision.command === "MCHGV0560,0560",
+    JSON.stringify(decision)
+  );
+}
+
 // ---------- delta review: an identical re-queue made while that setter is on the wire ----------
 {
   let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
@@ -253,6 +280,22 @@ function pumpSetters(state: SchedulerState, atMs: number, log: string[]): Schedu
     "…or, if it never applied, re-sent no earlier than 60 s after the previous send",
     sendsAfterGiveUp.length === 1 && sendsAfterGiveUp[0] === "EDF1@62s",
     sendsAfterGiveUp.join(", ")
+  );
+}
+
+{
+  // A DIFFERENT target queued while EDF1 is on the wire keeps its own gate: the newest desired
+  // state must replace the old one at once, never wait behind the old one's 60 s gate
+  let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "disabled"), seconds(0));
+  state = withSetterQueued(state, "EDF1", "EDF", seconds(1));
+  state = withSetterDequeued(state, "EDF1");
+  state = withSetterQueued(state, "EDF0", "EDF", seconds(1.2));
+  state = afterSetterSent(state, "EDF1", ["HECS"], seconds(1.3), true);
+  const afterAck = decideNextAction(state, seconds(1.3), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "EDF0 queued while EDF1 is on the wire goes out right after the ACK",
+    afterAck.action === "send_setter" && afterAck.command === "EDF0",
+    JSON.stringify(afterAck)
   );
 }
 
