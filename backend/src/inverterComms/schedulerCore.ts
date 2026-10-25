@@ -28,10 +28,36 @@ export const IDENTICAL_SETTER_MIN_INTERVAL_MS = 60_000;
 /** One confirm after the quiet gap + one re-check after the backoff, then give up loudly */
 export const MAX_CONFIRM_ATTEMPTS = 2;
 /**
- * Start-to-start pacing of the background GS+PS poll. At 2400 baud a GS+PS round is ≈1.5-2 s of
- * wire time anyway, so this is the natural continuous rate rather than a real throttle.
+ * Gap between the END of one background GS+PS round and the start of the next: rounds run
+ * back-to-back. At 2400 baud the two responses (~117 + ~112 B) are ≈1 s of wire time, so a round
+ * takes ≈1.1 s — the cadence the retired mpp-solar daemon achieved (~51 rounds/min, measured in
+ * Influx before the first cutover). A fixed 2 s start-to-start pace would have cut the point rate
+ * by ~40%.
  */
-export const POLL_ROUND_INTERVAL_MS = 2_000;
+export const POLL_ROUND_GAP_MS = 50;
+/** …but after a round with a failed query, breathe before hammering a line that isn't answering */
+export const POLL_ROUND_GAP_AFTER_FAILURE_MS = 1_000;
+
+export type SchedulerTiming = {
+  /**
+   * QUIET-GAP EXPERIMENT HOOK. Production always runs QUIET_GAP_AFTER_WRITE_MS (pass no override).
+   * Still open: does the inverter's ACK≠commit delay come from ANY serial traffic or only from
+   * rewriting the same register? The planned experiment (gap 0, GS/PS polling continuing, one
+   * benign GPMP write, 1 Hz readback) overrides this — and will additionally need confirm-phase
+   * polling, which this state machine deliberately doesn't do today.
+   */
+  quietGapAfterWriteMs: number;
+  confirmBackoffMs: number;
+  pollRoundGapMs: number;
+  pollRoundGapAfterFailureMs: number;
+};
+
+export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
+  quietGapAfterWriteMs: QUIET_GAP_AFTER_WRITE_MS,
+  confirmBackoffMs: CONFIRM_BACKOFF_MS,
+  pollRoundGapMs: POLL_ROUND_GAP_MS,
+  pollRoundGapAfterFailureMs: POLL_ROUND_GAP_AFTER_FAILURE_MS,
+};
 
 export type QueuedSetterView = {
   command: string;
@@ -48,10 +74,13 @@ export type ConfirmPhase = {
 };
 
 export type SchedulerState = {
+  timing: Readonly<SchedulerTiming>;
   queuedSetters: readonly QueuedSetterView[];
   confirm: ConfirmPhase | undefined;
   lastSentAtByCommand: Readonly<Record<string, number>>;
-  lastPollRoundStartedAt: number | undefined;
+  lastPollRoundEndedAt: number | undefined;
+  lastPollRoundHadFailures: boolean;
+  /** Start of the last round that included the settings queries */
   lastSettingsPollAt: number | undefined;
 };
 
@@ -61,12 +90,15 @@ export type SchedulerDecision =
   | { action: "poll_round"; includeSettingsPoll: boolean }
   | { action: "wait"; untilMs: number; reason: string };
 
-export function initialSchedulerState(): SchedulerState {
+/** `timingOverrides` exists for harnesses and the quiet-gap experiment — production passes none. */
+export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> = {}): SchedulerState {
   return {
+    timing: { ...DEFAULT_SCHEDULER_TIMING, ...timingOverrides },
     queuedSetters: [],
     confirm: undefined,
     lastSentAtByCommand: {},
-    lastPollRoundStartedAt: undefined,
+    lastPollRoundEndedAt: undefined,
+    lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
   };
 }
@@ -92,7 +124,10 @@ export function decideNextAction(
     };
   }
 
-  const nextPollDueAt = (state.lastPollRoundStartedAt ?? 0) + POLL_ROUND_INTERVAL_MS;
+  const gapAfterLastRound = state.lastPollRoundHadFailures
+    ? state.timing.pollRoundGapAfterFailureMs
+    : state.timing.pollRoundGapMs;
+  const nextPollDueAt = state.lastPollRoundEndedAt === undefined ? 0 : state.lastPollRoundEndedAt + gapAfterLastRound;
   if (nowMs >= nextPollDueAt) {
     const includeSettingsPoll =
       state.lastSettingsPollAt === undefined || nowMs - state.lastSettingsPollAt >= settingsPollIntervalMs;
@@ -155,7 +190,7 @@ export function afterSetterSent(
   return {
     ...state,
     lastSentAtByCommand: { ...state.lastSentAtByCommand, [command]: nowMs },
-    confirm: { dueAt: nowMs + QUIET_GAP_AFTER_WRITE_MS, attemptsMade: 0, queries, checks },
+    confirm: { dueAt: nowMs + state.timing.quietGapAfterWriteMs, attemptsMade: 0, queries, checks },
   };
 }
 
@@ -185,7 +220,7 @@ export function afterConfirmRun(
   if (attemptsMade >= MAX_CONFIRM_ATTEMPTS) {
     return { state: { ...state, confirm: undefined }, result: { outcome: "gave_up", failedChecks } };
   }
-  const retryAt = nowMs + CONFIRM_BACKOFF_MS;
+  const retryAt = nowMs + state.timing.confirmBackoffMs;
   return {
     state: { ...state, confirm: { ...confirm, attemptsMade, dueAt: retryAt } },
     result: { outcome: "retry", retryAt, failedChecks },
@@ -194,13 +229,13 @@ export function afterConfirmRun(
 
 export function afterPollRound(
   state: SchedulerState,
-  roundStartedAtMs: number,
-  includedSettingsPoll: boolean
+  round: { startedAtMs: number; endedAtMs: number; includedSettingsPoll: boolean; hadFailures: boolean }
 ): SchedulerState {
   return {
     ...state,
-    lastPollRoundStartedAt: roundStartedAtMs,
-    lastSettingsPollAt: includedSettingsPoll ? roundStartedAtMs : state.lastSettingsPollAt,
+    lastPollRoundEndedAt: round.endedAtMs,
+    lastPollRoundHadFailures: round.hadFailures,
+    lastSettingsPollAt: round.includedSettingsPoll ? round.startedAtMs : state.lastSettingsPollAt,
   };
 }
 

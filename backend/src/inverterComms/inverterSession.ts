@@ -6,8 +6,10 @@
  * stop-daemon/run-CLI/start-daemon dance (5m48s MQTT blackout on 2026-07-18). No systemctl calls
  * anywhere in this path: the mpp-solar unit is retired at cutover.
  *
- * Scheduling state lives in pure schedulerCore functions; this file is the async shell that
- * performs I/O, plus the reactive surface (lastWriteAt / isOpen signals) for observers.
+ * Scheduling state lives in pure schedulerCore functions and wire-level exchange safety in
+ * serialExchange.ts; this file is the async shell that runs the pump, decodes, gates implausible
+ * rounds (plausibilityGate.ts) before any consumer sees them, plus the reactive surface
+ * (lastWriteAt / isOpen signals) for observers.
  */
 import { type Accessor, createSignal, onCleanup, untrack } from "solid-js";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
@@ -18,14 +20,11 @@ import type {
   SettingsQueryCommandName,
 } from "./pi17Protocol.types.ts";
 import type { SetterQueueItem } from "./inverterComms.types.ts";
-import {
-  buildQueryFrame,
-  buildSetterFrame,
-  classifyFrame,
-  createFrameAccumulator,
-  type ClassifiedFrame,
-} from "./pi17Frames.ts";
+import { buildQueryFrame, buildSetterFrame } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
+import { implausibleFieldsIn } from "./plausibilityGate.ts";
+import { createSerialExchange, type SerialExchangeCounters } from "./serialExchange.ts";
+import { createRateLimitedWarnLog } from "../utilities/rateLimitedWarnLog.ts";
 import {
   afterConfirmRun,
   afterPollRound,
@@ -36,16 +35,17 @@ import {
   withSetterDequeued,
   withSetterQueued,
   type SchedulerState,
+  type SchedulerTiming,
 } from "./schedulerCore.ts";
-import { createSerialConnection, INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
+import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
 
+/** Implausible rounds and decode problems log their first occurrence, then at most once a minute */
+const DROPPED_ROUND_LOG_INTERVAL_MS = 60_000;
 /**
- * 2400 baud ≈ 240 bytes/s and the longest routine response is ~120 B ≈ 0.5 s of wire time, so 3 s
- * is generous — on 2026-07-18 the inverter answered every single well-formed frame. One retry on
- * timeout, then the command fails loudly.
+ * Periodic counter deltas + poll cadence in the log: the anomaly warns are rate-limited, so this is
+ * where "how many frames were rejected / rounds dropped, and how fast are rounds" is answered.
  */
-const RESPONSE_TIMEOUT_MS = 3_000;
-const RESPONSE_RETRIES = 1;
+const STATS_LOG_INTERVAL_MS = 5 * 60_000;
 /** The continuous background poll: GS+PS every round, settings queries on their slower cadence */
 const BACKGROUND_POLL_COMMANDS = ["GS", "PS"] as const;
 const SETTINGS_POLL_COMMANDS = ["GPMP", "HECS", "BATS"] as const;
@@ -54,48 +54,34 @@ export function createInverterSession({
   poll_values_interval_seconds,
   onDecodedRound,
   devicePath = INVERTER_SERIAL_DEVICE,
+  schedulerTimingOverrides = {},
 }: {
   /** Cadence of the slow settings poll — config().usb_parameter_setting.poll_values_interval_seconds */
   poll_values_interval_seconds: Accessor<number>;
+  /** Only ever called with rounds that passed the plausibility gate */
   onDecodedRound: (round: DecodedRound) => void;
   /** Overridable only so harnesses can point the whole engine at a pty instead of the inverter */
   devicePath?: string;
+  /** Harnesses and the quiet-gap experiment only (see SchedulerTiming) — production passes nothing */
+  schedulerTimingOverrides?: Partial<SchedulerTiming>;
 }) {
   const [lastWriteAt, setLastWriteAt] = createSignal<number | undefined>(undefined);
   const [serialIsOpen, setSerialIsOpen] = createSignal(false);
 
-  let schedulerState: SchedulerState = initialSchedulerState();
+  let schedulerState: SchedulerState = initialSchedulerState(schedulerTimingOverrides);
   const queuedSetterItems = new Map<string, SetterQueueItem>();
   let disposed = false;
   let wakeWaiter: (() => void) | undefined;
-  let resolveInFlight: ((frame: ClassifiedFrame) => void) | undefined;
   let consecutiveTransactFailures = 0;
   let lastTransactFailureErrorLogAt = 0;
+  let droppedImplausibleRounds = 0;
+  let pollRoundsCompleted = 0;
+  const warnImplausibleRound = createRateLimitedWarnLog(DROPPED_ROUND_LOG_INTERVAL_MS);
+  const warnDecodeProblem = createRateLimitedWarnLog(DROPPED_ROUND_LOG_INTERVAL_MS);
 
-  const frameAccumulator = createFrameAccumulator();
-  const connection = createSerialConnection({
+  const serialExchange = createSerialExchange({
     devicePath,
-    onData: chunk => {
-      const { frames, discardedByteCount, problems } = frameAccumulator.push(chunk);
-      if (discardedByteCount) warnLog("Discarded", discardedByteCount, "stray byte(s) from the inverter serial stream");
-      for (const problem of problems) warnLog("Inverter serial framing:", problem);
-      for (const frame of frames) {
-        const classified = classifyFrame(frame);
-        if (classified.kind === "invalid") {
-          warnLog("Dropping invalid frame from inverter:", classified.reason);
-          continue;
-        }
-        if (resolveInFlight) {
-          // Strict request-response protocol: the first valid frame belongs to the in-flight command
-          resolveInFlight(classified);
-        } else {
-          warnLog("Unsolicited", classified.kind, "frame from inverter (no command in flight) — ignoring");
-        }
-      }
-    },
     onOpen: () => {
-      const droppedByteCount = frameAccumulator.flush();
-      if (droppedByteCount) warnLog("Dropped", droppedByteCount, "buffered byte(s) from before the serial reopen");
       setSerialIsOpen(true);
       wakePump();
     },
@@ -116,63 +102,6 @@ export function createInverterSession({
       }
       wakeWaiter = finish;
     });
-  }
-
-  /** Send one frame and wait for the response frame (or timeout). The pump's strict sequencing is the mutex. */
-  function transactOnce(frameBytes: Buffer, description: string): Promise<ClassifiedFrame | "timeout"> {
-    // A previous timed-out exchange may still have bytes trickling in — they must never be
-    // matched to this command, so drop anything buffered before sending.
-    const staleByteCount = frameAccumulator.flush();
-    if (staleByteCount) warnLog("Flushed", staleByteCount, "stale buffered byte(s) before sending", description);
-    return new Promise<ClassifiedFrame | "timeout">((resolve, reject) => {
-      let settled = false;
-      const resolveWithFrame = (frame: ClassifiedFrame) => {
-        clearTimeout(timer);
-        if (resolveInFlight === resolveWithFrame) resolveInFlight = undefined;
-        settled = true;
-        resolve(frame);
-      };
-      const timer = setTimeout(() => {
-        if (resolveInFlight === resolveWithFrame) resolveInFlight = undefined;
-        settled = true;
-        resolve("timeout");
-      }, RESPONSE_TIMEOUT_MS);
-      resolveInFlight = resolveWithFrame;
-      connection.write(frameBytes).catch((writeError: unknown) => {
-        if (settled) {
-          // Rejecting a settled promise is a silent no-op — this write error must still be heard
-          warnLog("Inverter serial write for", description, "failed after the exchange already settled", writeError);
-          return;
-        }
-        clearTimeout(timer);
-        if (resolveInFlight === resolveWithFrame) resolveInFlight = undefined;
-        settled = true;
-        reject(writeError);
-      });
-    });
-  }
-
-  async function transactWithRetry(
-    frameBytes: Buffer,
-    description: string
-  ): Promise<ClassifiedFrame | { failed: string }> {
-    for (let attempt = 0; attempt <= RESPONSE_RETRIES; attempt++) {
-      let result: ClassifiedFrame | "timeout";
-      try {
-        result = await transactOnce(frameBytes, description);
-      } catch (writeError) {
-        // The write itself failed (device closed/unplugged — serialConnection already logs and reopens)
-        return { failed: `write failed: ${writeError instanceof Error ? writeError.message : String(writeError)}` };
-      }
-      if (result !== "timeout") {
-        reportTransactSuccess();
-        return result;
-      }
-      if (attempt < RESPONSE_RETRIES) {
-        warnLog("No response to", description, "within", RESPONSE_TIMEOUT_MS, "ms — retrying once");
-      }
-    }
-    return { failed: `no response within ${RESPONSE_TIMEOUT_MS} ms (after ${RESPONSE_RETRIES + 1} attempts)` };
   }
 
   function reportTransactFailure(description: string, failure: string) {
@@ -197,19 +126,34 @@ export function createInverterSession({
     }
   }
 
+  /** Undefined when the query got no usable answer (no response, or a round the gate dropped) */
   async function runQuery(command: Pi17QueryCommandName): Promise<DecodedFields | undefined> {
     const description = `query ${command}`;
-    const result = await transactWithRetry(buildQueryFrame(command), description);
+    const result = await serialExchange.exchange(buildQueryFrame(command), { kind: "query", command }, description);
     if ("failed" in result) {
       reportTransactFailure(description, result.failed);
       return undefined;
     }
-    if (result.kind !== "data") {
-      errorLog("Inverter answered", description, "with", result.kind, "— expected a data frame");
+    reportTransactSuccess();
+    if (result.frame.kind !== "data") {
+      // The query expectation only ever accepts data frames — reaching this is an attribution bug
+      errorLog("Inverter answered", description, "with", result.frame.kind, "— expected a data frame");
       return undefined;
     }
-    const { fields, problems } = decodeQueryPayload(command, result.payloadText);
-    for (const problem of problems) warnLog("Decoding", command, "response:", problem);
+    const { fields, problems } = decodeQueryPayload(command, result.frame.payloadText);
+    for (const problem of problems) warnDecodeProblem("Decoding", command, "response:", problem);
+    const implausibleFields = implausibleFieldsIn(fields);
+    if (implausibleFields.length) {
+      droppedImplausibleRounds++;
+      warnImplausibleRound(
+        "Dropping implausible",
+        command,
+        "round before any consumer sees it:",
+        implausibleFields.join("; "),
+        `(${droppedImplausibleRounds} dropped since start)`
+      );
+      return undefined;
+    }
     onDecodedRound({ command, fields, decodedAt: Date.now() });
     return fields;
   }
@@ -222,7 +166,7 @@ export function createInverterSession({
     queuedSetterItems.delete(command);
     schedulerState = withSetterDequeued(schedulerState, command);
     const description = `setter ${command}`;
-    const result = await transactWithRetry(buildSetterFrame(command), description);
+    const result = await serialExchange.exchange(buildSetterFrame(command), { kind: "setter" }, description);
     const sentAt = Date.now();
     setLastWriteAt(sentAt);
     if ("failed" in result) {
@@ -232,15 +176,17 @@ export function createInverterSession({
       schedulerState = afterSetterSent(schedulerState, command, item?.refreshAfterSend ?? [], sentAt, false);
       return;
     }
-    if (result.kind === "ack") {
+    reportTransactSuccess();
+    if (result.frame.kind === "ack") {
       logLog("Inverter ACKed", command, "— confirming actual commit via readback after the quiet gap");
       schedulerState = afterSetterSent(schedulerState, command, item?.refreshAfterSend ?? [], sentAt, true);
       item?.onResult?.({ acknowledged: true });
       return;
     }
-    if (result.kind === "nak") {
+    if (result.frame.kind === "nak") {
       errorLog("Inverter REJECTED (NAK)", command, "— settings unchanged");
     } else {
+      // The setter expectation rejects data frames as late query responses — an attribution bug
       errorLog("Inverter answered setter", command, "with a data frame — treating as not applied");
     }
     schedulerState = afterSetterSent(schedulerState, command, item?.refreshAfterSend ?? [], sentAt, false);
@@ -282,18 +228,42 @@ export function createInverterSession({
     const commands: readonly Pi17QueryCommandName[] = includeSettingsPoll
       ? [...BACKGROUND_POLL_COMMANDS, ...SETTINGS_POLL_COMMANDS]
       : BACKGROUND_POLL_COMMANDS;
+    let hadFailures = false;
     for (const command of commands) {
       // A freshly queued control write preempts the rest of the round
       if (disposed || hasEligibleSetter(schedulerState, Date.now())) break;
-      await runQuery(command);
+      if (!(await runQuery(command))) hadFailures = true;
     }
-    schedulerState = afterPollRound(schedulerState, roundStartedAt, includeSettingsPoll);
+    schedulerState = afterPollRound(schedulerState, {
+      startedAtMs: roundStartedAt,
+      endedAtMs: Date.now(),
+      includedSettingsPoll: includeSettingsPoll,
+      hadFailures,
+    });
+    pollRoundsCompleted++;
   }
+
+  function currentCounters(): InverterSessionCounters {
+    return { ...serialExchange.counters(), droppedImplausibleRounds, pollRoundsCompleted };
+  }
+
+  let countersAtLastStatsLog = currentCounters();
+  const statsTimer = setInterval(() => {
+    const counters = currentCounters();
+    const deltas = counterDeltas(counters, countersAtLastStatsLog);
+    const intervalMinutes = STATS_LOG_INTERVAL_MS / 60_000;
+    logLog(
+      `Inverter serial stats, last ${intervalMinutes} min:`,
+      JSON.stringify(deltas),
+      `(${(deltas.pollRoundsCompleted / intervalMinutes).toFixed(1)} poll rounds/min)`
+    );
+    countersAtLastStatsLog = counters;
+  }, STATS_LOG_INTERVAL_MS);
 
   void (async function pump() {
     while (!disposed) {
       try {
-        if (!connection.isOpen()) {
+        if (!serialExchange.isOpen()) {
           setSerialIsOpen(false);
           await waitUntilOrWoken(Date.now() + 1_000);
           continue;
@@ -312,7 +282,8 @@ export function createInverterSession({
 
   onCleanup(() => {
     disposed = true;
-    connection.close();
+    clearInterval(statsTimer);
+    serialExchange.close();
     wakePump();
   });
 
@@ -329,5 +300,20 @@ export function createInverterSession({
     /** When the last control write went out — the signal behind the quiet-gap poll suppression */
     lastWriteAt,
     serialIsOpen,
+    /** Cumulative wire-level counters plus gate drops and completed poll rounds — for harnesses and debugging */
+    exchangeCounters: currentCounters,
   };
+}
+
+type InverterSessionCounters = SerialExchangeCounters & {
+  droppedImplausibleRounds: number;
+  pollRoundsCompleted: number;
+};
+
+function counterDeltas(current: InverterSessionCounters, previous: InverterSessionCounters): InverterSessionCounters {
+  const deltas = { ...current };
+  for (const key of Object.keys(current) as (keyof InverterSessionCounters)[]) {
+    deltas[key] = current[key] - previous[key];
+  }
+  return deltas;
 }

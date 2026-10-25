@@ -12,9 +12,11 @@ import {
   afterSetterSent,
   CONFIRM_BACKOFF_MS,
   decideNextAction,
+  DEFAULT_SCHEDULER_TIMING,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
   initialSchedulerState,
-  POLL_ROUND_INTERVAL_MS,
+  POLL_ROUND_GAP_AFTER_FAILURE_MS,
+  POLL_ROUND_GAP_MS,
   QUIET_GAP_AFTER_WRITE_MS,
   withSetterDequeued,
   withSetterQueued,
@@ -109,15 +111,22 @@ const bootTime = 1_000_000;
   // Boot: poll immediately, including the settings queries
   const bootDecision = decideNextAction(state, bootTime, SETTINGS_POLL_INTERVAL_MS);
   check("boot decision is a full poll round", bootDecision.action === "poll_round" && bootDecision.includeSettingsPoll);
-  state = afterPollRound(state, bootTime, true);
+  const bootRoundEndedAt = bootTime + 1_900; // GS+PS+GPMP+HECS+BATS at 2400 baud
+  state = afterPollRound(state, {
+    startedAtMs: bootTime,
+    endedAtMs: bootRoundEndedAt,
+    includedSettingsPoll: true,
+    hadFailures: false,
+  });
 
-  // Pacing: next round only POLL_ROUND_INTERVAL_MS after the last round STARTED
-  const pacingDecision = decideNextAction(state, bootTime + 500, SETTINGS_POLL_INTERVAL_MS);
+  // Pacing: rounds run back-to-back — the next one is due POLL_ROUND_GAP_MS after the last one ENDED
+  check("poll rounds are paced back-to-back (gap well under the old 2 s pace)", POLL_ROUND_GAP_MS <= 100);
+  const pacingDecision = decideNextAction(state, bootRoundEndedAt + 10, SETTINGS_POLL_INTERVAL_MS);
   check(
-    "poll pacing waits until the next round is due",
-    pacingDecision.action === "wait" && pacingDecision.untilMs === bootTime + POLL_ROUND_INTERVAL_MS
+    "poll pacing waits only the minimal gap after the round ended",
+    pacingDecision.action === "wait" && pacingDecision.untilMs === bootRoundEndedAt + POLL_ROUND_GAP_MS
   );
-  const nextRoundDecision = decideNextAction(state, bootTime + POLL_ROUND_INTERVAL_MS, SETTINGS_POLL_INTERVAL_MS);
+  const nextRoundDecision = decideNextAction(state, bootRoundEndedAt + POLL_ROUND_GAP_MS, SETTINGS_POLL_INTERVAL_MS);
   check(
     "settings poll not due again until its interval elapses",
     nextRoundDecision.action === "poll_round" && !nextRoundDecision.includeSettingsPoll
@@ -190,8 +199,13 @@ const bootTime = 1_000_000;
   );
   const gatedDecision = decideNextAction(state, requeueTime, SETTINGS_POLL_INTERVAL_MS);
   check("gated setter does not send early (polls continue)", gatedDecision.action === "poll_round");
-  state = afterPollRound(state, requeueTime, false);
-  const waitForGate = decideNextAction(state, requeueTime + 100, SETTINGS_POLL_INTERVAL_MS);
+  state = afterPollRound(state, {
+    startedAtMs: requeueTime - 1_000,
+    endedAtMs: requeueTime,
+    includedSettingsPoll: false,
+    hadFailures: false,
+  });
+  const waitForGate = decideNextAction(state, requeueTime + POLL_ROUND_GAP_MS / 2, SETTINGS_POLL_INTERVAL_MS);
   check(
     "wait wakes no later than the gate opening",
     waitForGate.action === "wait" && waitForGate.untilMs <= sentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS
@@ -209,6 +223,45 @@ const bootTime = 1_000_000;
     state.queuedSetters.length === 1 &&
       state.queuedSetters[0]!.command === "MCHGV0575,0575" &&
       state.queuedSetters[0]!.notBefore === requeueTime + 2_000
+  );
+}
+
+// ---------- a round with a failed query backs off before the next ----------
+{
+  let state = initialSchedulerState();
+  state = afterPollRound(state, {
+    startedAtMs: bootTime,
+    endedAtMs: bootTime + 13_000,
+    includedSettingsPoll: false,
+    hadFailures: true,
+  });
+  const decision = decideNextAction(state, bootTime + 13_000 + POLL_ROUND_GAP_MS, SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "failed round waits the longer failure gap",
+    decision.action === "wait" && decision.untilMs === bootTime + 13_000 + POLL_ROUND_GAP_AFTER_FAILURE_MS
+  );
+}
+
+// ---------- timing: production defaults are the measured constants; overrides are harness-only ----------
+{
+  check(
+    "default timing keeps the measured quiet gap + backoff",
+    DEFAULT_SCHEDULER_TIMING.quietGapAfterWriteMs === QUIET_GAP_AFTER_WRITE_MS &&
+      QUIET_GAP_AFTER_WRITE_MS === 12_000 &&
+      DEFAULT_SCHEDULER_TIMING.confirmBackoffMs === CONFIRM_BACKOFF_MS &&
+      CONFIRM_BACKOFF_MS === 30_000
+  );
+  check(
+    "initialSchedulerState() without overrides uses the defaults",
+    initialSchedulerState().timing.quietGapAfterWriteMs === QUIET_GAP_AFTER_WRITE_MS
+  );
+  let state = initialSchedulerState({ quietGapAfterWriteMs: 1_500, confirmBackoffMs: 3_000 });
+  state = afterSetterSent(state, "GPMP000950", ["GPMP"], bootTime, true);
+  check("quiet-gap override is honoured", state.confirm!.dueAt === bootTime + 1_500);
+  const retry = afterConfirmRun(state, { GPMP: { maximum_feeding_grid_power: 350 } }, bootTime + 1_600);
+  check(
+    "backoff override is honoured",
+    retry.result.outcome === "retry" && retry.result.retryAt === bootTime + 1_600 + 3_000
   );
 }
 

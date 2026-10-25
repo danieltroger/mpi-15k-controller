@@ -5,7 +5,7 @@
  * one store with the settings readbacks (GPMP/HECS/BATS) under the legacy CLI keys, and a
  * per-decoded-response signal the one-way MQTT/Influx publisher hangs off.
  */
-import { type Accessor, createMemo, createSignal } from "solid-js";
+import { type Accessor, batch, createMemo, createSignal } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
 import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
@@ -23,12 +23,16 @@ export function useInverterValues(config: Accessor<Config>) {
   const [$usbValues, setUsbValues] = createStore<UsbValues>({});
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
 
+  // No schedulerTimingOverrides: production runs the measured quiet-gap defaults (schedulerCore.ts)
   const session = createInverterSession({
     poll_values_interval_seconds: createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds),
-    onDecodedRound: round => {
-      applyRoundToStores(round, setInverterValues, setUsbValues);
-      setLastDecodedRound(round);
-    },
+    onDecodedRound: round =>
+      // One batch per round: consumers must never observe half a round. A BATS parse used to
+      // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.
+      batch(() => {
+        applyRoundToStores(round, setInverterValues, setUsbValues);
+        setLastDecodedRound(round);
+      }),
   });
 
   return {
