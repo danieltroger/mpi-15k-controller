@@ -4,11 +4,12 @@
  *   yarn node src/solar/pvFit.selftest.ts
  */
 import { fitSolarString } from "./pvFit.ts";
+import { maskBinColumn, prepareStringTerms } from "./pvFitColumns.ts";
 import { hourSun, maskBin, poaTerms, stringSubstepWatts, unshadedMask, SUBSTEPS_PER_HOUR } from "./pvModel.ts";
-import { judgeSolarRefit } from "./solarRefitGates.ts";
+import { judgeSolarRefit, type RefitJudgement } from "./solarRefitGates.ts";
 import type { SolarFitDataset } from "./pvFit.types.ts";
 import type { SolarRefitOutput } from "./solarRefitComputation.ts";
-import type { SolarModelState } from "./solarModel.types.ts";
+import type { SolarModelFit } from "./solarModel.types.ts";
 import type { SolarStringSpec } from "../config/config.types.ts";
 
 const fails: string[] = [];
@@ -33,12 +34,15 @@ const HOUR_MS = 3600_000;
   );
   const truth = { k: 9, sky_factor: 0.9, mask: trueMask, ceiling_watts: 1e9 };
   const dataset = syntheticDataset(truth, 420);
-  const fit = fitSolarString(
+  const terms = prepareStringTerms(
     dataset,
-    "string1",
     { tilt_degrees: 36, azimuth_degrees: 180, ceiling_watts: 1e9 },
-    { nowMs: dataset.hourStartMs[dataset.hourStartMs.length - 1], halfLifeDays: 365 }
+    maskBinColumn(dataset)
   );
+  const fit = fitSolarString(dataset, "string1", terms, {
+    nowMs: dataset.hourStartMs[dataset.hourStartMs.length - 1],
+    mask_half_life_days: 365,
+  });
   check(
     "fit: capacity recovered within 3 %",
     Math.abs(fit.physical_k / truth.k - 1) < 0.03,
@@ -116,39 +120,46 @@ const HOUR_MS = 3600_000;
   const healthy = judgeSolarRefit({
     computation: computation({}),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
   });
   check(
     "gates: a normal refit is accepted silently",
-    healthy.accepted && !healthy.pageReasons.length && !healthy.warnReasons.length
+    healthy.accepted && !pageReasonsOf(healthy).length && !healthy.warnReasons.length
   );
 
   const brokenLogging = judgeSolarRefit({
     computation: computation({}),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: { recentCompleteShare: 0.4, completeDays: 800 },
     nowMs: julyMs,
   });
-  check("gates: broken telemetry pages and rejects", !brokenLogging.accepted && brokenLogging.pageReasons.length === 1);
+  check(
+    "gates: broken telemetry pages and rejects",
+    !brokenLogging.accepted && pageReasonsOf(brokenLogging).length === 1
+  );
 
   const wrongCapacity = judgeSolarRefit({
     computation: computation({ k1: 3 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
   });
   check(
     "gates: implausible capacity pages and rejects",
-    !wrongCapacity.accepted && wrongCapacity.pageReasons.some(reason => reason.includes("nameplate"))
+    !wrongCapacity.accepted && pageReasonsOf(wrongCapacity).some(reason => reason.includes("nameplate"))
   );
 
   const firstJump = judgeSolarRefit({
     computation: computation({ capacityChange: 0.15 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
@@ -156,22 +167,27 @@ const HOUR_MS = 3600_000;
   check(
     "gates: a first soft rejection only warns",
     !firstJump.accepted &&
-      !firstJump.pageReasons.length &&
+      !pageReasonsOf(firstJump).length &&
       firstJump.warnReasons.length === 1 &&
       firstJump.consecutiveRejections === 1
   );
   const secondJump = judgeSolarRefit({
     computation: computation({ capacityChange: 0.15 }),
-    incumbent: { ...incumbent, consecutive_rejections: 1 },
+    incumbent,
+    consecutiveRejections: 1,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
   });
-  check("gates: the second soft rejection in a row pages", !secondJump.accepted && secondJump.pageReasons.length === 1);
+  check(
+    "gates: the second soft rejection in a row pages",
+    !secondJump.accepted && pageReasonsOf(secondJump).length === 1
+  );
 
   const worseError = judgeSolarRefit({
     computation: computation({ candidateMae: 4.3 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
@@ -181,26 +197,32 @@ const HOUR_MS = 3600_000;
   const stringDown = judgeSolarRefit({
     computation: computation({ level1: 0.6 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
   });
   check(
     "gates: a string far below the model in summer pages (fit still accepted)",
-    stringDown.accepted && stringDown.pageReasons.some(reason => reason.includes("90 days"))
+    stringDown.accepted && pageReasonsOf(stringDown).some(reason => reason.includes("90 days"))
   );
   const winterLow = judgeSolarRefit({
     computation: computation({ level1: 0.4 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: januaryMs,
   });
-  check("gates: the same deficit in January (snow) stays quiet", winterLow.accepted && !winterLow.pageReasons.length);
+  check(
+    "gates: the same deficit in January (snow) stays quiet",
+    winterLow.accepted && !pageReasonsOf(winterLow).length
+  );
 
   const firstLow = judgeSolarRefit({
     computation: computation({ level1: 0.88 }),
     incumbent,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
@@ -216,6 +238,7 @@ const HOUR_MS = 3600_000;
   const secondLow = judgeSolarRefit({
     computation: computation({ level1: 0.89 }),
     incumbent: withHistory,
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: julyMs,
@@ -231,11 +254,16 @@ const HOUR_MS = 3600_000;
       ...incumbent,
       strings: { ...incumbent.strings, string1: { ...incumbent.strings.string1, level_multiplier: 0.9 } },
     },
+    consecutiveRejections: 0,
     specs,
     coverage: healthyCoverage,
     nowMs: januaryMs,
   });
   check("gates: the level multiplier is frozen through winter", winterFrozen.levels.string1.multiplier === 0.9);
+  check(
+    "gates: the repeated-rejection page tells how to accept a changed plant",
+    pageReasonsOf(secondJump).some(reason => reason.includes("delete backend/solar_model_state.json"))
+  );
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");
@@ -317,7 +345,11 @@ function fitResult(physicalK: number) {
   };
 }
 
-function incumbentState(): SolarModelState {
+function pageReasonsOf(judgement: RefitJudgement): string[] {
+  return Object.values(judgement.pages).flat();
+}
+
+function incumbentState(): SolarModelFit {
   const stringFit = {
     physical_k: 8.9,
     physical_sky_factor: 0.9,
@@ -329,7 +361,6 @@ function incumbentState(): SolarModelState {
     level_ratios: [],
   };
   return {
-    version: 1,
     fitted_at: "2026-06-03T01:40:00.000Z",
     mask_irradiance_source: "satellite",
     geometry: {
@@ -339,6 +370,5 @@ function incumbentState(): SolarModelState {
     strings: { string1: stringFit, string2: { ...stringFit, physical_k: 5.6, forecast_k: 5.1 } },
     fit_hours: { string1: 10000, string2: 9000 },
     trailing_year_daily_mae_kwh: 4,
-    consecutive_rejections: 0,
   };
 }

@@ -75,7 +75,8 @@ export function captureForecastLog(state: AutoTraderState, input: PlannerInput, 
     const date = localDateStr(midHourMs);
     if (date <= todayStr) continue; // today is partial from nowMs; its full forecast was captured yesterday
     const day = perDay.get(date) ?? { pvKwh: 0, houseKwh: 0, sellKwh: 0 };
-    day.pvKwh += Math.max(0, input.solarWattsAt(midHourMs)) / 1000;
+    day.pvKwh +=
+      Math.max(0, input.solarAverageWattsBetween?.(hourMs, hourMs + 3600_000) ?? input.solarWattsAt(midHourMs)) / 1000;
     day.houseKwh += Math.max(0, input.houseLoadWattsAt(midHourMs)) / 1000;
     perDay.set(date, day);
   }

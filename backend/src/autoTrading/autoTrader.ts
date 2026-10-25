@@ -351,6 +351,7 @@ async function buildPlannerInput(
     nowMs,
     prices: prices.slots,
     solarWattsAt: solar.wattsAt,
+    solarAverageWattsBetween: solar.averageWattsBetween,
     houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
     // Idle draw and usable capacity now come from the Ah ledger's online-tracked drain/capacity (the Wh
     // fitter's persisted capacity/parasitic state is gone): inverterIdleWatts = drain_a × v_discharge, capacityWh = capacity_ah × v_discharge.

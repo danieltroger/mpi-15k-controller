@@ -1,11 +1,11 @@
 import { fitSolarString } from "./pvFit.ts";
 import { SUBSTEPS_PER_HOUR } from "./pvModel.ts";
-import { computeTermColumns, maskBinColumn, predictHourlyWatts, type TermColumns } from "./pvFitColumns.ts";
+import { maskBinColumn, predictHourlyWatts, prepareStringTerms, type TermColumns } from "./pvFitColumns.ts";
 import type { SolarFitDataset, StringFitResult, StringGeometry } from "./pvFit.types.ts";
-import type { SolarModelState, SolarStringKey } from "./solarModel.types.ts";
+import type { SolarModelFit, SolarStringKey } from "./solarModel.types.ts";
 
 /**
- * Everything CPU-heavy about a refit, pure so it can run in the worker thread (and in selftests):
+ * Everything CPU-heavy about a refit, pure so it can run in the refit child process (and in selftests):
  * the candidate fit per string, plus the numbers the gates judge it by against the incumbent.
  */
 export function computeSolarRefit(input: SolarRefitInput): SolarRefitOutput {
@@ -19,21 +19,21 @@ export function computeSolarRefit(input: SolarRefitInput): SolarRefitOutput {
   const levelWindowHours = hoursSince(input.dataset, input.nowMs - LEVEL_WINDOW_DAYS * 86_400_000);
   for (const stringKey of ["string1", "string2"] as const) {
     const geometry = input.geometry[stringKey];
-    const fit = fitSolarString(input.dataset, stringKey, geometry, {
+    // Once per string: the fit and every gate metric below share these columns
+    const terms = prepareStringTerms(input.dataset, geometry, bins);
+    const fit = fitSolarString(input.dataset, stringKey, terms, {
       nowMs: input.nowMs,
-      halfLifeDays: input.halfLifeDays,
+      mask_half_life_days: input.mask_half_life_days,
     });
-    const physicalTerms = computeTermColumns(input.dataset, input.dataset.physical, geometry);
-    const forecastTerms = computeTermColumns(input.dataset, input.dataset.forecast, geometry);
     const incumbent = input.incumbent?.strings[stringKey];
     const usable = input.dataset.strings[stringKey].usable;
     const usableYear = trailingYearHours.filter(hour => usable[hour]);
     forecastPredictions[stringKey] = {
-      candidate: predictForecast(input.dataset, forecastTerms, bins, fit, geometry, usableYear),
+      candidate: predictForecast(input.dataset, terms.forecast, bins, fit, geometry, usableYear),
       incumbent: incumbent
         ? predictHourlyWatts(
             input.dataset,
-            forecastTerms,
+            terms.forecast,
             bins,
             {
               k: incumbent.forecast_k,
@@ -49,9 +49,9 @@ export function computeSolarRefit(input: SolarRefitInput): SolarRefitOutput {
       fit,
       capacity_change: incumbent ? fit.physical_k / incumbent.physical_k - 1 : null,
       mask_energy_change: incumbent
-        ? maskEnergyChange(input.dataset, physicalTerms, bins, fit, incumbent.mask, geometry, usableYear)
+        ? maskEnergyChange(input.dataset, terms.physical, bins, fit, incumbent.mask, geometry, usableYear)
         : null,
-      level: levelRatio(input.dataset, stringKey, forecastTerms, bins, fit, geometry, levelWindowHours),
+      level: levelRatio(input.dataset, stringKey, terms.forecast, bins, fit, geometry, levelWindowHours),
     };
   }
   return {
@@ -64,8 +64,9 @@ export type SolarRefitInput = {
   dataset: SolarFitDataset;
   geometry: Record<SolarStringKey, StringGeometry>;
   nowMs: number;
-  halfLifeDays: number | null;
-  incumbent?: SolarModelState;
+  /** 0 = all history weighted equally */
+  mask_half_life_days: number;
+  incumbent?: SolarModelFit;
 };
 
 export type SolarRefitOutput = {

@@ -1,6 +1,6 @@
 import type { SolarStringSpec } from "../config/config.types.ts";
 import type { SolarRefitOutput } from "./solarRefitComputation.ts";
-import type { SolarModelState, SolarStringKey } from "./solarModel.types.ts";
+import type { SolarModelFit, SolarRefitPageKind, SolarStringKey } from "./solarModel.types.ts";
 
 /**
  * Accept/reject a candidate refit. Only failures that mean something real page (P2):
@@ -11,10 +11,13 @@ import type { SolarModelState, SolarStringKey } from "./solarModel.types.ts";
  *  - the 90-day production level outside ±20 % of the model in March–October (string down, new shade)
  * The old gate (hourly R² ≥ 0.6 on 45 days) failed on winter cloud noise alone: 22 of 59 refits.
  * Everything here judges whole years or physical bounds, so ordinary winter noise can't trip it.
+ * The caller pages each kind once per episode (solarRefitPaging.ts), not on every retry.
  */
 export function judgeSolarRefit(input: {
   computation: SolarRefitOutput;
-  incumbent: SolarModelState | undefined;
+  incumbent: SolarModelFit | undefined;
+  /** Soft rejections in a row so far (from the persisted refit status) */
+  consecutiveRejections: number;
   specs: Record<SolarStringKey, SolarStringSpec>;
   coverage: { recentCompleteShare: number; completeDays: number };
   nowMs: number;
@@ -30,10 +33,11 @@ export function judgeSolarRefit(input: {
   if (input.coverage.completeDays < MIN_COMPLETE_DAYS) {
     return {
       accepted: false,
-      pageReasons: hardFailures,
+      hardFailure: hardFailures.length > 0,
+      pages: hardFailures.length ? { hard_failure: hardFailures } : {},
       warnReasons: [`only ${input.coverage.completeDays} days of complete history — need ${MIN_COMPLETE_DAYS} to fit`],
       levels: currentLevels(input.incumbent),
-      consecutiveRejections: input.incumbent?.consecutive_rejections ?? 0,
+      consecutiveRejections: input.consecutiveRejections,
     };
   }
   for (const stringKey of ["string1", "string2"] as const) {
@@ -72,15 +76,24 @@ export function judgeSolarRefit(input: {
     }
   }
   const rejected = hardFailures.length > 0 || softReasons.length > 0;
-  const consecutiveRejections = softReasons.length ? (input.incumbent?.consecutive_rejections ?? 0) + 1 : 0;
-  const persistentRejection =
+  const consecutiveRejections = softReasons.length ? input.consecutiveRejections + 1 : 0;
+  const repeatedRejection =
     consecutiveRejections >= PAGE_AFTER_REJECTIONS
-      ? [`refit rejected ${consecutiveRejections} times in a row: ${softReasons.join("; ")}`]
+      ? [
+          `refit rejected ${consecutiveRejections} times in a row (${softReasons.join("; ")}). ` +
+            `If the plant really changed (panels moved, a tree cut down), delete backend/solar_model_state.json — ` +
+            `the controller notices within the hour and fits from scratch, no restart needed`,
+        ]
       : [];
+  const pages: RefitJudgement["pages"] = {};
+  if (hardFailures.length) pages.hard_failure = hardFailures;
+  if (levelAlarms.length) pages.level = levelAlarms;
+  if (repeatedRejection.length) pages.repeated_rejection = repeatedRejection;
   return {
     accepted: !rejected,
-    pageReasons: [...hardFailures, ...levelAlarms, ...persistentRejection],
-    warnReasons: persistentRejection.length ? [] : softReasons,
+    hardFailure: hardFailures.length > 0,
+    pages,
+    warnReasons: repeatedRejection.length ? [] : softReasons,
     levels,
     consecutiveRejections,
   };
@@ -88,8 +101,10 @@ export function judgeSolarRefit(input: {
 
 export type RefitJudgement = {
   accepted: boolean;
-  /** Each becomes an errorLog (= P2 via alerting.error_log_p2) */
-  pageReasons: string[];
+  /** A hard failure (broken data, implausible capacity) — retried with back-off, not on the monthly cadence */
+  hardFailure: boolean;
+  /** Page-worthy reasons by kind; each kind becomes one errorLog (= P2) per episode */
+  pages: Partial<Record<Exclude<SolarRefitPageKind, "failing">, string[]>>;
   /** Rejection reasons that only warn (a first soft rejection, too little history) */
   warnReasons: string[];
   levels: Record<SolarStringKey, { multiplier: number; ratios: { at: string; ratio: number | null }[] }>;
@@ -116,7 +131,7 @@ const LEVEL_HISTORY_LENGTH = 6;
 
 function nextLevels(
   computation: SolarRefitOutput,
-  incumbent: SolarModelState | undefined,
+  incumbent: SolarModelFit | undefined,
   nowMs: number
 ): RefitJudgement["levels"] {
   const levels = {} as RefitJudgement["levels"];
@@ -146,7 +161,7 @@ function nextLevels(
   return levels;
 }
 
-function currentLevels(incumbent: SolarModelState | undefined): RefitJudgement["levels"] {
+function currentLevels(incumbent: SolarModelFit | undefined): RefitJudgement["levels"] {
   const levels = {} as RefitJudgement["levels"];
   for (const stringKey of ["string1", "string2"] as const) {
     levels[stringKey] = {

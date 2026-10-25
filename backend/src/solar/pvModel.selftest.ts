@@ -11,7 +11,7 @@ import { hourSun, poaTerms, stringSubstepWatts, unshadedMask, type StringCoeffic
 import { buildSolarForecast } from "./solarForecastModel.ts";
 import { nowcastRatio, snowNowcastFactor } from "./snowNowcast.ts";
 import { snowGateFlags } from "./snowGate.ts";
-import { judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
+import { decideWeekAlert, judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
 import { localDayBounds } from "./solarForecastAccuracy.ts";
 import type { RadiationHour } from "./solarModel.types.ts";
 
@@ -256,16 +256,11 @@ const HOUR_MS = 3600_000;
     ...Array.from({ length: 8 }, () => ({ actualWatts: 1000, modelWatts: 1000 })),
   ]);
   check("nowcast: snow sliding off is learned within a day of sun", recovering > 0.5, `(${recovering.toFixed(3)})`);
-  const gate = snowGateFlags([
-    { hourStartMs: 0, globalHorizontal: 0, diffuseHorizontal: 0, directHorizontal: 0, snowfallCm: 0.6 },
-    ...Array.from({ length: 170 }, (_, index) => ({
-      hourStartMs: (index + 1) * HOUR_MS,
-      globalHorizontal: 0,
-      diffuseHorizontal: 0,
-      directHorizontal: 0,
-      snowfallCm: 0,
-    })),
-  ]);
+  const weekOfHours = 171;
+  const gate = snowGateFlags(
+    Array.from({ length: weekOfHours }, (_, hour) => (hour === 0 ? 0.6 : 0)),
+    Array.from({ length: weekOfHours }, () => Number.NaN)
+  );
   check(
     "snow gate: a week of fresh snowfall keeps it open, then it closes",
     gate[0] === 1 && gate[167] === 1 && gate[168] === 0
@@ -274,7 +269,11 @@ const HOUR_MS = 3600_000;
 
 // ---------- rolling-week accuracy rule ----------
 {
-  const thresholds = { min_ratio: 0.65, max_ratio: 1.5, max_error_share: 0.55 };
+  const thresholds = {
+    solar_forecast_week_min_ratio: 0.65,
+    solar_forecast_week_max_ratio: 1.5,
+    solar_forecast_week_max_error_share: 0.55,
+  };
   const week = (actual: number, forecast: number) =>
     Array.from({ length: 7 }, (_, day) => ({
       date: `2026-05-0${day + 1}`,
@@ -290,6 +289,69 @@ const HOUR_MS = 3600_000;
   check(
     "week rule: under five valid days gives no verdict",
     judgeForecastWeek(week(25, 55).slice(0, 4), thresholds) === undefined
+  );
+}
+
+// ---------- week alert: once per episode, resolve when it clears ----------
+{
+  const thresholds = {
+    solar_forecast_week_min_ratio: 0.65,
+    solar_forecast_week_max_ratio: 1.5,
+    solar_forecast_week_max_error_share: 0.55,
+  };
+  const zeroForecastWeek = Array.from({ length: 7 }, (_, day) => ({
+    date: `2026-05-1${day}`,
+    actual_kwh: 40,
+    forecast_kwh: 0,
+  }));
+  const broken = judgeForecastWeek(zeroForecastWeek, thresholds);
+  check(
+    "week rule: an all-zero forecast week alarms on the error share, with no finite ratio to write",
+    broken?.alarm === true && !Number.isFinite(broken.ratio) && Number.isFinite(broken.error_share)
+  );
+  // A rolling-window episode: the alarm holds on days 2–6
+  const alarms = [false, false, true, true, true, true, true, false, false];
+  const decisions = alarms.map((today, day) =>
+    decideWeekAlert({ today, yesterday: alarms[day - 1] ?? false, dayBefore: alarms[day - 2] ?? false })
+  );
+  check(
+    "week alert: one push per episode, one resolve after it",
+    decisions.filter(decision => decision === "push").length === 1 &&
+      decisions.filter(decision => decision === "resolve").length === 1,
+    `(${decisions.join(",")})`
+  );
+  check(
+    "week alert: a single alarming day never pushes",
+    decideWeekAlert({ today: true, yesterday: false, dayBefore: false }) === "none"
+  );
+}
+
+// ---------- range-averaged forecast: hours and 15-min slots integrate their sub-steps ----------
+{
+  const hourStartMs = Date.parse("2026-06-21T10:00:00Z");
+  const coefficients: StringCoefficients = { k: 1, sky_factor: 1, mask: unshadedMask(), ceiling_watts: 1e9 };
+  const forecast = buildSolarForecast({
+    radiationHours: [{ hourStartMs, globalHorizontal: 600, diffuseHorizontal: 100, directHorizontal: 500 }],
+    nowMs: hourStartMs - 3 * HOUR_MS,
+    latitude: LATITUDE,
+    longitude: LONGITUDE,
+    strings: {
+      string1: { tilt_degrees: 36, azimuth_degrees: 180, coefficients },
+      string2: { tilt_degrees: 45, azimuth_degrees: 300, coefficients },
+    },
+    recentActual: undefined,
+  });
+  const substeps = Array.from({ length: 6 }, (_, substep) => forecast.wattsAt(hourStartMs + substep * 600_000));
+  const hourMean = substeps.reduce((sum, value) => sum + value, 0) / 6;
+  check(
+    "average: hour mean equals the mean of its six sub-steps",
+    Math.abs(forecast.averageWattsBetween(hourStartMs, hourStartMs + HOUR_MS) - hourMean) < 1e-9
+  );
+  const slotStartMs = hourStartMs + 15 * 60_000;
+  const expectedSlot = (substeps[1] * 5 + substeps[2] * 10) / 15;
+  check(
+    "average: a 15-min slot weights the sub-steps it overlaps",
+    Math.abs(forecast.averageWattsBetween(slotStartMs, slotStartMs + 15 * 60_000) - expectedSlot) < 1e-9
   );
 }
 

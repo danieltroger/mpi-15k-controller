@@ -34,6 +34,17 @@ export function computeTermColumns(
 
 export type TermColumns = { beam: Float64Array; isotropic: Float64Array; groundPerAlbedo: Float64Array };
 
+/** Everything geometry-dependent for one string, computed once per refit and shared by fit and gates */
+export type StringTerms = { physical: TermColumns; forecast: TermColumns; bins: Int16Array };
+
+export function prepareStringTerms(dataset: SolarFitDataset, geometry: StringGeometry, bins: Int16Array): StringTerms {
+  return {
+    physical: computeTermColumns(dataset, dataset.physical, geometry),
+    forecast: computeTermColumns(dataset, dataset.forecast, geometry),
+    bins,
+  };
+}
+
 export function hourSunAt(dataset: SolarFitDataset, hour: number): HourSun {
   const offset = hour * SUBSTEPS_PER_HOUR;
   return {

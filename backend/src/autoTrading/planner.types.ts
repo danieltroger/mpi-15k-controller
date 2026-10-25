@@ -38,6 +38,11 @@ export type PlannerInput = {
   prices: PriceSlot15[];
   /** Solar production forecast in watts at a given time. Must cover the price horizon plus the constraint tail. */
   solarWattsAt: (ms: number) => number;
+  /**
+   * Mean solar forecast over [startMs, endMs). The physical model steps every 10 min, so a 15-min
+   * slot's midpoint alone would skip a sub-step; slots and hours integrate through this when given.
+   */
+  solarAverageWattsBetween?: (startMs: number, endMs: number) => number;
   /** House consumption forecast (AC output) in watts, excluding inverter parasitic draw. */
   houseLoadWattsAt: (ms: number) => number;
   parasiticWatts: number;

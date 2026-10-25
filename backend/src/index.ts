@@ -173,7 +173,7 @@ function main() {
 
                     // PV model upkeep: monthly refit (worker thread) + forecast-vs-actual logging and its rolling-week P2
                     const influxClient = useInfluxClient();
-                    startSolarModelRefits({ config, influxClient });
+                    startSolarModelRefits({ config });
                     startSolarForecastAccuracy({ config, influxClient, raise: alertManager.raise });
 
                     const isCharging = createMemo(() => {

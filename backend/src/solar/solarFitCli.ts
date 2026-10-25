@@ -1,43 +1,58 @@
 /**
- * Runs the monthly solar refit by hand, exactly as the controller would (InfluxDB history +
- * open-meteo archives → worker-thread fit → gates), and prints the result. Read-only unless
- * --write is given, which persists backend/solar_model_state.json (e.g. to bootstrap before a
- * planPreview dry-run). Never touches config.json or the inverter — safe next to the live service.
+ * Runs the monthly solar refit by hand, exactly as the controller would (child process: InfluxDB
+ * history + open-meteo archives → fit; then the gates), and prints the result together with the
+ * main thread's peak RSS and longest event-loop stall during the run. Read-only unless --write is
+ * given, which persists backend/solar_model_state.json.
  *
- * Usage (from backend/):  yarn node src/solar/solarFitCli.ts [--write]
+ * Bootstrap a fresh pi from the VM, never on the pi itself (a second Node process holding a refit
+ * next to the controller is too much for the 512 MB Zero 2 W):
+ *   (VM, from backend/)  yarn node src/solar/solarFitCli.ts --write
+ *   scp backend/solar_model_state.json ubuntu@<pi>:mpi-15k-controller/backend/
+ * The running controller picks the copied file up within the hour (mtime check), no restart needed.
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
 import process from "process";
-import Influx from "influx";
+import { monitorEventLoopDelay, performance } from "perf_hooks";
 import { mergeWithDefaults } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import { AZIMUTH_BIN_EDGES, ELEVATION_BIN_EDGES } from "./pvModel.ts";
 import { refitSolarModel } from "./solarRefit.ts";
 import { STATE_FILE_PATH } from "./solarModelStore.ts";
 
+const PROBE_INTERVAL_MS = 5;
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
 const config = mergeWithDefaults(
   JSON.parse(await fs_promises.readFile(configPath, { encoding: "utf-8" })) as Partial<Config>
 );
-if (!config.influxdb) {
-  console.error("No influxdb section in", configPath);
-  process.exit(1);
-}
 const persist = process.argv.includes("--write");
-const { judgement, computation, state } = await refitSolarModel({
+const probe = startMainThreadProbe();
+const { judgement, result, state, error, controllerBlockMs } = await refitSolarModel({
   config,
-  influxClient: new Influx.InfluxDB({ ...config.influxdb }),
   nowMs: Date.now(),
   persist,
 });
+const mainThread = probe.stop();
 
+if (error || !judgement || !result) {
+  console.error("\n=== Solar refit FAILED ===", error);
+  process.exit(1);
+}
 console.log(`\n=== Solar refit: ${judgement.accepted ? "ACCEPTED" : "REJECTED"} ===`);
-for (const reason of judgement.pageReasons) console.log("  would page (P2):", reason);
+for (const [kind, reasons] of Object.entries(judgement.pages)) {
+  for (const reason of reasons ?? []) console.log(`  would page (P2, ${kind}):`, reason);
+}
 for (const reason of judgement.warnReasons) console.log("  warning:", reason);
-console.log("  trailing year:", JSON.stringify(computation.trailing_year));
+console.log("  trailing year:", JSON.stringify(result.computation.trailing_year));
+console.log(
+  `  child: data ${result.load_ms} ms, fit ${result.compute_ms} ms, heap peak ${result.peak_heap_used_mb} MB, ` +
+    `ArrayBuffers peak ${result.peak_array_buffers_mb} MB, RSS peak ${result.peak_rss_mb} MB | ` +
+    `this process: RSS ${mainThread.baselineRssMb} → peak ${mainThread.peakRssMb} MB, event loop busy ${mainThread.activeMs} ms ` +
+    `of the run, delay max ${mainThread.delayMaxMs} ms / p99 ${mainThread.delayP99Ms} ms | ` +
+    `synchronous controller work: fork ${controllerBlockMs?.spawn} ms, judge ${controllerBlockMs?.judge} ms`
+);
 for (const stringKey of ["string1", "string2"] as const) {
-  const { fit, level, capacity_change, mask_energy_change } = computation.strings[stringKey];
+  const { fit, level, capacity_change, mask_energy_change } = result.computation.strings[stringKey];
   const spec = config.automatic_trading.solar_model[stringKey];
   console.log(
     `\n${stringKey} (${spec.tilt_degrees}° / ${spec.azimuth_degrees}°, ${spec.nameplate_kwp} kWp): physical k ${fit.physical_k.toFixed(3)} ` +
@@ -60,6 +75,36 @@ for (const stringKey of ["string1", "string2"] as const) {
   });
 }
 console.log(
-  persist && state ? `\nState written to ${STATE_FILE_PATH}` : "\n(dry run — nothing written; pass --write to persist)"
+  persist
+    ? `\nState written to ${STATE_FILE_PATH} (fit ${state.fit?.fitted_at ?? "none"})`
+    : "\n(dry run — nothing written; pass --write to persist)"
 );
 process.exit(0);
+
+/**
+ * Measures this (controller-equivalent) process while the refit child runs: RSS peak, how long its
+ * event loop was actually busy, and the event-loop delay histogram. On the QEMU VM the idle event
+ * loop alone shows ~40–60 ms scheduling jitter, so the delay max is a noise floor, not a stall.
+ */
+function startMainThreadProbe() {
+  const baselineRss = process.memoryUsage().rss;
+  let peakRss = baselineRss;
+  const utilizationStart = performance.eventLoopUtilization();
+  const delays = monitorEventLoopDelay({ resolution: PROBE_INTERVAL_MS });
+  delays.enable();
+  const sampler = setInterval(() => (peakRss = Math.max(peakRss, process.memoryUsage().rss)), 20);
+  return {
+    stop: () => {
+      clearInterval(sampler);
+      delays.disable();
+      const utilization = performance.eventLoopUtilization(utilizationStart);
+      return {
+        baselineRssMb: Math.round(baselineRss / 1e6),
+        peakRssMb: Math.round(peakRss / 1e6),
+        activeMs: Math.round(utilization.active),
+        delayMaxMs: Math.round(delays.max / 1e6),
+        delayP99Ms: Math.round(delays.percentile(99) / 1e6),
+      };
+    },
+  };
+}

@@ -403,7 +403,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "solar_model", "refit_every_days"],
         "Refit interval",
-        "Re-learn capacity, sky factor and shading mask from all history this often (runs at 03:40 in a worker thread). Fit state lives in backend/solar_model_state.json.",
+        "Re-learn capacity, sky factor and shading mask from all history this often (at night, in a separate process so the controller never stalls). Fit state lives in backend/solar_model_state.json.",
         { unit: "days", min: 1 }
       ),
       f(

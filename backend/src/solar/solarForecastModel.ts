@@ -37,7 +37,11 @@ export function buildSolarForecast(input: {
   // The latest hour that has fully happened is the nowcast's "now"
   const lastCompleteHourMs = Math.floor(input.nowMs / 3600_000) * 3600_000 - 3600_000;
   const pastHours = hours.filter(hour => hour.hourStartMs <= lastCompleteHourMs);
-  const gateFlags = pastHours.length ? snowGateFlags(consecutiveHours(pastHours)) : new Uint8Array(0);
+  const gapFilledPast = pastHours.length ? consecutiveHours(pastHours) : [];
+  const gateFlags = snowGateFlags(
+    gapFilledPast.map(hour => hour?.snowfallCm ?? Number.NaN),
+    gapFilledPast.map(hour => hour?.snowDepthMetres ?? Number.NaN)
+  );
   const gateOpen = gateFlags.length > 0 && gateFlags[gateFlags.length - 1] === 1;
   const nowcast = {} as BuiltSolarForecast["nowcast"];
   for (const stringKey of SOLAR_STRING_KEYS) {
@@ -72,12 +76,14 @@ export function buildSolarForecast(input: {
     const day = new Date(hourStartMs).toISOString().slice(0, 10);
     dailyKwh[day] = (dailyKwh[day] ?? 0) + (hour.string1Watts + hour.string2Watts) / 1000;
   }
+  const wattsAt = (ms: number) => {
+    const hourStartMs = Math.floor(ms / 3600_000) * 3600_000;
+    const substep = Math.floor((ms - hourStartMs) / SUBSTEP_MS);
+    return substepsByHour.get(hourStartMs)?.[substep] ?? 0;
+  };
   return {
-    wattsAt: ms => {
-      const hourStartMs = Math.floor(ms / 3600_000) * 3600_000;
-      const substep = Math.floor((ms - hourStartMs) / (3600_000 / SUBSTEPS_PER_HOUR));
-      return substepsByHour.get(hourStartMs)?.[substep] ?? 0;
-    },
+    wattsAt,
+    averageWattsBetween: (startMs, endMs) => averageOfSteps(wattsAt, startMs, endMs),
     rangeEndMs: hours.length ? hours[hours.length - 1].hourStartMs + 3600_000 : input.nowMs,
     dailyKwh,
     hours: forecastHours,
@@ -88,6 +94,8 @@ export function buildSolarForecast(input: {
 export type BuiltSolarForecast = {
   /** Forecast PV (both strings, W) at a time, stepwise per 10-min sub-step; 0 outside the range */
   wattsAt: (ms: number) => number;
+  /** Mean forecast PV (W) over [startMs, endMs), integrating the sub-steps — for slot and hour energies */
+  averageWattsBetween: (startMs: number, endMs: number) => number;
   rangeEndMs: number;
   /** Daily kWh sums keyed by YYYY-MM-DD (UTC), for logging/status */
   dailyKwh: Record<string, number>;
@@ -97,6 +105,20 @@ export type BuiltSolarForecast = {
 };
 
 export const SOLAR_STRING_KEYS: readonly SolarStringKey[] = ["string1", "string2"];
+
+const SUBSTEP_MS = 3600_000 / SUBSTEPS_PER_HOUR;
+
+/** Exact mean of a function that is constant on each 10-min sub-step */
+function averageOfSteps(wattsAt: (ms: number) => number, startMs: number, endMs: number): number {
+  if (!(endMs > startMs)) return wattsAt(startMs);
+  let energy = 0;
+  for (let cursorMs = startMs; cursorMs < endMs; ) {
+    const stepEndMs = Math.min(endMs, (Math.floor(cursorMs / SUBSTEP_MS) + 1) * SUBSTEP_MS);
+    energy += wattsAt(cursorMs) * (stepEndMs - cursorMs);
+    cursorMs = stepEndMs;
+  }
+  return energy / (endMs - startMs);
+}
 
 /** The snow gate's 7-day window needs consecutive hours; fill gaps with "no data" */
 function consecutiveHours(hours: RadiationHour[]): (RadiationHour | undefined)[] {

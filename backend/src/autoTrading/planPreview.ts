@@ -81,6 +81,7 @@ const input: PlannerInput = {
   nowMs: Date.now(),
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
+  solarAverageWattsBetween: solar.averageWattsBetween,
   houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
   parasiticWatts: inverterIdleWatts(config),
   socPercent: soc,

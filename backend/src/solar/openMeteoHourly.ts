@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { RadiationHour } from "./solarModel.types.ts";
 
 /**
@@ -11,7 +10,7 @@ import type { RadiationHour } from "./solarModel.types.ts";
  * Hours with any null irradiance are dropped.
  */
 export function parseOpenMeteoHourly(payload: unknown): RadiationHour[] {
-  const { hourly } = openMeteoHourlySchema.parse(payload);
+  const hourly = hourlySection(payload);
   const hours: RadiationHour[] = [];
   hourly.time.forEach((label, index) => {
     const globalHorizontal = hourly.shortwave_radiation[index];
@@ -35,19 +34,57 @@ export function parseOpenMeteoHourly(payload: unknown): RadiationHour[] {
   return hours;
 }
 
-const nullableNumbers = z.array(z.number().nullable());
-
-const openMeteoHourlySchema = z.object({
-  hourly: z.object({
-    time: z.array(z.string()),
-    shortwave_radiation: nullableNumbers,
-    direct_radiation: nullableNumbers,
-    diffuse_radiation: nullableNumbers,
-    snowfall: nullableNumbers.optional(),
-    snow_depth: nullableNumbers.optional(),
-  }),
-});
-
 /** Variables requested from every source that has them (the satellite has no snow) */
 export const RADIATION_VARIABLES = "shortwave_radiation,direct_radiation,diffuse_radiation";
 export const SNOW_VARIABLES = "snowfall,snow_depth";
+
+type NullableNumbers = (number | null)[];
+
+type OpenMeteoHourly = {
+  time: string[];
+  shortwave_radiation: NullableNumbers;
+  direct_radiation: NullableNumbers;
+  diffuse_radiation: NullableNumbers;
+  snowfall?: NullableNumbers;
+  snow_depth?: NullableNumbers;
+};
+
+/**
+ * Narrows the payload by hand rather than with zod: this module also runs in the refit child
+ * process, which loads no npm packages (see solarRefitRunner.ts).
+ */
+function hourlySection(payload: unknown): OpenMeteoHourly {
+  const hourly = isRecord(payload) ? payload.hourly : undefined;
+  if (!isRecord(hourly) || !isStringArray(hourly.time)) {
+    throw new Error(`open-meteo response without an hourly.time array: ${JSON.stringify(payload).slice(0, 200)}`);
+  }
+  return {
+    time: hourly.time,
+    shortwave_radiation: nullableNumbersOf(hourly, "shortwave_radiation", true) ?? [],
+    direct_radiation: nullableNumbersOf(hourly, "direct_radiation", true) ?? [],
+    diffuse_radiation: nullableNumbersOf(hourly, "diffuse_radiation", true) ?? [],
+    snowfall: nullableNumbersOf(hourly, "snowfall", false),
+    snow_depth: nullableNumbersOf(hourly, "snow_depth", false),
+  };
+}
+
+function nullableNumbersOf(
+  hourly: Record<string, unknown>,
+  name: string,
+  required: boolean
+): NullableNumbers | undefined {
+  const values = hourly[name];
+  if (values === undefined && !required) return undefined;
+  if (!Array.isArray(values) || !values.every(value => value === null || typeof value === "number")) {
+    throw new Error(`open-meteo response has no usable hourly.${name}`);
+  }
+  return values as NullableNumbers;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(entry => typeof entry === "string");
+}

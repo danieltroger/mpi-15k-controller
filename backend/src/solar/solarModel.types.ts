@@ -35,7 +35,7 @@ export type SolarStringFit = {
    * The same two, re-calibrated by least squares against the forecast archive: forecast irradiance
    * has its own seasonal bias (darker than satellite in summer) and the forecast must hit the MEAN,
    * so these are what the live forecast uses. A sky factor above 1 here is forecast calibration,
-   * not physics: "forecast says diffuse" means some sun on average.
+   * not physics: "forecast says diffuse" means some sun on average — so it is not capped.
    */
   forecast_k: number;
   forecast_sky_factor: number;
@@ -49,8 +49,8 @@ export type SolarStringFit = {
   level_ratios: { at: string; ratio: number | null }[];
 };
 
-export type SolarModelState = {
-  version: 1;
+/** An accepted fit */
+export type SolarModelFit = {
   fitted_at: string;
   mask_irradiance_source: "satellite" | "forecast_archive";
   /** Geometry the mask was fitted for — a config edit invalidates the fit until the next refit */
@@ -60,7 +60,31 @@ export type SolarModelState = {
   fit_hours: Record<SolarStringKey, number>;
   /** Trailing-year daily-kWh MAE of the accepted fit on forecast inputs (the regression gate's yardstick) */
   trailing_year_daily_mae_kwh: number | null;
-  /** Refits rejected in a row by the trailing-year gate — the second one pages */
+};
+
+/** What a page (P2) is about — each kind pages once per episode and re-arms once it clears */
+export type SolarRefitPageKind = "hard_failure" | "level" | "repeated_rejection" | "failing";
+
+/** Refit bookkeeping, persisted even while there is no fit, so retries back off and pages don't repeat */
+export type SolarRefitStatus = {
+  last_attempt_at?: string;
+  last_outcome?: "accepted" | "rejected" | "failed";
+  last_reason?: string;
+  /** Soft rejections in a row (with a fit in place) — the second one pages */
   consecutive_rejections: number;
-  last_attempt?: { at: string; outcome: "accepted" | "rejected" | "failed"; reason?: string };
+  /** Hard rejections and thrown errors in a row — drives the retry back-off (3 h → 12 h → daily) */
+  consecutive_failures: number;
+  /** No refit before this (back-off after failures) */
+  next_attempt_at?: string;
+  /** Since when refits have been failing (thrown errors), for the overdue page */
+  failing_since?: string;
+  /** When each kind of page last fired in its current episode */
+  paged: Partial<Record<SolarRefitPageKind, string>>;
+};
+
+export type SolarModelState = {
+  version: 2;
+  /** Absent until a fit for the configured geometry has been accepted */
+  fit?: SolarModelFit;
+  refit: SolarRefitStatus;
 };

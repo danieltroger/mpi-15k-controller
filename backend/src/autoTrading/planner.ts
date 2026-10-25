@@ -403,7 +403,7 @@ function buildSlots(input: PlannerInput): Slot[] {
       endMs,
       durationH,
       spot,
-      pvW: Math.max(0, input.solarWattsAt(midMs)),
+      pvW: Math.max(0, input.solarAverageWattsBetween?.(effectiveStart, endMs) ?? input.solarWattsAt(midMs)),
       houseW: Math.max(0, houseLoadWattsAt(midMs)),
       fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
       fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),

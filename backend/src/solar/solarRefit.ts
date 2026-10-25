@@ -1,123 +1,208 @@
-import type Influx from "influx";
+import { performance } from "perf_hooks";
 import type { Config } from "../config/config.types.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import { fetchRadiationArchive, type RadiationArchiveSource } from "./openMeteoClient.ts";
-import { queryPvHistory } from "./pvHistory.ts";
-import { buildSolarFitDataset } from "./solarFitDataset.ts";
-import { runSolarRefitInWorker } from "./solarFitRunner.ts";
+import { runSolarRefitInChildProcess } from "./solarRefitRunner.ts";
 import { judgeSolarRefit, type RefitJudgement } from "./solarRefitGates.ts";
-import type { SolarRefitOutput } from "./solarRefitComputation.ts";
+import type { SolarRefitJobResult } from "./solarRefitJob.ts";
 import { loadSolarModelState, saveSolarModelState } from "./solarModelStore.ts";
 import { fittedGeometryMatches, stringGeometries } from "./solarModelGeometry.ts";
-import type { SolarModelState, SolarStringKey } from "./solarModel.types.ts";
+import type {
+  SolarModelFit,
+  SolarModelState,
+  SolarRefitPageKind,
+  SolarRefitStatus,
+  SolarStringKey,
+} from "./solarModel.types.ts";
 
 /**
- * One refit: read the whole production history and both irradiance archives, fit in a worker,
- * judge the candidate (solarRefitGates.ts) and persist it if accepted. Pages (errorLog → P2) only
- * on the gates' real-failure reasons; everything else warns. Throws on fetch/query failures —
- * the scheduler decides whether a failure has lasted long enough to page.
+ * One refit: a child process does all the heavy lifting (solarRefitJob.ts); here the candidate is
+ * judged (solarRefitGates.ts), paged about at most once per episode per kind, and persisted —
+ * the refit status too, even when nothing was fitted, so retries back off (3 h → 12 h → daily)
+ * instead of re-running and re-paging every few hours. Concurrent calls join the one in flight
+ * (module-level, so it holds across index.ts's in-process main() restarts), and a result never
+ * overwrites a newer fit someone else wrote meanwhile (the CLI bootstrap).
  */
-export async function refitSolarModel(input: {
-  config: Config;
-  influxClient: Influx.InfluxDB;
-  nowMs: number;
-  /** false = dry run (the CLI): judge and report, but don't persist */
-  persist: boolean;
-}): Promise<{ judgement: RefitJudgement; computation: SolarRefitOutput; state: SolarModelState | undefined }> {
-  const tradingConfig = input.config.automatic_trading;
-  const solarModel = tradingConfig.solar_model;
-  const fromMs = Date.parse(solarModel.history_start);
-  const toMs = Math.floor(input.nowMs / 3600_000) * 3600_000;
-  if (!Number.isFinite(fromMs))
-    throw new Error(`solar_model.history_start "${solarModel.history_start}" is not a date`);
-  const startedAtMs = Date.now();
+export function refitSolarModel(input: { config: Config; nowMs: number; persist: boolean }): Promise<RefitOutcome> {
+  refitInFlight ??= performRefit(input).finally(() => (refitInFlight = undefined));
+  return refitInFlight;
+}
 
-  const history = await queryPvHistory(input.influxClient, fromMs, toMs);
-  const location = { latitude: tradingConfig.latitude, longitude: tradingConfig.longitude };
-  const forecastRadiation = await fetchRadiationArchive({ source: "forecast_archive", ...location, fromMs, toMs });
-  const { radiation: physicalRadiation, source: maskSource } = await fetchPhysicalRadiation({
-    preferred: solarModel.mask_irradiance_source,
-    forecastRadiation,
-    archive: { ...location, fromMs, toMs },
-  });
-  const rewiredAtMs = solarModel.rewired_at ? Date.parse(solarModel.rewired_at) : Number.NaN;
-  const { dataset, completeHours } = buildSolarFitDataset({
-    history,
-    physicalRadiation,
-    forecastRadiation,
-    ...location,
-    rewiredAtMs,
-  });
-  const loadedAtMs = Date.now();
+export type RefitOutcome = {
+  judgement: RefitJudgement | undefined;
+  result: SolarRefitJobResult | undefined;
+  state: SolarModelState;
+  error?: unknown;
+  /** Synchronous controller-side work: forking the child, and judging + building the state */
+  controllerBlockMs?: { spawn: number; judge: number };
+};
 
+let refitInFlight: Promise<RefitOutcome> | undefined;
+
+/** Retry spacing after hard rejections and thrown errors: 3 h, 12 h, then daily */
+const FAILURE_BACKOFF_MS = [3 * 3600_000, 12 * 3600_000, 24 * 3600_000];
+/** A fit this much older than refit_every_days pages when refits keep failing */
+const OVERDUE_GRACE_DAYS = 7;
+/** With no fit at all, failing for this long pages */
+const UNFITTED_FAILING_PAGE_MS = 86_400_000;
+
+async function performRefit(input: { config: Config; nowMs: number; persist: boolean }): Promise<RefitOutcome> {
+  const { config, nowMs } = input;
+  const solarModel = config.automatic_trading.solar_model;
   const stored = await loadSolarModelState();
-  const incumbent = stored && fittedGeometryMatches(stored, solarModel) ? stored : undefined;
-  const geometry = stringGeometries(solarModel);
-  const computation = await runSolarRefitInWorker({
-    dataset,
-    geometry,
-    nowMs: input.nowMs,
-    halfLifeDays: solarModel.mask_half_life_days > 0 ? solarModel.mask_half_life_days : null,
-    incumbent,
-  });
+  const incumbent = stored?.fit && fittedGeometryMatches(stored.fit, solarModel) ? stored.fit : undefined;
+  const status: SolarRefitStatus = structuredClone(stored?.refit ?? emptyRefitStatus());
+  const startedAtIso = new Date(nowMs).toISOString();
+  let result: SolarRefitJobResult & { controller_spawn_ms: number };
+  try {
+    if (!config.influxdb) throw new Error("InfluxDB is not configured");
+    result = await runSolarRefitInChildProcess({
+      influxdb: config.influxdb,
+      latitude: config.automatic_trading.latitude,
+      longitude: config.automatic_trading.longitude,
+      solar_model: solarModel,
+      full_battery_voltage: config.full_battery_voltage,
+      nowMs,
+      incumbent,
+    });
+  } catch (error) {
+    recordFailure(status, { nowMs, incumbent, refit_every_days: solarModel.refit_every_days, error });
+    const state: SolarModelState = { version: 2, fit: stored?.fit, refit: status };
+    if (input.persist) await persistUnlessSuperseded(state, startedAtIso);
+    return { judgement: undefined, result: undefined, state, error };
+  }
+  const judgingStartedMs = performance.now();
+  if (result.satellite_error) {
+    warnLog(
+      "Solar model: satellite irradiance unavailable, fitted the mask on the forecast archive",
+      result.satellite_error
+    );
+  }
   const judgement = judgeSolarRefit({
-    computation,
+    computation: result.computation,
     incumbent,
+    consecutiveRejections: status.consecutive_rejections,
     specs: { string1: solarModel.string1, string2: solarModel.string2 },
-    coverage: coverageOf(dataset.hourStartMs, completeHours, input.nowMs),
-    nowMs: input.nowMs,
+    coverage: result.coverage,
+    nowMs,
   });
   logLog(
-    `Solar model: refit computed in ${((Date.now() - loadedAtMs) / 1000).toFixed(1)} s (data ${((loadedAtMs - startedAtMs) / 1000).toFixed(1)} s, mask on ${maskSource}) —`,
-    describeComputation(computation),
+    `Solar model: refit (child process: data ${(result.load_ms / 1000).toFixed(1)} s, fit ${(result.compute_ms / 1000).toFixed(1)} s, ` +
+      `heap peak ${result.peak_heap_used_mb} MB, RSS peak ${result.peak_rss_mb} MB, mask on ${result.mask_irradiance_source}) —`,
+    describeComputation(result),
     judgement.accepted ? "→ accepted" : "→ rejected"
   );
   for (const reason of judgement.warnReasons) warnLog("Solar model refit:", reason);
-  for (const reason of judgement.pageReasons) errorLog("Solar model refit:", reason);
+  pageOncePerEpisode(status, judgement.pages, nowMs);
 
-  const attempt = {
-    at: new Date(input.nowMs).toISOString(),
-    outcome: judgement.accepted ? ("accepted" as const) : ("rejected" as const),
-    reason: [...judgement.pageReasons, ...judgement.warnReasons].join("; ") || undefined,
+  const reasons = [...Object.values(judgement.pages).flat(), ...judgement.warnReasons];
+  status.last_attempt_at = startedAtIso;
+  status.last_outcome = judgement.accepted ? "accepted" : "rejected";
+  status.last_reason = reasons.join("; ") || undefined;
+  status.consecutive_rejections = judgement.consecutiveRejections;
+  status.failing_since = undefined;
+  delete status.paged.failing;
+  const unfittedRejection = !judgement.accepted && !incumbent;
+  if (judgement.hardFailure || unfittedRejection) {
+    status.consecutive_failures += 1;
+    status.next_attempt_at = backoffUntil(nowMs, status.consecutive_failures);
+  } else {
+    status.consecutive_failures = 0;
+    status.next_attempt_at = undefined;
+  }
+  const fit = judgement.accepted ? acceptedFit(result, judgement, solarModel, nowMs) : stored?.fit;
+  const state: SolarModelState = { version: 2, fit, refit: status };
+  const controllerBlockMs = {
+    spawn: Math.round(result.controller_spawn_ms * 10) / 10,
+    judge: Math.round((performance.now() - judgingStartedMs) * 10) / 10,
   };
-  const state: SolarModelState | undefined = judgement.accepted
-    ? acceptedState({ computation, judgement, solarModelGeometry: geometry, maskSource, attempt, nowMs: input.nowMs })
-    : incumbent && { ...incumbent, consecutive_rejections: judgement.consecutiveRejections, last_attempt: attempt };
-  if (input.persist && state) await saveSolarModelState(state);
-  return { judgement, computation, state };
+  if (input.persist) await persistUnlessSuperseded(state, startedAtIso);
+  return { judgement, result, state, controllerBlockMs };
 }
 
-/** Satellite by default; the forecast archive if the satellite API fails (backtest: costs ±0.5 %). */
-async function fetchPhysicalRadiation(input: {
-  preferred: RadiationArchiveSource;
-  forecastRadiation: Awaited<ReturnType<typeof fetchRadiationArchive>>;
-  archive: { latitude: number; longitude: number; fromMs: number; toMs: number };
-}): Promise<{
-  radiation: Awaited<ReturnType<typeof fetchRadiationArchive>>;
-  source: SolarModelState["mask_irradiance_source"];
-}> {
-  if (input.preferred === "forecast_archive") return { radiation: input.forecastRadiation, source: "forecast_archive" };
-  try {
-    return { radiation: await fetchRadiationArchive({ source: "satellite", ...input.archive }), source: "satellite" };
-  } catch (error) {
-    warnLog("Solar model: satellite irradiance unavailable, fitting the mask on the forecast archive instead", error);
-    return { radiation: input.forecastRadiation, source: "forecast_archive" };
+/** Each kind pages once, then only warns until a refit without that kind of problem re-arms it. */
+export function pageOncePerEpisode(status: SolarRefitStatus, pages: RefitJudgement["pages"], nowMs: number) {
+  for (const kind of ["hard_failure", "level", "repeated_rejection"] as const) {
+    const reasons = pages[kind];
+    if (!reasons?.length) {
+      delete status.paged[kind];
+      continue;
+    }
+    if (status.paged[kind]) {
+      for (const reason of reasons) warnLog(`Solar model refit (already paged ${status.paged[kind]}):`, reason);
+      continue;
+    }
+    for (const reason of reasons) errorLog("Solar model refit:", reason);
+    status.paged[kind] = new Date(nowMs).toISOString();
   }
 }
 
-function acceptedState(input: {
-  computation: SolarRefitOutput;
-  judgement: RefitJudgement;
-  solarModelGeometry: ReturnType<typeof stringGeometries>;
-  maskSource: SolarModelState["mask_irradiance_source"];
-  attempt: NonNullable<SolarModelState["last_attempt"]>;
-  nowMs: number;
-}): SolarModelState {
-  const strings = {} as SolarModelState["strings"];
-  const fitHours = {} as SolarModelState["fit_hours"];
-  const geometry = {} as SolarModelState["geometry"];
+/** A thrown refit (Influx/open-meteo down, worker died): back off; page once if the model is overdue. */
+export function recordFailure(
+  status: SolarRefitStatus,
+  input: { nowMs: number; incumbent: SolarModelFit | undefined; refit_every_days: number; error: unknown }
+) {
+  status.last_attempt_at = new Date(input.nowMs).toISOString();
+  status.last_outcome = "failed";
+  status.last_reason = String(input.error);
+  status.failing_since ??= status.last_attempt_at;
+  status.consecutive_failures += 1;
+  status.next_attempt_at = backoffUntil(input.nowMs, status.consecutive_failures);
+  const overdue = input.incumbent
+    ? input.nowMs - Date.parse(input.incumbent.fitted_at) > (input.refit_every_days + OVERDUE_GRACE_DAYS) * 86_400_000
+    : input.nowMs - Date.parse(status.failing_since) >= UNFITTED_FAILING_PAGE_MS;
+  const page: SolarRefitPageKind = "failing";
+  if (overdue && !status.paged[page]) {
+    errorLog(
+      input.incumbent
+        ? `Solar model: refits keep failing and the fit is now ${Math.round((input.nowMs - Date.parse(input.incumbent.fitted_at)) / 86_400_000)} days old`
+        : "Solar model: no fit for a day — forecasting on the default horizon mask",
+      input.error
+    );
+    status.paged[page] = status.last_attempt_at;
+  } else {
+    warnLog(
+      `Solar model: refit failed (attempt ${status.consecutive_failures}, retry after ${status.next_attempt_at})`,
+      input.error
+    );
+  }
+}
+
+async function persistUnlessSuperseded(state: SolarModelState, startedAtIso: string) {
+  try {
+    const current = await loadSolarModelState();
+    if (current?.fit && current.fit.fitted_at > startedAtIso) {
+      warnLog(
+        `Solar model: a newer fit (${current.fit.fitted_at}) was written while this refit ran — keeping it, discarding this result`
+      );
+      return;
+    }
+    await saveSolarModelState(state);
+  } catch (error) {
+    errorLog("Solar model: failed to persist the state file — the fit only lives until restart", error);
+  }
+}
+
+export function emptyRefitStatus(): SolarRefitStatus {
+  return { consecutive_rejections: 0, consecutive_failures: 0, paged: {} };
+}
+
+function backoffUntil(nowMs: number, consecutiveFailures: number): string {
+  const delayMs = FAILURE_BACKOFF_MS[Math.min(consecutiveFailures, FAILURE_BACKOFF_MS.length) - 1];
+  return new Date(nowMs + delayMs).toISOString();
+}
+
+function acceptedFit(
+  result: SolarRefitJobResult,
+  judgement: RefitJudgement,
+  solarModel: Config["automatic_trading"]["solar_model"],
+  nowMs: number
+): SolarModelFit {
+  const geometries = stringGeometries(solarModel);
+  const strings = {} as SolarModelFit["strings"];
+  const fitHours = {} as SolarModelFit["fit_hours"];
+  const geometry = {} as SolarModelFit["geometry"];
   for (const stringKey of ["string1", "string2"] as const) {
-    const { fit } = input.computation.strings[stringKey];
+    const { fit } = result.computation.strings[stringKey];
     strings[stringKey] = {
       physical_k: round(fit.physical_k, 4),
       physical_sky_factor: round(fit.physical_sky_factor, 4),
@@ -125,57 +210,35 @@ function acceptedState(input: {
       forecast_sky_factor: round(fit.forecast_sky_factor, 4),
       mask: fit.mask.map(row => row.map(value => round(value, 3))),
       mask_sample_counts: fit.mask_sample_counts,
-      level_multiplier: round(input.judgement.levels[stringKey].multiplier, 4),
-      level_ratios: input.judgement.levels[stringKey].ratios.map(entry => ({
+      level_multiplier: round(judgement.levels[stringKey].multiplier, 4),
+      level_ratios: judgement.levels[stringKey].ratios.map(entry => ({
         at: entry.at,
         ratio: entry.ratio === null ? null : round(entry.ratio, 4),
       })),
     };
     fitHours[stringKey] = fit.fit_hours;
     geometry[stringKey] = {
-      tilt_degrees: input.solarModelGeometry[stringKey].tilt_degrees,
-      azimuth_degrees: input.solarModelGeometry[stringKey].azimuth_degrees,
+      tilt_degrees: geometries[stringKey].tilt_degrees,
+      azimuth_degrees: geometries[stringKey].azimuth_degrees,
     };
   }
+  const candidateMae = result.computation.trailing_year.candidate_mae_kwh;
   return {
-    version: 1,
-    fitted_at: new Date(input.nowMs).toISOString(),
-    mask_irradiance_source: input.maskSource,
+    fitted_at: new Date(nowMs).toISOString(),
+    mask_irradiance_source: result.mask_irradiance_source,
     geometry,
     strings,
     fit_hours: fitHours,
-    trailing_year_daily_mae_kwh:
-      input.computation.trailing_year.candidate_mae_kwh === null
-        ? null
-        : round(input.computation.trailing_year.candidate_mae_kwh, 3),
-    consecutive_rejections: 0,
-    last_attempt: input.attempt,
+    trailing_year_daily_mae_kwh: candidateMae === null ? null : round(candidateMae, 3),
   };
 }
 
-function coverageOf(hourStartMs: Float64Array, completeHours: Uint8Array, nowMs: number) {
-  const recentFromMs = nowMs - 60 * 86_400_000;
-  let recentHours = 0;
-  let recentComplete = 0;
-  let complete = 0;
-  hourStartMs.forEach((startMs, hour) => {
-    complete += completeHours[hour];
-    if (startMs < recentFromMs) return;
-    recentHours += 1;
-    recentComplete += completeHours[hour];
-  });
-  return {
-    recentCompleteShare: recentHours ? recentComplete / recentHours : 0,
-    completeDays: Math.floor(complete / 24),
-  };
-}
-
-function describeComputation(computation: SolarRefitOutput): string {
+function describeComputation(result: SolarRefitJobResult): string {
   const strings = (["string1", "string2"] as SolarStringKey[]).map(stringKey => {
-    const { fit, level } = computation.strings[stringKey];
+    const { fit, level } = result.computation.strings[stringKey];
     return `${stringKey} k ${fit.physical_k.toFixed(2)} (forecast ${fit.forecast_k.toFixed(2)}, sky ${fit.forecast_sky_factor.toFixed(2)}), level ${level.ratio?.toFixed(3) ?? "n/a"}`;
   });
-  const { candidate_mae_kwh, incumbent_mae_kwh, days } = computation.trailing_year;
+  const { candidate_mae_kwh, incumbent_mae_kwh, days } = result.computation.trailing_year;
   return `${strings.join("; ")}; trailing-year daily MAE ${candidate_mae_kwh?.toFixed(2) ?? "?"} kWh (current ${incumbent_mae_kwh?.toFixed(2) ?? "none"}, ${days} days)`;
 }
 
