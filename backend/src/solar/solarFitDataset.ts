@@ -7,7 +7,7 @@ import type { SolarStringKey } from "./solarModel.types.ts";
 
 /**
  * Turns production history + irradiance archives (all on one hour grid) into the columnar fit
- * input, deciding which hours the fit may learn from. Runs in the refit worker. Excluded, with
+ * input, deciding which hours the fit may learn from. Runs in the refit child process. Excluded, with
  * the evidence the backtest validated in production form:
  *  - inverter outages: any 10-min bin with the "PV stalled" signature (pvStall.ts)
  *  - snow: forecast snow depth > 1 cm or ≥ 0.5 cm snowfall in the past week (no ERA5-Land live)

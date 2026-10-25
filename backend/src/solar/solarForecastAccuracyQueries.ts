@@ -89,18 +89,26 @@ export async function recentValidDays(
     .slice(-6);
 }
 
-/** [yesterday, the day before] week_alarm flags (false when missing) relative to the day starting at dayStartMs */
-export async function previousWeekAlarms(
+/** The week-alert state of the latest settled day before dayStartMs (within 10 days), if any */
+export async function previousWeekEpisode(
   influxClient: Influx.InfluxDB,
   dayStartMs: number
-): Promise<[boolean, boolean]> {
-  const rows = await influxClient.query<{ time: Date; week_alarm: boolean | null }>(
-    `SELECT week_alarm FROM solar_forecast_daily WHERE time >= ${dayStartMs - 60 * 3600_000}ms AND time < ${dayStartMs}ms`
+): Promise<{ alarm: boolean; episode_open: boolean; clear_days: number } | undefined> {
+  const rows = await influxClient.query<{
+    week_alarm: boolean | null;
+    week_episode_open: boolean | null;
+    week_clear_days: number | null;
+  }>(
+    `SELECT week_alarm, week_episode_open, week_clear_days FROM solar_forecast_daily ` +
+      `WHERE time >= ${dayStartMs - 10 * 86_400_000}ms AND time < ${dayStartMs}ms ORDER BY time DESC LIMIT 1`
   );
-  const yesterday = localDateStr(dayStartMs - 12 * 3600_000);
-  const dayBefore = localDateStr(dayStartMs - 36 * 3600_000);
-  const alarmDates = new Set(rows.filter(row => row.week_alarm === true).map(row => localDateStr(row.time.getTime())));
-  return [alarmDates.has(yesterday), alarmDates.has(dayBefore)];
+  const [latest] = rows;
+  if (!latest) return undefined;
+  return {
+    alarm: latest.week_alarm === true,
+    episode_open: latest.week_episode_open === true,
+    clear_days: latest.week_clear_days ?? 0,
+  };
 }
 
 export async function dailyPointExists(

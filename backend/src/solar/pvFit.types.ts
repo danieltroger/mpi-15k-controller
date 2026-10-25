@@ -1,7 +1,7 @@
 import type { SolarStringKey } from "./solarModel.types.ts";
 
 /**
- * Columnar fit input (typed arrays, so it crosses into the fit worker by structured clone without
+ * Columnar fit input, built inside the refit child process (typed arrays: ~10× less memory than
  * per-hour objects). Hour i covers [hourStartMs[i], +1 h); sub-step arrays hold SUBSTEPS_PER_HOUR
  * values per hour, hour-major.
  */

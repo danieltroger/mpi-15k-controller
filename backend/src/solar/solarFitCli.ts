@@ -5,10 +5,12 @@
  * given, which persists backend/solar_model_state.json.
  *
  * Bootstrap a fresh pi from the VM, never on the pi itself (a second Node process holding a refit
- * next to the controller is too much for the 512 MB Zero 2 W):
+ * next to the controller is too much for the 512 MB Zero 2 W), and copy the file BEFORE restarting
+ * the controller on the new code — then its startup check finds a fresh fit and never refits:
  *   (VM, from backend/)  yarn node src/solar/solarFitCli.ts --write
  *   scp backend/solar_model_state.json ubuntu@<pi>:mpi-15k-controller/backend/
- * The running controller picks the copied file up within the hour (mtime check), no restart needed.
+ * A file copied in later is still picked up within the hour (mtime check) and is never overwritten
+ * by a refit that was already running.
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
@@ -18,7 +20,7 @@ import { mergeWithDefaults } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import { AZIMUTH_BIN_EDGES, ELEVATION_BIN_EDGES } from "./pvModel.ts";
 import { refitSolarModel } from "./solarRefit.ts";
-import { STATE_FILE_PATH } from "./solarModelStore.ts";
+import { solarModelStatePath } from "./solarModelStore.ts";
 
 const PROBE_INTERVAL_MS = 5;
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
@@ -76,7 +78,7 @@ for (const stringKey of ["string1", "string2"] as const) {
 }
 console.log(
   persist
-    ? `\nState written to ${STATE_FILE_PATH} (fit ${state.fit?.fitted_at ?? "none"})`
+    ? `\nState written to ${solarModelStatePath()} (fit ${state.fit?.fitted_at ?? "none"})`
     : "\n(dry run — nothing written; pass --write to persist)"
 );
 process.exit(0);

@@ -8,27 +8,26 @@ import type { SolarModelState } from "./solarModel.types.ts";
  * config.json: the mask is a few hundred numbers no human edits, and the config file is written
  * on every knob change. Every load re-checks the file's mtime, so a state file copied in (the
  * bootstrap from the VM) or deleted (to refit a changed plant from scratch) takes effect without
- * a restart. Writes are atomic (temp file + rename): a torn write must never cost a refit.
+ * a restart. Writes are atomic (temp file + rename): a torn write must never cost a refit. When a
+ * write fails (full SD card, read-only filesystem) the new state stays in memory — loads keep
+ * returning it until the file itself changes or a later write succeeds.
  */
 export async function loadSolarModelState(): Promise<SolarModelState | undefined> {
-  let fileStats: { mtimeMs: number; size: number };
-  try {
-    fileStats = await fs_promises.stat(STATE_FILE_PATH);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
-      warnLog("Solar model: can't stat the state file — keeping the state already loaded", error);
-      return cache.state;
-    }
-    if (cache.signature !== MISSING) {
-      if (cache.state) logLog("Solar model: state file is gone — refitting from scratch at the next check");
-      cache = { signature: MISSING, state: undefined };
-    }
+  const signature = await fileSignature();
+  if (signature === undefined) return unsaved?.state ?? cache.state;
+  if (unsaved) {
+    if (unsaved.baseSignature === signature) return unsaved.state;
+    logLog("Solar model: the state file changed since a failed save — following the file");
+    unsaved = undefined;
+  }
+  if (signature === MISSING) {
+    if (cache.signature !== MISSING && cache.state) logLog("Solar model: state file is gone — refitting from scratch");
+    cache = { signature: MISSING, state: undefined };
     return undefined;
   }
-  const signature = `${fileStats.mtimeMs}:${fileStats.size}`;
   if (signature === cache.signature) return cache.state;
   try {
-    const parsed = JSON.parse(await fs_promises.readFile(STATE_FILE_PATH, { encoding: "utf-8" })) as SolarModelState;
+    const parsed = JSON.parse(await fs_promises.readFile(statePath, { encoding: "utf-8" })) as SolarModelState;
     if (parsed.version !== 2) throw new Error(`unknown state file version ${parsed.version}`);
     cache = { signature, state: parsed };
     corruptSignaturePaged = undefined;
@@ -37,7 +36,7 @@ export async function loadSolarModelState(): Promise<SolarModelState | undefined
     const report = corruptSignaturePaged === signature ? warnLog : errorLog;
     report(
       "Solar model: unreadable state file — forecasting on the default mask until a refit replaces it",
-      STATE_FILE_PATH,
+      statePath,
       error
     );
     corruptSignaturePaged = signature;
@@ -46,20 +45,51 @@ export async function loadSolarModelState(): Promise<SolarModelState | undefined
   return cache.state;
 }
 
+/** Throws when the write fails — after keeping `state` in memory, so the caller only has to report it. */
 export async function saveSolarModelState(state: SolarModelState) {
-  const temporaryPath = `${STATE_FILE_PATH}.tmp`;
-  await fs_promises.writeFile(temporaryPath, JSON.stringify(state, null, 2), { encoding: "utf-8" });
-  await fs_promises.rename(temporaryPath, STATE_FILE_PATH);
-  const fileStats = await fs_promises.stat(STATE_FILE_PATH);
-  cache = { signature: `${fileStats.mtimeMs}:${fileStats.size}`, state };
+  const baseSignature = (await fileSignature()) ?? MISSING;
+  const temporaryPath = `${statePath}.tmp`;
+  try {
+    await fs_promises.writeFile(temporaryPath, JSON.stringify(state, null, 2), { encoding: "utf-8" });
+    await fs_promises.rename(temporaryPath, statePath);
+  } catch (error) {
+    unsaved = { state, baseSignature };
+    throw error;
+  }
+  unsaved = undefined;
+  cache = { signature: (await fileSignature()) ?? MISSING, state };
 }
 
-export const STATE_FILE_PATH = fileURLToPath(new URL("../../solar_model_state.json", import.meta.url));
+export function solarModelStatePath(): string {
+  return statePath;
+}
+
+/** For selftests only: point the store at a scratch file (and forget everything cached) */
+export function useSolarModelStatePathForTests(path: string) {
+  statePath = path;
+  cache = { signature: undefined, state: undefined };
+  unsaved = undefined;
+}
 
 const MISSING = "missing";
+let statePath = fileURLToPath(new URL("../../solar_model_state.json", import.meta.url));
 /** Module-level on purpose: survives index.ts's in-process main() restarts */
 let cache: { signature: string | undefined; state: SolarModelState | undefined } = {
   signature: undefined,
   state: undefined,
 };
+/** A state whose save failed, valid while the file still looks like it did then */
+let unsaved: { state: SolarModelState; baseSignature: string } | undefined;
 let corruptSignaturePaged: string | undefined;
+
+/** mtime:size, MISSING, or undefined when the file can't even be stat'ed (then keep what we have) */
+async function fileSignature(): Promise<string | undefined> {
+  try {
+    const fileStats = await fs_promises.stat(statePath);
+    return `${fileStats.mtimeMs}:${fileStats.size}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return MISSING;
+    warnLog("Solar model: can't stat the state file — keeping the state already loaded", error);
+    return undefined;
+  }
+}

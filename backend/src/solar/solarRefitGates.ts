@@ -11,7 +11,7 @@ import type { SolarModelFit, SolarRefitPageKind, SolarStringKey } from "./solarM
  *  - the 90-day production level outside ±20 % of the model in March–October (string down, new shade)
  * The old gate (hourly R² ≥ 0.6 on 45 days) failed on winter cloud noise alone: 22 of 59 refits.
  * Everything here judges whole years or physical bounds, so ordinary winter noise can't trip it.
- * The caller pages each kind once per episode (solarRefitPaging.ts), not on every retry.
+ * The caller pages each kind once per episode (pageOncePerEpisode in solarRefit.ts), not on every retry.
  */
 export function judgeSolarRefit(input: {
   computation: SolarRefitOutput;

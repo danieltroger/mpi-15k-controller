@@ -1,5 +1,6 @@
 import type { Config, SolarModelConfig } from "../config/config.types.ts";
 import { fetchRadiationArchiveColumns, type RadiationArchiveSource } from "./openMeteoClient.ts";
+import { describeError } from "./errorDescription.ts";
 import { influxHttpQuery } from "./influxQuery.ts";
 import { queryPvHistory } from "./pvHistory.ts";
 import { buildSolarFitDataset } from "./solarFitDataset.ts";
@@ -106,7 +107,7 @@ async function fetchPhysicalColumns(
     };
   } catch (error) {
     // Reported by the controller (warnLog) — this module runs in the refit child process
-    return { physical: forecast, maskSource: "forecast_archive" as const, satelliteError: String(error) };
+    return { physical: forecast, maskSource: "forecast_archive" as const, satelliteError: describeError(error) };
   }
 }
 

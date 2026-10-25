@@ -25,17 +25,27 @@ export function startSolarModelRefits(ctx: { config: Accessor<Config> }) {
   });
 }
 
-/** Pure: is a refit due now? Exported for the selftest. */
+/**
+ * Pure: is a refit due now? Exported for the selftest.
+ *  - A pending back-off (next_attempt_at, set after a failure or hard rejection) decides on its own:
+ *    retry once it has passed — at night when a fit exists, any time while there is none.
+ *  - With no fit for the configured geometry: now.
+ *  - Otherwise the monthly cadence, counted from the last fit or the last soft rejection.
+ */
 export function isRefitDue(state: SolarModelState | undefined, solarModel: SolarModelConfig, nowMs: number): boolean {
   const status = state?.refit;
-  if (status?.next_attempt_at && nowMs < Date.parse(status.next_attempt_at)) return false;
-  const fit = state?.fit;
-  if (!fit || !fittedGeometryMatches(fit, solarModel)) return true;
-  const lastAttemptMs = Math.max(
-    Date.parse(fit.fitted_at),
-    status?.last_attempt_at ? Date.parse(status.last_attempt_at) : 0
-  );
-  if (nowMs - lastAttemptMs < solarModel.refit_every_days * 86_400_000) return false;
+  const fit = state?.fit && fittedGeometryMatches(state.fit, solarModel) ? state.fit : undefined;
+  if (status?.next_attempt_at) {
+    return nowMs >= Date.parse(status.next_attempt_at) && (!fit || inNightWindow(nowMs));
+  }
+  if (!fit) return true;
+  const softRejectedAtMs =
+    status?.last_outcome === "rejected" && status.last_attempt_at ? Date.parse(status.last_attempt_at) : 0;
+  const cadenceStartMs = Math.max(Date.parse(fit.fitted_at), softRejectedAtMs);
+  return nowMs - cadenceStartMs >= solarModel.refit_every_days * 86_400_000 && inNightWindow(nowMs);
+}
+
+function inNightWindow(nowMs: number): boolean {
   const localHour = Number(
     new Date(nowMs).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", hourCycle: "h23" })
   );

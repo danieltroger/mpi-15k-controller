@@ -35,20 +35,29 @@ export function judgeForecastWeek(
 }
 
 /**
- * Edge-triggered: push once when the alarm has held for two evaluations (today and yesterday, but
- * not the day before), then stay quiet for the rest of the episode; a quiet resolve notice once it
- * clears after having pushed. The rolling 7-day window keeps alarming for days after a bad week —
- * level-triggered, that was up to ~6 identical P2s per episode.
+ * The week alert as an explicit episode, carried forward on every daily point: it opens (one
+ * push) when two evaluations in a row alarm, stays open through further alarming days — and
+ * through days whose settlement is missing, since `previous` is the latest settled day — and only
+ * closes (a quiet resolve) after RE_ARM_AFTER_CLEAR_DAYS clear days in a row. Level-triggered,
+ * the rolling 7-day window gave up to ~6 identical P2s per episode, and a one-day dip re-pushed.
  */
-export function decideWeekAlert(alarms: {
-  today: boolean;
-  yesterday: boolean;
-  dayBefore: boolean;
-}): "push" | "resolve" | "none" {
-  if (alarms.today && alarms.yesterday && !alarms.dayBefore) return "push";
-  if (!alarms.today && alarms.yesterday && alarms.dayBefore) return "resolve";
-  return "none";
+export function advanceWeekAlertEpisode(input: {
+  alarm: boolean;
+  previous: { alarm: boolean; episode_open: boolean; clear_days: number } | undefined;
+}): { episode_open: boolean; clear_days: number; decision: "push" | "resolve" | "none" } {
+  if (!input.previous?.episode_open) {
+    return input.alarm && input.previous?.alarm
+      ? { episode_open: true, clear_days: 0, decision: "push" }
+      : { episode_open: false, clear_days: 0, decision: "none" };
+  }
+  if (input.alarm) return { episode_open: true, clear_days: 0, decision: "none" };
+  const clearDays = input.previous.clear_days + 1;
+  return clearDays >= RE_ARM_AFTER_CLEAR_DAYS
+    ? { episode_open: false, clear_days: 0, decision: "resolve" }
+    : { episode_open: true, clear_days: clearDays, decision: "none" };
 }
+
+const RE_ARM_AFTER_CLEAR_DAYS = 3;
 
 export type DailyForecastAccuracy = { date: string; actual_kwh: number; forecast_kwh: number };
 

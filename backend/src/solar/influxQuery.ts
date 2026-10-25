@@ -1,5 +1,6 @@
 import type Influx from "influx";
 import type { Config } from "../config/config.types.ts";
+import { describeError } from "./errorDescription.ts";
 
 /**
  * A read-only InfluxQL query returning one plain object per row, with `time` as epoch ms. Two
@@ -37,8 +38,10 @@ export function influxHttpQuery(settings: NonNullable<Config["influxdb"]>): Infl
       if (!response.ok) throw new Error(`InfluxDB HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return rowsOf<Row>((await response.json()) as InfluxHttpResponse);
     } catch (error) {
-      if (controller.signal.aborted) throw new Error(`InfluxDB query timed out after ${timeoutMs / 1000}s`);
-      throw error;
+      if (controller.signal.aborted)
+        throw new Error(`InfluxDB query to ${origin} timed out after ${timeoutMs / 1000}s`);
+      // Keep the network cause (ECONNREFUSED host:port, …) — never the URL, it carries the password
+      throw new Error(`InfluxDB request to ${origin} failed: ${describeError(error)}`);
     } finally {
       clearTimeout(timer);
     }

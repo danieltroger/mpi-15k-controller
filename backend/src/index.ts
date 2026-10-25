@@ -171,7 +171,7 @@ function main() {
                       e => errorLog("Alert rules crashed — alerting rules disabled until restart", e)
                     );
 
-                    // PV model upkeep: monthly refit (worker thread) + forecast-vs-actual logging and its rolling-week P2
+                    // PV model upkeep: monthly refit (in a child process) + forecast-vs-actual logging and its rolling-week P2
                     const influxClient = useInfluxClient();
                     startSolarModelRefits({ config });
                     startSolarForecastAccuracy({ config, influxClient, raise: alertManager.raise });

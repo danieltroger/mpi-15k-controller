@@ -1,4 +1,5 @@
 import process from "process";
+import { describeError } from "./errorDescription.ts";
 import { runSolarRefitJob, type SolarRefitJob } from "./solarRefitJob.ts";
 
 /**
@@ -12,7 +13,8 @@ process.once("message", async (job: SolarRefitJob) => {
   try {
     reply = { result: await runSolarRefitJob(job) };
   } catch (error) {
-    reply = { error: error instanceof Error ? error.stack ?? error.message : String(error) };
+    // The cause chain, not the stack: the controller logs (and pages) this string
+    reply = { error: describeError(error) };
   }
   process.send?.(reply, () => process.exit(0));
 });

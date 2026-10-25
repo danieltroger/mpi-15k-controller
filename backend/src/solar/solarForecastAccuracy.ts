@@ -8,11 +8,11 @@ import { logLog, warnLog } from "../utilities/logging.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { influxClientQuery } from "./influxQuery.ts";
 import { queryHourlyStringWatts } from "./pvHistory.ts";
-import { decideWeekAlert, judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
+import { advanceWeekAlertEpisode, judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
 import {
   countStalledBins,
   dailyPointExists,
-  previousWeekAlarms,
+  previousWeekEpisode,
   queryForecastHours,
   recentValidDays,
   snowGatedDuring,
@@ -45,17 +45,14 @@ export function startSolarForecastAccuracy(ctx: AccuracyContext) {
     ));
   const scheduleSettle = () =>
     (timers.settle = setTimeout(
-      () => void settleDay(ctx, localDateStr(Date.now() - 86_400_000), { alert: true }).finally(scheduleSettle),
+      () => void settleRecentDays(ctx, { alert: true }).finally(scheduleSettle),
       msUntilNextLocalTime(SETTLE_LOCAL_TIME)
     ));
   scheduleShortLead();
   scheduleDayAhead();
   scheduleSettle();
-  // Catch up a settlement missed across a restart, without alerting (the scheduled run owns alerts)
-  timers.startup = setTimeout(
-    () => void settleDay(ctx, localDateStr(Date.now() - 86_400_000), { alert: false }),
-    STARTUP_DELAY_MS
-  );
+  // Catch up settlements missed across a restart, without alerting (the scheduled run owns alerts)
+  timers.startup = setTimeout(() => void settleRecentDays(ctx, { alert: false }), STARTUP_DELAY_MS);
   onCleanup(() => Object.values(timers).forEach(timer => clearTimeout(timer)));
 }
 
@@ -113,13 +110,35 @@ async function recordForecast(ctx: AccuracyContext, lead: "short" | "day_ahead")
   }
 }
 
+/**
+ * Settles the last few local days, oldest first so the week-alert episode carries forward in
+ * order: days with no point yet (a failed or missed settlement is retried here, up to 3 days
+ * back), plus — on the scheduled run — yesterday, the only day that may alert.
+ */
+async function settleRecentDays(ctx: AccuracyContext, options: { alert: boolean }) {
+  const influxClient = ctx.influxClient();
+  if (!influxClient) return;
+  for (let daysBack = BACKLOG_DAYS; daysBack >= 1; daysBack--) {
+    const date = localDateStr(Date.now() - daysBack * 86_400_000);
+    const isYesterday = daysBack === 1;
+    const { startMs, endMs } = localDayBounds(date);
+    const settled = await dailyPointExists(influxClient, startMs, endMs).catch((error: unknown) => {
+      warnLog(`Solar forecast accuracy: can't tell whether ${date} is settled — settling it again`, error);
+      return false;
+    });
+    if (settled && !(options.alert && isYesterday)) continue;
+    await settleDay(ctx, date, { alert: options.alert && isYesterday });
+  }
+}
+
+const BACKLOG_DAYS = 3;
+
 async function settleDay(ctx: AccuracyContext, date: string, options: { alert: boolean }) {
   const influxClient = ctx.influxClient();
   if (!influxClient) return;
   const config = untrack(ctx.config);
   try {
     const { startMs, endMs } = localDayBounds(date);
-    if (!options.alert && (await dailyPointExists(influxClient, startMs, endMs))) return;
     const solarModel = config.automatic_trading.solar_model;
     const actual: StringWattsByHour = await queryHourlyStringWatts(
       influxClientQuery(influxClient),
@@ -164,11 +183,15 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
     );
     // InfluxDB rejects NaN — an all-zero forecast week has no ratio, but its error share still judges it
     if (verdict && Number.isFinite(verdict.ratio)) fields.week_ratio = Math.round(verdict.ratio * 1000) / 1000;
-    if (verdict) {
-      fields.week_error_share = Math.round(verdict.error_share * 1000) / 1000;
-      fields.week_alarm = verdict.alarm;
-    }
-    const [yesterdayAlarm, dayBeforeAlarm] = await previousWeekAlarms(influxClient, startMs);
+    if (verdict) fields.week_error_share = Math.round(verdict.error_share * 1000) / 1000;
+    const episode = advanceWeekAlertEpisode({
+      alarm: verdict?.alarm ?? false,
+      previous: await previousWeekEpisode(influxClient, startMs),
+    });
+    // Written on every day so the next settlement can carry the episode forward
+    fields.week_alarm = verdict?.alarm ?? false;
+    fields.week_episode_open = episode.episode_open;
+    fields.week_clear_days = episode.clear_days;
     // Local noon, so the point lands unambiguously on its day in Grafana
     await influxClient.writePoints([
       { measurement: "solar_forecast_daily", fields, timestamp: new Date(startMs + 12 * 3600_000) },
@@ -180,11 +203,7 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
           : "") +
         (valid ? "" : " — day excluded (outage, snow, data gap or no day-ahead forecast)")
     );
-    const decision = decideWeekAlert({
-      today: verdict?.alarm ?? false,
-      yesterday: yesterdayAlarm,
-      dayBefore: dayBeforeAlarm,
-    });
+    const decision = episode.decision;
     if (!options.alert || !config.alerting.solar_forecast_accuracy_p2 || decision === "none") return;
     if (decision === "push" && verdict) {
       void ctx.raise({
@@ -202,11 +221,14 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
         key: "solar-forecast-accuracy:resolved",
         severity: "P3",
         title: "Resolved: PV forecast back on track",
-        message: `The day-ahead PV forecast has been within bounds over the last week again (${date}).`,
+        message: `The day-ahead PV forecast has been within bounds for several days again (${date}).`,
       });
     }
   } catch (error) {
-    warnLog(`Solar forecast accuracy: settling ${date} failed (retried at the next settlement)`, error);
+    warnLog(
+      `Solar forecast accuracy: settling ${date} failed (retried at the next settlement, up to 3 days back)`,
+      error
+    );
   }
 }
 

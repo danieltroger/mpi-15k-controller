@@ -11,7 +11,7 @@ import { hourSun, poaTerms, stringSubstepWatts, unshadedMask, type StringCoeffic
 import { buildSolarForecast } from "./solarForecastModel.ts";
 import { nowcastRatio, snowNowcastFactor } from "./snowNowcast.ts";
 import { snowGateFlags } from "./snowGate.ts";
-import { decideWeekAlert, judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
+import { advanceWeekAlertEpisode, judgeForecastWeek } from "./solarForecastAccuracyRule.ts";
 import { localDayBounds } from "./solarForecastAccuracy.ts";
 import type { RadiationHour } from "./solarModel.types.ts";
 
@@ -292,7 +292,7 @@ const HOUR_MS = 3600_000;
   );
 }
 
-// ---------- week alert: once per episode, resolve when it clears ----------
+// ---------- week alert: one episode, one push, carried across gaps and dips ----------
 {
   const thresholds = {
     solar_forecast_week_min_ratio: 0.65,
@@ -309,21 +309,35 @@ const HOUR_MS = 3600_000;
     "week rule: an all-zero forecast week alarms on the error share, with no finite ratio to write",
     broken?.alarm === true && !Number.isFinite(broken.ratio) && Number.isFinite(broken.error_share)
   );
-  // A rolling-window episode: the alarm holds on days 2–6
-  const alarms = [false, false, true, true, true, true, true, false, false];
-  const decisions = alarms.map((today, day) =>
-    decideWeekAlert({ today, yesterday: alarms[day - 1] ?? false, dayBefore: alarms[day - 2] ?? false })
-  );
+  // Each entry is one settled day's alarm; undefined = that day's settlement is missing
+  const episodeDecisions = (alarms: (boolean | undefined)[]) => {
+    let previous: { alarm: boolean; episode_open: boolean; clear_days: number } | undefined;
+    const decisions: string[] = [];
+    for (const alarm of alarms) {
+      if (alarm === undefined) continue; // no point written: the next day carries from the last one
+      const next = advanceWeekAlertEpisode({ alarm, previous });
+      decisions.push(next.decision);
+      previous = { alarm, episode_open: next.episode_open, clear_days: next.clear_days };
+    }
+    return decisions;
+  };
+  const count = (decisions: string[], kind: string) => decisions.filter(decision => decision === kind).length;
+  const plain = episodeDecisions([false, false, true, true, true, true, true, false, false, false, false]);
   check(
-    "week alert: one push per episode, one resolve after it",
-    decisions.filter(decision => decision === "push").length === 1 &&
-      decisions.filter(decision => decision === "resolve").length === 1,
-    `(${decisions.join(",")})`
+    "week alert: one push per episode, one resolve after three clear days",
+    count(plain, "push") === 1 && count(plain, "resolve") === 1,
+    `(${plain.join(",")})`
   );
+  const dip = episodeDecisions([false, true, true, true, false, true, true, true, false, false, false]);
+  check("week alert: a one-day dip mid-episode doesn't push again", count(dip, "push") === 1, `(${dip.join(",")})`);
+  const gap = episodeDecisions([false, true, true, undefined, undefined, true, true, false, false, false]);
   check(
-    "week alert: a single alarming day never pushes",
-    decideWeekAlert({ today: true, yesterday: false, dayBefore: false }) === "none"
+    "week alert: missing settlements mid-episode don't push again",
+    count(gap, "push") === 1 && count(gap, "resolve") === 1,
+    `(${gap.join(",")})`
   );
+  const single = episodeDecisions([false, true, false, false]);
+  check("week alert: a single alarming day never pushes", count(single, "push") === 0);
 }
 
 // ---------- range-averaged forecast: hours and 15-min slots integrate their sub-steps ----------

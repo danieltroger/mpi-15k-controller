@@ -2,6 +2,7 @@ import { performance } from "perf_hooks";
 import type { Config } from "../config/config.types.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import { runSolarRefitInChildProcess } from "./solarRefitRunner.ts";
+import { describeError } from "./errorDescription.ts";
 import { judgeSolarRefit, type RefitJudgement } from "./solarRefitGates.ts";
 import type { SolarRefitJobResult } from "./solarRefitJob.ts";
 import { loadSolarModelState, saveSolarModelState } from "./solarModelStore.ts";
@@ -49,9 +50,13 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
   const { config, nowMs } = input;
   const solarModel = config.automatic_trading.solar_model;
   const stored = await loadSolarModelState();
+  // Identity of what this refit started from: a file copied in or deleted meanwhile must win
+  const startedFromFittedAt = stored?.fit?.fitted_at;
   const incumbent = stored?.fit && fittedGeometryMatches(stored.fit, solarModel) ? stored.fit : undefined;
   const status: SolarRefitStatus = structuredClone(stored?.refit ?? emptyRefitStatus());
-  const startedAtIso = new Date(nowMs).toISOString();
+  const persist = async (state: SolarModelState) => {
+    if (input.persist) await persistIfUnchanged(state, startedFromFittedAt);
+  };
   let result: SolarRefitJobResult & { controller_spawn_ms: number };
   try {
     if (!config.influxdb) throw new Error("InfluxDB is not configured");
@@ -67,9 +72,34 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
   } catch (error) {
     recordFailure(status, { nowMs, incumbent, refit_every_days: solarModel.refit_every_days, error });
     const state: SolarModelState = { version: 2, fit: stored?.fit, refit: status };
-    if (input.persist) await persistUnlessSuperseded(state, startedAtIso);
+    await persist(state);
     return { judgement: undefined, result: undefined, state, error };
   }
+  let concluded: ReturnType<typeof concludeRefit>;
+  try {
+    concluded = concludeRefit({ result, incumbent, stored, status, solarModel, nowMs });
+  } catch (error) {
+    // A bug in judging or building the fit gets the same back-off and once-per-episode page as a failed child
+    const failedStatus: SolarRefitStatus = structuredClone(stored?.refit ?? emptyRefitStatus());
+    recordFailure(failedStatus, { nowMs, incumbent, refit_every_days: solarModel.refit_every_days, error });
+    const state: SolarModelState = { version: 2, fit: stored?.fit, refit: failedStatus };
+    await persist(state);
+    return { judgement: undefined, result, state, error };
+  }
+  await persist(concluded.state);
+  return { ...concluded, result };
+}
+
+/** Synchronous: judge the child's result, page, and build the next state. */
+function concludeRefit(input: {
+  result: SolarRefitJobResult & { controller_spawn_ms: number };
+  incumbent: SolarModelFit | undefined;
+  stored: SolarModelState | undefined;
+  status: SolarRefitStatus;
+  solarModel: Config["automatic_trading"]["solar_model"];
+  nowMs: number;
+}): Omit<RefitOutcome, "result"> & { state: SolarModelState } {
+  const { result, incumbent, status, solarModel, nowMs } = input;
   const judgingStartedMs = performance.now();
   if (result.satellite_error) {
     warnLog(
@@ -95,7 +125,7 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
   pageOncePerEpisode(status, judgement.pages, nowMs);
 
   const reasons = [...Object.values(judgement.pages).flat(), ...judgement.warnReasons];
-  status.last_attempt_at = startedAtIso;
+  status.last_attempt_at = new Date(nowMs).toISOString();
   status.last_outcome = judgement.accepted ? "accepted" : "rejected";
   status.last_reason = reasons.join("; ") || undefined;
   status.consecutive_rejections = judgement.consecutiveRejections;
@@ -109,14 +139,15 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
     status.consecutive_failures = 0;
     status.next_attempt_at = undefined;
   }
-  const fit = judgement.accepted ? acceptedFit(result, judgement, solarModel, nowMs) : stored?.fit;
-  const state: SolarModelState = { version: 2, fit, refit: status };
-  const controllerBlockMs = {
-    spawn: Math.round(result.controller_spawn_ms * 10) / 10,
-    judge: Math.round((performance.now() - judgingStartedMs) * 10) / 10,
+  const fit = judgement.accepted ? acceptedFit(result, judgement, solarModel, nowMs) : input.stored?.fit;
+  return {
+    judgement,
+    state: { version: 2, fit, refit: status },
+    controllerBlockMs: {
+      spawn: Math.round(result.controller_spawn_ms * 10) / 10,
+      judge: Math.round((performance.now() - judgingStartedMs) * 10) / 10,
+    },
   };
-  if (input.persist) await persistUnlessSuperseded(state, startedAtIso);
-  return { judgement, result, state, controllerBlockMs };
 }
 
 /** Each kind pages once, then only warns until a refit without that kind of problem re-arms it. */
@@ -136,14 +167,14 @@ export function pageOncePerEpisode(status: SolarRefitStatus, pages: RefitJudgeme
   }
 }
 
-/** A thrown refit (Influx/open-meteo down, worker died): back off; page once if the model is overdue. */
+/** A failed refit (Influx/open-meteo down, the child died, judging threw): back off; page once if overdue. */
 export function recordFailure(
   status: SolarRefitStatus,
   input: { nowMs: number; incumbent: SolarModelFit | undefined; refit_every_days: number; error: unknown }
 ) {
   status.last_attempt_at = new Date(input.nowMs).toISOString();
   status.last_outcome = "failed";
-  status.last_reason = String(input.error);
+  status.last_reason = describeError(input.error);
   status.failing_since ??= status.last_attempt_at;
   status.consecutive_failures += 1;
   status.next_attempt_at = backoffUntil(input.nowMs, status.consecutive_failures);
@@ -154,33 +185,52 @@ export function recordFailure(
   if (overdue && !status.paged[page]) {
     errorLog(
       input.incumbent
-        ? `Solar model: refits keep failing and the fit is now ${Math.round((input.nowMs - Date.parse(input.incumbent.fitted_at)) / 86_400_000)} days old`
-        : "Solar model: no fit for a day — forecasting on the default horizon mask",
-      input.error
+        ? `Solar model: refits keep failing and the fit is now ${Math.round((input.nowMs - Date.parse(input.incumbent.fitted_at)) / 86_400_000)} days old: ${status.last_reason}`
+        : `Solar model: no fit for a day — forecasting on the default horizon mask: ${status.last_reason}`
     );
     status.paged[page] = status.last_attempt_at;
   } else {
     warnLog(
-      `Solar model: refit failed (attempt ${status.consecutive_failures}, retry after ${status.next_attempt_at})`,
-      input.error
+      `Solar model: refit failed (attempt ${status.consecutive_failures}, retry after ${status.next_attempt_at}): ${status.last_reason}`
     );
   }
 }
 
-async function persistUnlessSuperseded(state: SolarModelState, startedAtIso: string) {
+/**
+ * Saves unless the file no longer holds the fit this refit started from: a bootstrap copied in, or
+ * a file deleted to refit from scratch, must not be overwritten by a refit that began before it.
+ * A failed write keeps the state in memory (solarModelStore.ts) and pages once per episode.
+ */
+export async function persistIfUnchanged(
+  state: SolarModelState,
+  startedFromFittedAt: string | undefined,
+  store: { load: typeof loadSolarModelState; save: typeof saveSolarModelState } = {
+    load: loadSolarModelState,
+    save: saveSolarModelState,
+  }
+): Promise<"saved" | "superseded" | "failed"> {
+  const current = await store.load();
+  if (current?.fit?.fitted_at !== startedFromFittedAt) {
+    warnLog(
+      `Solar model: the state file changed while this refit ran (fit ${startedFromFittedAt ?? "none"} → ` +
+        `${current?.fit?.fitted_at ?? (current ? "none" : "file deleted")}) — keeping the file, discarding this result`
+    );
+    return "superseded";
+  }
   try {
-    const current = await loadSolarModelState();
-    if (current?.fit && current.fit.fitted_at > startedAtIso) {
-      warnLog(
-        `Solar model: a newer fit (${current.fit.fitted_at}) was written while this refit ran — keeping it, discarding this result`
-      );
-      return;
-    }
-    await saveSolarModelState(state);
+    await store.save(state);
+    saveFailurePaged = false;
+    return "saved";
   } catch (error) {
-    errorLog("Solar model: failed to persist the state file — the fit only lives until restart", error);
+    const report = saveFailurePaged ? warnLog : errorLog;
+    report("Solar model: failed to write the state file — the new state only lives in memory until restart", error);
+    saveFailurePaged = true;
+    return "failed";
   }
 }
+
+/** Module-level: a failing disk can't record its own page, and this survives in-process main() restarts */
+let saveFailurePaged = false;
 
 export function emptyRefitStatus(): SolarRefitStatus {
   return { consecutive_rejections: 0, consecutive_failures: 0, paged: {} };

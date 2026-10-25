@@ -106,7 +106,7 @@ export async function queryHourlyStringWatts(
 const TELEMETRY_SCALED_BY_TEN_UNTIL_MS = Date.parse("2025-10-17T21:30:00Z");
 /** One month per query keeps each response a few thousand rows */
 const CHUNK_MS = 31 * 86_400_000;
-/** For the monthly refit's history chunks (in the worker); interactive callers pass their own, shorter one */
+/** For the monthly refit's history chunks (in the refit child process); interactive callers pass their own, shorter one */
 export const HISTORY_QUERY_TIMEOUT_MS = 90_000;
 
 type BinRow = {

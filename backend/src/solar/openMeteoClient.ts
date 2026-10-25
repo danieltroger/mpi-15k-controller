@@ -1,6 +1,7 @@
 import { promises as fs_promises } from "fs";
 import { fileURLToPath } from "url";
 import { warnLog } from "../utilities/logging.ts";
+import { describeError } from "./errorDescription.ts";
 import { parseOpenMeteoHourly, RADIATION_VARIABLES, SNOW_VARIABLES } from "./openMeteoHourly.ts";
 import type { RadiationHour } from "./solarModel.types.ts";
 import type { RadiationArchiveColumns } from "./pvHistory.types.ts";
@@ -143,7 +144,7 @@ async function fetchJson(url: string): Promise<unknown> {
       return await fetchJsonOnce(url);
     } catch (secondError) {
       throw new Error(
-        `open-meteo request failed twice (${describeFetchError(firstError)}; ${describeFetchError(secondError)}): ${url}`
+        `open-meteo request failed twice (${describeError(firstError)}; ${describeError(secondError)}): ${url}`
       );
     }
   }
@@ -161,13 +162,6 @@ async function fetchJsonOnce(url: string): Promise<unknown> {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-/** undici hides the actual network error ("fetch failed") in `cause` */
-function describeFetchError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
-  return `${error.message}${cause}`;
 }
 
 const RETRY_PAUSE_MS = 5_000;
