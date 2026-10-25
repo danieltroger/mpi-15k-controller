@@ -8,7 +8,14 @@ import os from "os";
 import path from "path";
 import { unshadedMask } from "./pvModel.ts";
 import { isRefitDue } from "./solarRefitScheduler.ts";
-import { emptyRefitStatus, pageOncePerEpisode, persistIfUnchanged, recordFailure } from "./solarRefit.ts";
+import {
+  emptyRefitStatus,
+  pageOncePerEpisode,
+  persistIfUnchanged,
+  recordCompletedRefit,
+  recordFailure,
+} from "./solarRefit.ts";
+import type { RefitJudgement } from "./solarRefitGates.ts";
 import { loadSolarModelState, saveSolarModelState, useSolarModelStatePathForTests } from "./solarModelStore.ts";
 import type { SolarModelFit, SolarModelState } from "./solarModel.types.ts";
 
@@ -189,6 +196,45 @@ function check(name: string, condition: boolean, detail = "") {
   await fs_promises.rm(statePath);
   check("store: deleting the file is noticed without a restart", (await loadSolarModelState()) === undefined);
   await fs_promises.rm(directory, { recursive: true, force: true });
+}
+
+// ---------- alternating unreachable / low-coverage nights page once per kind ----------
+{
+  const solarModel = testSolarModel();
+  const fit = incumbentState(); // fitted 2026-06-03; by 2026-07-12 it is 39 days old: overdue
+  const status = emptyRefitStatus();
+  const lowCoverage: RefitJudgement = {
+    accepted: false,
+    hardFailure: true,
+    pages: { hard_failure: ["only 40 % of the last 60 days have complete inverter telemetry"] },
+    warnReasons: [],
+    levels: {
+      string1: { multiplier: 1, ratios: [] },
+      string2: { multiplier: 1, ratios: [] },
+    },
+    consecutiveRejections: 0,
+  };
+  const errorLines: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => errorLines.push(args.map(String).join(" "));
+  const firstNightMs = Date.parse("2026-07-12T01:40:00Z");
+  for (let night = 0; night < 6; night++) {
+    const nowMs = firstNightMs + night * 86_400_000;
+    if (!isRefitDue({ version: 2, fit, refit: status }, solarModel, nowMs)) continue;
+    if (night % 2 === 0) {
+      recordFailure(status, { nowMs, incumbent: fit, refit_every_days: 30, error: new Error("connect ECONNREFUSED") });
+    } else {
+      recordCompletedRefit(status, lowCoverage, { incumbent: fit, nowMs });
+    }
+  }
+  console.error = originalConsoleError;
+  const failingPages = errorLines.filter(line => line.includes("refits keep failing")).length;
+  const coveragePages = errorLines.filter(line => line.includes("complete inverter telemetry")).length;
+  check(
+    "paging: alternating unreachable and low-coverage nights page once per kind",
+    failingPages === 1 && coveragePages === 1,
+    `(failing ${failingPages}, coverage ${coveragePages})`
+  );
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll refit bookkeeping checks passed");

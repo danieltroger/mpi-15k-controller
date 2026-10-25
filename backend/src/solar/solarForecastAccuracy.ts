@@ -186,12 +186,14 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
     if (verdict) fields.week_error_share = Math.round(verdict.error_share * 1000) / 1000;
     const episode = advanceWeekAlertEpisode({
       alarm: verdict?.alarm ?? false,
+      alerting: options.alert && config.alerting.solar_forecast_accuracy_p2,
       previous: await previousWeekEpisode(influxClient, startMs),
     });
     // Written on every day so the next settlement can carry the episode forward
     fields.week_alarm = verdict?.alarm ?? false;
     fields.week_episode_open = episode.episode_open;
     fields.week_clear_days = episode.clear_days;
+    fields.week_episode_pushed = episode.pushed;
     // Local noon, so the point lands unambiguously on its day in Grafana
     await influxClient.writePoints([
       { measurement: "solar_forecast_daily", fields, timestamp: new Date(startMs + 12 * 3600_000) },
@@ -204,17 +206,17 @@ async function settleDay(ctx: AccuracyContext, date: string, options: { alert: b
         (valid ? "" : " — day excluded (outage, snow, data gap or no day-ahead forecast)")
     );
     const decision = episode.decision;
-    if (!options.alert || !config.alerting.solar_forecast_accuracy_p2 || decision === "none") return;
-    if (decision === "push" && verdict) {
+    if (decision === "push") {
+      const weekSummary = verdict
+        ? `Over the last ${verdict.days} valid days the panels made ${verdict.actual_kwh.toFixed(0)} kWh against a day-ahead forecast of ` +
+          `${verdict.forecast_kwh.toFixed(0)} kWh (${Number.isFinite(verdict.ratio) ? `×${verdict.ratio.toFixed(2)}, ` : ""}daily misses ` +
+          `${Math.round(verdict.error_share * 100)} % of the forecast; snow and outage days left out).`
+        : `The week's day-ahead forecast went badly off (opened ${date} or just before; see solar_forecast_daily).`;
       void ctx.raise({
         key: "solar-forecast-accuracy",
         severity: "P2",
         title: "PV forecast off for a week",
-        message:
-          `Over the last ${verdict.days} valid days the panels made ${verdict.actual_kwh.toFixed(0)} kWh against a day-ahead forecast of ` +
-          `${verdict.forecast_kwh.toFixed(0)} kWh (${Number.isFinite(verdict.ratio) ? `×${verdict.ratio.toFixed(2)}, ` : ""}daily misses ` +
-          `${Math.round(verdict.error_share * 100)} % of the forecast; snow and outage days left out). ` +
-          `A string down, new shade, or the model needs a look (backend/solar_model_state.json). One push per episode.`,
+        message: `${weekSummary} A string down, new shade, or the model needs a look (backend/solar_model_state.json). One push per episode.`,
       });
     } else if (decision === "resolve") {
       void ctx.raise({

@@ -93,13 +93,14 @@ export async function recentValidDays(
 export async function previousWeekEpisode(
   influxClient: Influx.InfluxDB,
   dayStartMs: number
-): Promise<{ alarm: boolean; episode_open: boolean; clear_days: number } | undefined> {
+): Promise<{ alarm: boolean; episode_open: boolean; clear_days: number; pushed: boolean } | undefined> {
   const rows = await influxClient.query<{
     week_alarm: boolean | null;
     week_episode_open: boolean | null;
     week_clear_days: number | null;
+    week_episode_pushed: boolean | null;
   }>(
-    `SELECT week_alarm, week_episode_open, week_clear_days FROM solar_forecast_daily ` +
+    `SELECT week_alarm, week_episode_open, week_clear_days, week_episode_pushed FROM solar_forecast_daily ` +
       `WHERE time >= ${dayStartMs - 10 * 86_400_000}ms AND time < ${dayStartMs}ms ORDER BY time DESC LIMIT 1`
   );
   const [latest] = rows;
@@ -108,6 +109,7 @@ export async function previousWeekEpisode(
     alarm: latest.week_alarm === true,
     episode_open: latest.week_episode_open === true,
     clear_days: latest.week_clear_days ?? 0,
+    pushed: latest.week_episode_pushed === true,
   };
 }
 

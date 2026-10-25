@@ -47,7 +47,8 @@ export async function loadSolarModelState(): Promise<SolarModelState | undefined
 
 /** Throws when the write fails — after keeping `state` in memory, so the caller only has to report it. */
 export async function saveSolarModelState(state: SolarModelState) {
-  const baseSignature = (await fileSignature()) ?? MISSING;
+  // Can't stat now (a dying card)? Then the file is presumably what we last saw, not missing
+  const baseSignature = (await fileSignature()) ?? cache.signature ?? MISSING;
   const temporaryPath = `${statePath}.tmp`;
   try {
     await fs_promises.writeFile(temporaryPath, JSON.stringify(state, null, 2), { encoding: "utf-8" });

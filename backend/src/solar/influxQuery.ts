@@ -20,34 +20,53 @@ export function influxClientQuery(influxClient: Influx.InfluxDB): InfluxQuery {
   };
 }
 
-/** Over InfluxDB 1.x's HTTP API (GET /query, epoch=ms), the same settings the `influx` client takes */
+/**
+ * Over InfluxDB 1.x's HTTP API (GET /query, epoch=ms), the same settings the `influx` client takes.
+ * The credentials travel only as an HTTP Basic Authorization header — never in the URL, which
+ * fetch quotes verbatim in its errors (e.g. "Failed to parse URL from …"), and errors reach the
+ * state file, the logs and P2 pushes. The endpoint is validated up front so a typo'd
+ * influxdb.host fails with a message that names the host and nothing else.
+ */
 export function influxHttpQuery(settings: NonNullable<Config["influxdb"]>): InfluxQuery {
-  const origin = settings.host.includes(":") ? `http://${settings.host}` : `http://${settings.host}:${DEFAULT_PORT}`;
+  const endpoint = influxQueryEndpoint(settings.host);
+  const authorization = `Basic ${Buffer.from(`${settings.username}:${settings.password}`).toString("base64")}`;
   return async <Row extends { time: number }>(query: string, timeoutMs: number) => {
-    const params = new URLSearchParams({
-      db: settings.database,
-      u: settings.username,
-      p: settings.password,
-      q: query,
-      epoch: "ms",
-    });
+    const url = new URL(endpoint);
+    url.search = new URLSearchParams({ db: settings.database, q: query, epoch: "ms" }).toString();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${origin}/query?${params}`, { signal: controller.signal });
+      const response = await fetch(url, { signal: controller.signal, headers: { Authorization: authorization } });
       if (!response.ok) throw new Error(`InfluxDB HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return rowsOf<Row>((await response.json()) as InfluxHttpResponse);
     } catch (error) {
-      if (controller.signal.aborted)
-        throw new Error(`InfluxDB query to ${origin} timed out after ${timeoutMs / 1000}s`);
-      // Keep the network cause (ECONNREFUSED host:port, …) — never the URL, it carries the password
-      throw new Error(`InfluxDB request to ${origin} failed: ${describeError(error)}`);
+      if (controller.signal.aborted) {
+        throw new Error(`InfluxDB query to ${endpoint.origin} timed out after ${timeoutMs / 1000}s`);
+      }
+      // The network cause (ECONNREFUSED host:port, …); the URL holds no credentials
+      throw new Error(`InfluxDB request to ${endpoint.origin} failed: ${describeError(error)}`);
     } finally {
       clearTimeout(timer);
     }
   };
 }
 
+/** http://host[:port]/query, or a credential-free error naming the bad influxdb.host */
+export function influxQueryEndpoint(host: string): URL {
+  const invalid = () =>
+    new Error(
+      `invalid influxdb.host ${JSON.stringify(host)} — expected an IP address or hostname, optionally with :port`
+    );
+  if (!HOST_PATTERN.test(host)) throw invalid();
+  try {
+    return new URL("/query", host.includes(":") ? `http://${host}` : `http://${host}:${DEFAULT_PORT}`);
+  } catch {
+    throw invalid(); // the parser's own message would only repeat the host
+  }
+}
+
+/** Hostname or IPv4 with an optional port — no whitespace, userinfo, path or query */
+const HOST_PATTERN = /^[A-Za-z0-9.-]+(:[0-9]+)?$/;
 const DEFAULT_PORT = 8086;
 
 type InfluxHttpResponse = {

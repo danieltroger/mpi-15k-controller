@@ -35,26 +35,41 @@ export function judgeForecastWeek(
 }
 
 /**
- * The week alert as an explicit episode, carried forward on every daily point: it opens (one
- * push) when two evaluations in a row alarm, stays open through further alarming days — and
- * through days whose settlement is missing, since `previous` is the latest settled day — and only
- * closes (a quiet resolve) after RE_ARM_AFTER_CLEAR_DAYS clear days in a row. Level-triggered,
- * the rolling 7-day window gave up to ~6 identical P2s per episode, and a one-day dip re-pushed.
+ * The week alert as an explicit episode, carried forward on every daily point: it opens when two
+ * evaluations in a row alarm, stays open through further alarming days — and through days whose
+ * settlement is missing, since `previous` is the latest settled day — and closes only after
+ * RE_ARM_AFTER_CLEAR_DAYS clear days in a row. Whether it has pushed is part of the episode: a
+ * day settled late (backfill, no alerting) can open it silently, and the next alerting run still
+ * pushes once. Only an episode that pushed gets the quiet resolve.
  */
 export function advanceWeekAlertEpisode(input: {
   alarm: boolean;
-  previous: { alarm: boolean; episode_open: boolean; clear_days: number } | undefined;
-}): { episode_open: boolean; clear_days: number; decision: "push" | "resolve" | "none" } {
-  if (!input.previous?.episode_open) {
-    return input.alarm && input.previous?.alarm
-      ? { episode_open: true, clear_days: 0, decision: "push" }
-      : { episode_open: false, clear_days: 0, decision: "none" };
+  /** This run may push (the scheduled settlement of yesterday, with the P2 enabled) */
+  alerting: boolean;
+  previous: { alarm: boolean; episode_open: boolean; clear_days: number; pushed: boolean } | undefined;
+}): { episode_open: boolean; clear_days: number; pushed: boolean; decision: "push" | "resolve" | "none" } {
+  const previous = input.previous;
+  let episodeOpen: boolean;
+  let clearDays = 0;
+  let pushed = false;
+  if (!previous?.episode_open) {
+    episodeOpen = input.alarm && !!previous?.alarm;
+  } else if (input.alarm) {
+    episodeOpen = true;
+    pushed = previous.pushed;
+  } else {
+    clearDays = previous.clear_days + 1;
+    episodeOpen = clearDays < RE_ARM_AFTER_CLEAR_DAYS;
+    pushed = previous.pushed;
   }
-  if (input.alarm) return { episode_open: true, clear_days: 0, decision: "none" };
-  const clearDays = input.previous.clear_days + 1;
-  return clearDays >= RE_ARM_AFTER_CLEAR_DAYS
-    ? { episode_open: false, clear_days: 0, decision: "resolve" }
-    : { episode_open: true, clear_days: clearDays, decision: "none" };
+  if (episodeOpen && !pushed && input.alerting) {
+    return { episode_open: true, clear_days: clearDays, pushed: true, decision: "push" };
+  }
+  if (!episodeOpen) {
+    const resolved = !!previous?.episode_open && !!previous.pushed && input.alerting;
+    return { episode_open: false, clear_days: 0, pushed: false, decision: resolved ? "resolve" : "none" };
+  }
+  return { episode_open: true, clear_days: clearDays, pushed, decision: "none" };
 }
 
 const RE_ARM_AFTER_CLEAR_DAYS = 3;

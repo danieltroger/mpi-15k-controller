@@ -310,14 +310,15 @@ const HOUR_MS = 3600_000;
     broken?.alarm === true && !Number.isFinite(broken.ratio) && Number.isFinite(broken.error_share)
   );
   // Each entry is one settled day's alarm; undefined = that day's settlement is missing
+  type Episode = { alarm: boolean; episode_open: boolean; clear_days: number; pushed: boolean };
   const episodeDecisions = (alarms: (boolean | undefined)[]) => {
-    let previous: { alarm: boolean; episode_open: boolean; clear_days: number } | undefined;
+    let previous: Episode | undefined;
     const decisions: string[] = [];
     for (const alarm of alarms) {
       if (alarm === undefined) continue; // no point written: the next day carries from the last one
-      const next = advanceWeekAlertEpisode({ alarm, previous });
+      const next = advanceWeekAlertEpisode({ alarm, alerting: true, previous });
       decisions.push(next.decision);
-      previous = { alarm, episode_open: next.episode_open, clear_days: next.clear_days };
+      previous = { alarm, episode_open: next.episode_open, clear_days: next.clear_days, pushed: next.pushed };
     }
     return decisions;
   };
@@ -330,14 +331,41 @@ const HOUR_MS = 3600_000;
   );
   const dip = episodeDecisions([false, true, true, true, false, true, true, true, false, false, false]);
   check("week alert: a one-day dip mid-episode doesn't push again", count(dip, "push") === 1, `(${dip.join(",")})`);
-  const gap = episodeDecisions([false, true, true, undefined, undefined, true, true, false, false, false]);
-  check(
-    "week alert: missing settlements mid-episode don't push again",
-    count(gap, "push") === 1 && count(gap, "resolve") === 1,
-    `(${gap.join(",")})`
-  );
   const single = episodeDecisions([false, true, false, false]);
   check("week alert: a single alarming day never pushes", count(single, "push") === 0);
+
+  // The real settle loop: every night yesterday settles with alerting, missing days up to 3 back
+  // are backfilled first without alerting. The alarm holds from day 2, so day 3 opens the episode;
+  // the run that should settle it (run 4) fails, and run 5 backfills it silently.
+  const alarmByDay = [false, false, true, true, true, true, true, false, false, false, false, false];
+  for (const failingRun of [4, 3]) {
+    const settledPoints = new Map<number, Episode>();
+    const pushedOn: number[] = [];
+    const resolvedOn: number[] = [];
+    for (let runDay = 1; runDay <= alarmByDay.length; runDay++) {
+      for (let day = Math.max(0, runDay - 3); day <= runDay - 1; day++) {
+        const isYesterday = day === runDay - 1;
+        if (settledPoints.has(day) && !isYesterday) continue;
+        if (isYesterday && runDay === failingRun) continue;
+        const previousDays = [...settledPoints.keys()].filter(settled => settled < day && settled >= day - 10);
+        const previous = previousDays.length ? settledPoints.get(Math.max(...previousDays)) : undefined;
+        const next = advanceWeekAlertEpisode({ alarm: alarmByDay[day], alerting: isYesterday, previous });
+        settledPoints.set(day, {
+          alarm: alarmByDay[day],
+          episode_open: next.episode_open,
+          clear_days: next.clear_days,
+          pushed: next.pushed,
+        });
+        if (next.decision === "push") pushedOn.push(day);
+        if (next.decision === "resolve") resolvedOn.push(day);
+      }
+    }
+    check(
+      `week alert: run ${failingRun} failing (settling day ${failingRun - 1}) still gives exactly one push, then one resolve`,
+      pushedOn.length === 1 && resolvedOn.length === 1,
+      `(pushed when settling day ${pushedOn.join(",")}, resolved on day ${resolvedOn.join(",")})`
+    );
+  }
 }
 
 // ---------- range-averaged forecast: hours and 15-min slots integrate their sub-steps ----------

@@ -81,6 +81,8 @@ async function performRefit(input: { config: Config; nowMs: number; persist: boo
   } catch (error) {
     // A bug in judging or building the fit gets the same back-off and once-per-episode page as a failed child
     const failedStatus: SolarRefitStatus = structuredClone(stored?.refit ?? emptyRefitStatus());
+    // Pages concludeRefit already sent before throwing stay recorded, so a retry doesn't repeat them
+    failedStatus.paged = { ...status.paged };
     recordFailure(failedStatus, { nowMs, incumbent, refit_every_days: solarModel.refit_every_days, error });
     const state: SolarModelState = { version: 2, fit: stored?.fit, refit: failedStatus };
     await persist(state);
@@ -122,23 +124,7 @@ function concludeRefit(input: {
     judgement.accepted ? "→ accepted" : "→ rejected"
   );
   for (const reason of judgement.warnReasons) warnLog("Solar model refit:", reason);
-  pageOncePerEpisode(status, judgement.pages, nowMs);
-
-  const reasons = [...Object.values(judgement.pages).flat(), ...judgement.warnReasons];
-  status.last_attempt_at = new Date(nowMs).toISOString();
-  status.last_outcome = judgement.accepted ? "accepted" : "rejected";
-  status.last_reason = reasons.join("; ") || undefined;
-  status.consecutive_rejections = judgement.consecutiveRejections;
-  status.failing_since = undefined;
-  delete status.paged.failing;
-  const unfittedRejection = !judgement.accepted && !incumbent;
-  if (judgement.hardFailure || unfittedRejection) {
-    status.consecutive_failures += 1;
-    status.next_attempt_at = backoffUntil(nowMs, status.consecutive_failures);
-  } else {
-    status.consecutive_failures = 0;
-    status.next_attempt_at = undefined;
-  }
+  recordCompletedRefit(status, judgement, { incumbent, nowMs });
   const fit = judgement.accepted ? acceptedFit(result, judgement, solarModel, nowMs) : input.stored?.fit;
   return {
     judgement,
@@ -148,6 +134,35 @@ function concludeRefit(input: {
       judge: Math.round((performance.now() - judgingStartedMs) * 10) / 10,
     },
   };
+}
+
+/**
+ * The bookkeeping after a refit the child completed: pages (once per episode), outcome, and the
+ * back-off for hard failures. Only an accepted or soft-rejected refit ends a "refits keep failing"
+ * episode — a hard rejection (e.g. low telemetry coverage, which a flaky Influx causes along with
+ * the thrown failures) must not re-arm that page between two failing nights.
+ */
+export function recordCompletedRefit(
+  status: SolarRefitStatus,
+  judgement: RefitJudgement,
+  context: { incumbent: SolarModelFit | undefined; nowMs: number }
+) {
+  pageOncePerEpisode(status, judgement.pages, context.nowMs);
+  const reasons = [...Object.values(judgement.pages).flat(), ...judgement.warnReasons];
+  status.last_attempt_at = new Date(context.nowMs).toISOString();
+  status.last_outcome = judgement.accepted ? "accepted" : "rejected";
+  status.last_reason = reasons.join("; ") || undefined;
+  status.consecutive_rejections = judgement.consecutiveRejections;
+  const unfittedRejection = !judgement.accepted && !context.incumbent;
+  if (judgement.hardFailure || unfittedRejection) {
+    status.consecutive_failures += 1;
+    status.next_attempt_at = backoffUntil(context.nowMs, status.consecutive_failures);
+  } else {
+    status.consecutive_failures = 0;
+    status.next_attempt_at = undefined;
+    status.failing_since = undefined;
+    delete status.paged.failing;
+  }
 }
 
 /** Each kind pages once, then only warns until a refit without that kind of problem re-arms it. */
