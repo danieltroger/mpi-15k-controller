@@ -13,10 +13,15 @@ plan replays what broke the first production cutover (2026-10-25) and more:
   GS #7   answered 3.15 s late                                  (after the session's 3 s timeout)
   GS #9   a well-shaped GS with battery_voltage 30.9 V          (must be dropped by the gate)
   GS #11  a CRC-corrupted GS frame first, then the real answer
-  GS #13  an answer whose CRC needs the firmware's byte bump    (must be accepted)
+  GS #13  an answer with a "mixed" CRC — one byte 0x00, the other one the firmware bumps
+          (000a 000d 0028 0a00 0d00 2800: what the first bump fix still rejected; must be accepted)
+  EDF     the first EDF setter goes unanswered; when its retry arrives the first attempt's late ACK
+          goes out at once and the retry's own NAK 150 ms later — the NAK must not be credited to
+          the next setter of the burst
 
-Like the real firmware, every CRC byte that would be 0x00/0x0A/0x0D/0x28 is sent bumped by one
-(found live at the second cutover attempt, 2026-10-25), so ~3 % of all frames exercise it anyway.
+Like the real firmware, every CRC byte that would be 0x0A/0x0D/0x28 is sent as that byte + 1 (found
+live at the second cutover attempt, 2026-10-25; 0x00 is not bumped), so ~2.3 % of all frames
+exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC theirs.
 
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
@@ -36,6 +41,7 @@ COMMIT_DELAY_S = 0.6
 LATE_RESPONSE_DELAY_S = 3.15
 
 ACK = b"^1\x0b\xc2\r"
+NAK = b"^0\x1b\xe3\r"
 
 # Live tokens (2026-10-25 captures); the serial-number slots get overwritten per frame
 GS_TOKENS = "03482,03256,0021,0026,0532,073,-00098,2363,2352,2358,5004,0000,0000,0000,2361,2352,2358,5008,,,,036,053,000,0".split(",")
@@ -55,16 +61,21 @@ def crc16_xmodem(data):
     return crc
 
 
-CRC_BYTES_THE_FIRMWARE_BUMPS = {0x00, 0x0A, 0x0D, 0x28}
+CRC_BYTES_THE_FIRMWARE_BUMPS = {0x0A, 0x0D, 0x28}
+MIXED_CRCS = {0x000A, 0x000D, 0x0028, 0x0A00, 0x0D00, 0x2800}
+GS_AC_OUTPUT_FREQUENCY_INDEX = 17
 
 
 def data_frame_body(payload):
     return b"^D" + b"%03d" % (len(payload) + 3) + payload.encode("latin1")
 
 
-def crc_needs_bump(payload):
-    crc = crc16_xmodem(data_frame_body(payload))
-    return (crc >> 8) in CRC_BYTES_THE_FIRMWARE_BUMPS or (crc & 0xFF) in CRC_BYTES_THE_FIRMWARE_BUMPS
+def crc16_xmodem_continued(crc, data):
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
 
 
 def data_frame(payload):
@@ -88,34 +99,49 @@ class FakeInverter:
         self.gpmp = 350
         self.charge_voltage_tenths = (580, 580)
         self.max_ac_charging_tenths = 100
+        # priority, then EDA..EDG (solar charge, AC charge, feed utility, discharge loads x2, feed grid x2), reserved
+        self.hecs_tokens = ["00", "1", "0", "1", "1", "1", "1", "1", "0"]
+        self.held_first_edf = None
         self.pending_commits = []  # (apply_at, description, apply_fn)
         self.queued = []  # responses: dict(start_at, chunks, role, answering, serial, kind, sent)
         self.last_tx_byte_at = time.monotonic()
         self.overlaps = 0
         self.next_command_follows_anomaly = False
-        self.faults_remaining = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13"}
+        self.faults_remaining = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13", "edf_late"}
 
     # ---------- frames ----------
     def next_serial(self):
         self.serial += 1
         return self.serial
 
-    def gs_frame(self, battery_voltage_token=None, force_crc_bump=False):
+    def gs_frame(self, battery_voltage_token=None, force_mixed_crc=False):
         serial = self.next_serial()
         tokens = list(GS_TOKENS)
         tokens[GS_INNER_TEMPERATURE_INDEX] = "%03d" % (serial % 100)
         if battery_voltage_token:
             tokens[GS_BATTERY_VOLTAGE_INDEX] = battery_voltage_token
-        if force_crc_bump:
-            # Vary the two spare temperature fields (still plausible) until the CRC needs the bump
-            for component_temperature in range(151):
-                tokens[22] = "%03d" % component_temperature
-                for external_temperature in range(151):
-                    tokens[23] = "%03d" % external_temperature
-                    if crc_needs_bump(",".join(tokens)):
-                        return data_frame(",".join(tokens)), serial
-            raise RuntimeError("no GS variant needs the CRC bump")
+        if force_mixed_crc:
+            return self.gs_frame_with_mixed_crc(tokens), serial
         return data_frame(",".join(tokens)), serial
+
+    def gs_frame_with_mixed_crc(self, tokens):
+        # Vary the output frequency (49.90-50.10 Hz) and the two spare temperatures (all still
+        # plausible) until the computed CRC is one of the six mixed values; the fixed prefix's CRC
+        # is computed once and continued over the varied tail.
+        payload_length = len(",".join(tokens))
+        prefix = "^D%03d" % (payload_length + 3) + ",".join(tokens[:GS_AC_OUTPUT_FREQUENCY_INDEX]) + ","
+        prefix_crc = crc16_xmodem(prefix.encode("latin1"))
+        for frequency in range(4990, 5011):
+            for component_temperature in range(151):
+                for external_temperature in range(151):
+                    candidate = list(tokens)
+                    candidate[GS_AC_OUTPUT_FREQUENCY_INDEX] = "%04d" % frequency
+                    candidate[22] = "%03d" % component_temperature
+                    candidate[23] = "%03d" % external_temperature
+                    tail = ",".join(candidate[GS_AC_OUTPUT_FREQUENCY_INDEX:]).encode("latin1")
+                    if crc16_xmodem_continued(prefix_crc, tail) in MIXED_CRCS:
+                        return data_frame(",".join(candidate))
+        raise RuntimeError("no GS variant has a mixed CRC")
 
     def ps_frame(self):
         serial = self.next_serial()
@@ -127,7 +153,7 @@ class FakeInverter:
         if command == "GPMP":
             return data_frame("%05d" % self.gpmp), None
         if command == "HECS":
-            return data_frame("00,1,0,1,1,1,1,1,0"), None
+            return data_frame(",".join(self.hecs_tokens)), None
         tokens = list(BATS_TOKENS)
         tokens[1] = "%04d" % self.charge_voltage_tenths[0]
         tokens[2] = "%04d" % self.charge_voltage_tenths[1]
@@ -237,9 +263,9 @@ class FakeInverter:
                 self.next_command_follows_anomaly = True
             if count == 13 and "gs13" in self.faults_remaining:
                 self.fault_done("gs13")
-                frame, serial = self.gs_frame(force_crc_bump=True)
+                frame, serial = self.gs_frame(force_mixed_crc=True)
                 self.queue(frame, "GS", "GS", "answer", serial)
-                emit("crc_bumped_answer", serial=serial)
+                emit("crc_bumped_answer", serial=serial, crc=frame[-3:-1].hex())
                 return
             frame, serial = self.gs_frame()
             self.queue(frame, "GS", "GS", "answer", serial)
@@ -259,14 +285,36 @@ class FakeInverter:
 
     def handle_setter(self, command):
         self.setters_seen += 1
+        if command.startswith("EDF") and "edf_late" in self.faults_remaining:
+            if self.held_first_edf is None:
+                # First attempt: received and committed, but its ACK is held back
+                self.held_first_edf = command
+                self.schedule_commit(command)
+                emit("setter_answer_held", answering=command)
+                self.next_command_follows_anomaly = True
+                return
+            if command == self.held_first_edf:
+                # The retry: the first attempt's late ACK now, the retry's own answer (a NAK) after it
+                self.fault_done("edf_late")
+                self.queue(ACK, "ACK", command, "answer", None)
+                self.queue(NAK, "NAK", command, "duplicate", None, delay_s=0.15)
+                self.next_command_follows_anomaly = True
+                return
         if self.setters_seen == 1 and "setter1" in self.faults_remaining:
             self.fault_done("setter1")
             stale, stale_serial = self.ps_frame()
             self.queue(stale, "PS", command, "stale", stale_serial)
             self.next_command_follows_anomaly = True
         self.queue(ACK, "ACK", command, "answer", None)
+        self.schedule_commit(command)
+
+    def schedule_commit(self, command):
         apply_at = time.monotonic() + COMMIT_DELAY_S
-        if command.startswith("GPMP0"):
+        if command.startswith("ED") and len(command) == 4:
+            token_index = ord(command[2]) - ord("A") + 1
+            value = command[3]
+            self.pending_commits.append((apply_at, command, lambda: self.hecs_tokens.__setitem__(token_index, value)))
+        elif command.startswith("GPMP0"):
             watts = int(command[5:])
             self.pending_commits.append((apply_at, command, lambda: setattr(self, "gpmp", watts)))
         elif command.startswith("MCHGV"):

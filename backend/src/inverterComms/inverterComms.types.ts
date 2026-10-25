@@ -36,12 +36,19 @@ type InverterSetterCommand =
 
 /**
  * Frame-level outcome of a control write. `acknowledged: false` means the inverter NAKed it
- * (settings unchanged). Timeouts never invoke onResult — the session errorLogs them centrally.
+ * (settings unchanged). Timeouts never invoke onResult — the session errorLogs them centrally —
+ * and neither does a setter dropped unsent because the readback already showed its target.
  * Note that even an ACK is not a commit: the inverter applies setters on an internal housekeeping
  * cycle seconds later, which the session verifies via the quiet-gap confirm queries.
  */
 export type SetterResult = { acknowledged: boolean };
 
+/**
+ * A control write, as DESIRED STATE: consumers queue their current target whenever it may have
+ * changed — also when the readback already shows it. The session drops a queued setter the latest
+ * trustworthy readback already satisfies (nothing is sent), so queueing the satisfied target is
+ * how a consumer withdraws an older, now-unwanted one.
+ */
 export type SetterQueueItem = {
   command: InverterSetterCommand;
   /**

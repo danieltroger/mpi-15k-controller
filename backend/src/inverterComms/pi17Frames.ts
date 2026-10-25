@@ -8,7 +8,7 @@
  * uses a different QUERYEN form with an ASCII-sum checksum — unused here, see pi17FieldTables.ts).
  *
  * Responses end with \r; the two bytes before it are CRC16-XModem (poly 0x1021, init 0) over all
- * preceding bytes — with the Voltronic firmware's byte bump, see crcAsTheInverterSendsIt().
+ * preceding bytes — with the Voltronic firmware's per-byte bump, see storedCrcMatches().
  * ACK = ^1<crc>\r, NAK = ^0<crc>\r, data = ^D{lll}payload<crc>\r where lll is the byte count
  * after the 5-byte header (payload + 2 CRC bytes + \r) — verified against every live capture.
  * Cutting frames at that declared length (not at the first \r) keeps extraction robust even
@@ -51,19 +51,37 @@ export function concatenateBuffers(parts: readonly Buffer[]): Buffer {
 }
 
 /**
- * The inverter never transmits 0x28 "(", 0x0D "\r" or 0x0A "\n" as a CRC byte (mpp-solar's
- * crcPI also lists 0x00): it bumps such a byte by one — the Voltronic family's way of keeping
- * framing characters out of the checksum. Live proof from the second cutover attempt
- * (2026-10-25): computed 0x5328 → sent 0x5329, computed 0x0DEC → sent 0x0EEC; a retry repeats
- * the same payload and therefore the same rejection, so both attempts failed and the query
- * errorLogged. The retired mpp-solar daemon's PI17 path never handled it either — it flagged
- * 24 461 of 1 032 016 frames (2.37 % ≈ 2 bytes × 3/256) as "Error: CRC error P17" in the week
- * before. Whether 0x00 is bumped too is unconfirmed, so both renderings are accepted.
+ * The inverter never transmits 0x28 "(", 0x0D "\r" or 0x0A "\n" as a CRC byte: it sends such a
+ * byte plus one, each byte on its own — the Voltronic family's way of keeping framing characters
+ * out of the checksum. Live proof from the second cutover attempt (2026-10-25): computed 0x5328 →
+ * sent 0x5329, computed 0x0DEC → sent 0x0EEC (a retry repeats the payload and so the rejection,
+ * which is why both attempts failed and the query errorLogged). 0x00 is NOT bumped, although
+ * mpp-solar's PI30 crcPI lists it: the retired daemon's plain-XModem PI17 check flagged 24 461 of
+ * 1 032 016 frames (2.37 %) as "CRC error P17" in the week before, which is what bumping three
+ * byte values predicts (1 − (253/256)² = 2.33 %) and far from four (3.10 %).
  */
-const CRC_BYTES_THE_FIRMWARE_BUMPS: ReadonlySet<number> = new Set([0x00, 0x0a, 0x0d, 0x28]);
+const CRC_BYTES_THE_FIRMWARE_BUMPS: ReadonlySet<number> = new Set([0x0a, 0x0d, 0x28]);
 
+/** The CRC as this firmware renders it on the wire (what the fake inverter sends, too) */
 export function crcAsTheInverterSendsIt(crc: number): number {
   return (bumpedCrcByte(crc >> 8) << 8) | bumpedCrcByte(crc & 0xff);
+}
+
+/**
+ * Does a received CRC match the computed one? Each byte independently: equal, or one more when the
+ * computed byte is one the firmware bumps. A CRC with no special byte still has exactly one
+ * acceptable value; only the special bytes are loosened (selftested over all 65 536 values).
+ */
+export function storedCrcMatches(computedCrc: number, storedCrc: number): boolean {
+  return (
+    storedCrcByteMatches(computedCrc >> 8, storedCrc >> 8) && storedCrcByteMatches(computedCrc & 0xff, storedCrc & 0xff)
+  );
+}
+
+function storedCrcByteMatches(computedByte: number, storedByte: number): boolean {
+  return (
+    storedByte === computedByte || (CRC_BYTES_THE_FIRMWARE_BUMPS.has(computedByte) && storedByte === computedByte + 1)
+  );
 }
 
 function bumpedCrcByte(crcByte: number): number {
@@ -106,7 +124,7 @@ export function classifyFrame(frame: Buffer): ClassifiedFrame {
   ) {
     const computedCrc = crc16XModem(frame.subarray(0, -3));
     const storedCrc = (frame[frame.length - 3]! << 8) | frame[frame.length - 2]!;
-    if (storedCrc !== computedCrc && storedCrc !== crcAsTheInverterSendsIt(computedCrc)) {
+    if (!storedCrcMatches(computedCrc, storedCrc)) {
       return {
         kind: "invalid",
         reason: `data frame CRC mismatch (computed 0x${computedCrc.toString(16)}, stored 0x${storedCrc.toString(16)}) in ${previewOf(frame)}`,

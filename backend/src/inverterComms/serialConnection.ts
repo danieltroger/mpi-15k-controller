@@ -19,8 +19,11 @@
  * fd into BLOCKING mode (setBlocking(true), for terminal stdout ordering), net.Socket({ fd })
  * rejects tty fds (ERR_INVALID_FD_TYPE), and fs writes are threadpool jobs.
  *
- * The open itself is a one-off openSync (O_NONBLOCK, so a mis-set termios can't hang it).
- * inverterSession.pty.selftest.ts runs the whole engine with every pool thread blocked.
+ * The open is a one-off openSync with O_NONBLOCK, but libuv's tty init then reopens the device by
+ * name with a blocking open(2) — which can't wait for a carrier only because stty set clocal, so
+ * that is asserted before every open (see openDevice). inverterSession.pty.selftest.ts runs the
+ * whole engine with every pool thread blocked; inverterLifecycle.pty.selftest.ts covers close
+ * during open, fd stability across reopens, and a replugged device.
  */
 import { closeSync, constants as fsConstants, openSync } from "fs";
 import tty from "tty";
@@ -99,10 +102,21 @@ async function openDevice(state: ConnectionState): Promise<void> {
     // 8N1 raw line: `raw` switches off all line-discipline processing (incl. software flow
     // control), cs8/-parenb/-cstopb = 8 data bits, no parity, 1 stop bit, -crtscts = no hardware
     // flow control, clocal = don't wait for a modem carrier the three-wire cable doesn't have.
-    // Matches pyserial's effective settings that mpp-solar used on this same cable.
-    await exec(`stty -F ${state.devicePath} 2400 raw -echo cs8 -parenb -cstopb -crtscts clocal`);
-    // O_NOCTTY so the serial port cannot become our controlling terminal. The stream owns the fd
-    // from here on (destroy() closes it).
+    // Matches pyserial's effective settings that mpp-solar used on this same cable. Read back (-a)
+    // in the same exec, because the open below depends on clocal (see there).
+    const { stdout: termiosReadback } = await exec(
+      `stty -F ${state.devicePath} 2400 raw -echo cs8 -parenb -cstopb -crtscts clocal && stty -F ${state.devicePath} -a`
+    );
+    // close() may have run while stty was executing (a main() crash during boot does exactly that)
+    if (state.closedForever) return;
+    if (!termiosReadback.split(/\s+/).includes("clocal")) {
+      throw new Error(`stty did not leave clocal set on ${state.devicePath} — refusing a possibly hanging open`);
+    }
+    // O_NOCTTY so the serial port cannot become our controlling terminal. O_NONBLOCK keeps THIS
+    // open from waiting for a carrier — but libuv's tty init then reopens the device by name with
+    // a BLOCKING open(2) (to get a file description of its own to make non-blocking) and dup2s it
+    // over deviceFd. That reopen can only hang on a missing carrier if clocal were off, hence the
+    // assertion above.
     const deviceFd = openSync(state.devicePath, fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
     let deviceStream: tty.ReadStream;
     try {
@@ -111,6 +125,10 @@ async function openDevice(state: ConnectionState): Promise<void> {
       closeSync(deviceFd);
       throw streamError;
     }
+    // After that reopen the stream's handle uses libuv's own fd, and destroy() closes only that one:
+    // our fd (now a duplicate) would leak once per (re)open unless we close it here.
+    const handleFd = (deviceStream as unknown as { _handle?: { fd?: number } })._handle?.fd;
+    if (handleFd !== undefined && handleFd !== deviceFd) closeSync(deviceFd);
     if (!deviceStream.writable) {
       deviceStream.destroy();
       throw new Error(`tty stream over ${state.devicePath} is not writable — opened without write access?`);

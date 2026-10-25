@@ -229,22 +229,13 @@ export function feedWhenNoSolar({
     }
 
     if (wantFeedIntoGrid == undefined) return;
-    const commandsToSend: ("EDF" | "EDG")[] = [];
-    const xAbled = wantFeedIntoGrid ? "enabled" : "disabled";
-    if (
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss &&
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== xAbled
-    ) {
-      commandsToSend.push("EDG");
-    }
-    if (
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal &&
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== xAbled
-    ) {
-      commandsToSend.push("EDF");
-    }
-    if (!commandsToSend.length) return;
-    for (const command of commandsToSend) {
+    // Desired state, queued even when the readback already matches: that replaces any queued
+    // opposite command (which would otherwise still land once its identical-setter gate opened),
+    // and the session drops a setter the inverter already holds without sending anything.
+    const commandsToQueue: ("EDF" | "EDG")[] = [];
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_loss) commandsToQueue.push("EDG");
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_normal) commandsToQueue.push("EDF");
+    for (const command of commandsToQueue) {
       // replacesPrefix drops any queued-but-unsent command for the same parameter
       queueSetter({
         command: `${command}${+wantFeedIntoGrid ? 1 : 0}`,
@@ -282,8 +273,10 @@ export function feedWhenNoSolar({
       }
     }
     const target = Math.round(shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar);
-    if ($usbValues.maximum_feeding_grid_power && target !== parseFloat($usbValues.maximum_feeding_grid_power)) {
-      // replacesPrefix drops any queued-but-unsent max-feed-in-power command for this newer target
+    // Desired state, queued even when the readback already shows it (see the EDF/EDG effect above):
+    // replacesPrefix drops any queued-but-unsent max-feed-in-power command for this newer target,
+    // and the session sends nothing when the inverter already holds it
+    if ($usbValues.maximum_feeding_grid_power) {
       queueSetter({
         command: `GPMP0${(target + "").padStart(5, "0")}`,
         replacesPrefix: "GPMP0",

@@ -12,7 +12,7 @@
  * So every frame is checked against what the in-flight command can possibly answer: setters only
  * ACK/NAK, queries only data frames of that query's shape. The shapes below are disjoint for every
  * pair of commands (token counts for the multi-field responses, payload length for the two
- * single-token ones) — pi17Protocol.selftest.ts asserts that pairwise, so a frame that matches its
+ * single-token ones) — pi17ResponseSafety.selftest.ts asserts that pairwise, so a frame that matches its
  * in-flight command's shape cannot be another command's response.
  */
 import type { ClassifiedFrame } from "./pi17Frames.ts";

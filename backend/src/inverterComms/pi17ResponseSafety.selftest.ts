@@ -8,15 +8,7 @@
  * the failing session on 2026-10-25 (their CRCs validate below, which proves the recovery exact).
  */
 import process from "process";
-import {
-  ACK_FRAME,
-  NAK_FRAME,
-  classifyFrame,
-  concatenateBuffers,
-  crc16XModem,
-  crcAsTheInverterSendsIt,
-  createFrameAccumulator,
-} from "./pi17Frames.ts";
+import { ACK_FRAME, NAK_FRAME, classifyFrame, concatenateBuffers, createFrameAccumulator } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 import { influxFieldName, PI17_QUERY_RESPONSE_FIELDS } from "./pi17FieldTables.ts";
 import {
@@ -241,58 +233,6 @@ for (const chunkSize of [4, 64]) {
   check("GS-as-PS misdecode is rejected by shape", responseShapeMismatch("PS", payloadOf(GS_LIVE_1)) !== undefined);
 }
 
-// ---------- the firmware's CRC byte bump (found at the second cutover attempt, 2026-10-25) ----------
-// The inverter bumps a CRC byte that would be 0x28/0x0D/0x0A (mpp-solar's crcPI: also 0x00) by one.
-check("bump: live pair computed 0x5328 → sent 0x5329", crcAsTheInverterSendsIt(0x5328) === 0x5329);
-check("bump: live pair computed 0x0DEC → sent 0x0EEC", crcAsTheInverterSendsIt(0x0dec) === 0x0eec);
-check("bump: both bytes", crcAsTheInverterSendsIt(0x0a28) === 0x0b29 && crcAsTheInverterSendsIt(0x0000) === 0x0101);
-check(
-  "bump: ordinary CRCs untouched",
-  crcAsTheInverterSendsIt(0x1234) === 0x1234 && crcAsTheInverterSendsIt(0x0bc2) === 0x0bc2
-);
-function dataFrameWithCrc(payload: string, crcOf: (body: Buffer) => number): Buffer {
-  const body = latin1(`^D${String(payload.length + 3).padStart(3, "0")}${payload}`);
-  const crc = crcOf(body);
-  return concatenateBuffers([body, Buffer.from([crc >> 8, crc & 0xff, 0x0d])]);
-}
-/** A live-shaped GS payload whose plain XModem CRC has `crcByte` in the high or low position */
-function gsPayloadWhosePlainCrcHas(crcByte: number, position: "high" | "low"): string | undefined {
-  const tokens = payloadOf(GS_LIVE_1).split(",");
-  for (let componentTemperature = 0; componentTemperature <= 150; componentTemperature++) {
-    for (let externalTemperature = 0; externalTemperature <= 150; externalTemperature++) {
-      tokens[22] = String(componentTemperature).padStart(3, "0");
-      tokens[23] = String(externalTemperature).padStart(3, "0");
-      const payload = tokens.join(",");
-      const crc = crc16XModem(latin1(`^D${String(payload.length + 3).padStart(3, "0")}${payload}`));
-      if ((position === "high" ? crc >> 8 : crc & 0xff) === crcByte) return payload;
-    }
-  }
-  return undefined;
-}
-for (const crcByte of [0x00, 0x0a, 0x0d, 0x28]) {
-  for (const position of ["high", "low"] as const) {
-    const label = `0x${crcByte.toString(16).padStart(2, "0")} as the ${position} CRC byte`;
-    const payload = gsPayloadWhosePlainCrcHas(crcByte, position);
-    check(`bump: found a GS payload with ${label}`, payload !== undefined);
-    if (payload === undefined) continue;
-    const asSent = dataFrameWithCrc(payload, body => crcAsTheInverterSendsIt(crc16XModem(body)));
-    check(
-      `bump: frame with ${label} bumped (as the firmware sends it) is accepted`,
-      classifyFrame(asSent).kind === "data"
-    );
-    const plain = dataFrameWithCrc(payload, crc16XModem);
-    check(`bump: frame with ${label} unbumped is accepted too`, classifyFrame(plain).kind === "data");
-    const corrupted = concatenateBuffers([asSent]);
-    corrupted[12] ^= 0x01;
-    check(`bump: a corrupted payload with ${label} is still rejected`, classifyFrame(corrupted).kind === "invalid");
-    const { frames } = createFrameAccumulator().push(concatenateBuffers([asSent, ACK_FRAME]));
-    check(
-      `bump: frame with ${label} survives reassembly`,
-      frames.length === 2 && classifyFrame(frames[0]!).kind === "data" && classifyFrame(frames[1]!).kind === "ack"
-    );
-  }
-}
-
 // ---------- plausibility gate ----------
 for (const command of ALL_COMMANDS) {
   for (const [fixtureIndex, fixture] of FIXTURES_BY_COMMAND[command].entries()) {
@@ -337,11 +277,32 @@ check("PV voltage 1001 V dropped", gateVerdictFor({ solar_input_voltage_1: 1001 
 check("grid voltage 301 V dropped", gateVerdictFor({ ac_input_voltage_r: 301 }).length === 1);
 check("grid frequency 44 Hz dropped", gateVerdictFor({ ac_input_frequency: 44 }).length === 1);
 check("grid frequency 56 Hz dropped", gateVerdictFor({ ac_input_frequency: 56 }).length === 1);
-check(
-  "grid outage (0 V, 0 Hz on every phase) passes — telemetry must survive exactly then",
-  gateVerdictFor({ ac_input_voltage_r: 0, ac_input_voltage_s: 0, ac_input_voltage_t: 0, ac_input_frequency: 0 })
-    .length === 0
-);
+{
+  // A real grid outage, not a synthetic one: the GS round of 2025-04-13T03:00:00.55Z (outage
+  // 2025-04-12 ~15:00 → 2025-04-13 ~09:00 UTC), rebuilt token by token from InfluxDB — that era's
+  // daemon stored the raw wire integers, so each value IS its token. Mains 0 V / 0.00 Hz on every
+  // phase, the inverter islanding at 230.0 V / 50.00 Hz on 52.4 V, PV dark. (Influx history since
+  // 2020 holds no grid frequency strictly between 0 and 45 Hz, so the gate's bands match reality.)
+  const outagePayload =
+    "00000,00000,0000,0000,0524,067,+00000,0000,0000,0000,0000,0000,0000,0000,2300,2300,2303,5000,,,,037,055,000,0";
+  check("2025-04-13 outage GS round fits the GS shape", responseShapeMismatch("GS", outagePayload) === undefined);
+  const { fields, problems } = decodeQueryPayload("GS", outagePayload);
+  check(
+    "2025-04-13 outage GS round decodes to the stored values",
+    problems.length === 0 &&
+      fields.ac_input_voltage_r === 0 &&
+      fields.ac_input_frequency === 0 &&
+      fields.ac_output_voltage_t === 230.3 &&
+      fields.ac_output_frequency === 50 &&
+      fields.battery_voltage === 52.4 &&
+      fields.battery_capacity === 67
+  );
+  check(
+    "grid outage (real 2025-04-13 capture: 0 V / 0 Hz) passes the gate — telemetry must survive exactly then",
+    implausibleFieldsIn(fields).length === 0,
+    implausibleFieldsIn(fields).join("; ")
+  );
+}
 check(
   "invalid direction option dropped",
   implausibleFieldsIn({ battery_power_direction: "Invalid option: 7" }).length === 1

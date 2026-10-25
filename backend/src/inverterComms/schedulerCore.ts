@@ -3,7 +3,11 @@
  * so the write→quiet-gap→confirm→converged/backoff lifecycle is directly selftestable. The async
  * shell in inverterSession.ts just executes the decisions.
  *
- * Priority order baked into decideNextAction: control writes > confirm queries > background polls.
+ * Priority order baked into decideNextAction: dropping already-satisfied setters > control writes
+ * > confirm queries > background polls.
+ *
+ * Every time here is the session's MONOTONIC clock (performance.now() ms), never wall time: an NTP
+ * step (the unit starts before time sync) must neither cut a quiet gap short nor stretch one.
  */
 import type { SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 import type { DecodedFields } from "./pi17Protocol.types.ts";
@@ -73,6 +77,9 @@ export type ConfirmPhase = {
   checks: readonly SetterReadbackCheck[];
 };
 
+/** The newest decoded settings readback per query, and when it was decoded */
+export type SettingsReadback = { fields: DecodedFields; decodedAtMs: number };
+
 export type SchedulerState = {
   timing: Readonly<SchedulerTiming>;
   queuedSetters: readonly QueuedSetterView[];
@@ -82,9 +89,12 @@ export type SchedulerState = {
   lastPollRoundHadFailures: boolean;
   /** Start of the last round that included the settings queries */
   lastSettingsPollAt: number | undefined;
+  latestSettingsReadbacks: Readonly<Partial<Record<SettingsQueryCommandName, SettingsReadback>>>;
 };
 
 export type SchedulerDecision =
+  /** The latest trustworthy readback already shows this setter's target — sending it is pointless at best */
+  | { action: "drop_setter"; command: string }
   | { action: "send_setter"; command: string }
   | { action: "run_confirms"; queries: readonly SettingsQueryCommandName[] }
   | { action: "poll_round"; includeSettingsPoll: boolean }
@@ -100,6 +110,7 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     lastPollRoundEndedAt: undefined,
     lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
+    latestSettingsReadbacks: {},
   };
 }
 
@@ -108,6 +119,11 @@ export function decideNextAction(
   nowMs: number,
   settingsPollIntervalMs: number
 ): SchedulerDecision {
+  // Consumers queue their desired state; one the inverter already holds is withdrawn, gated or not.
+  // That is what keeps an abandoned target (queued, then the consumer's wish moved back to what the
+  // readback shows) from landing when its identical-setter gate opens.
+  const satisfiedSetter = state.queuedSetters.find(setter => readbackAlreadySatisfies(state, setter.command));
+  if (satisfiedSetter) return { action: "drop_setter", command: satisfiedSetter.command };
   const eligibleSetter = state.queuedSetters.find(setter => setter.notBefore <= nowMs);
   if (eligibleSetter) return { action: "send_setter", command: eligibleSetter.command };
   // A gated setter must still wake the pump when its gate opens, whatever else we wait on
@@ -239,6 +255,54 @@ export function afterPollRound(
   };
 }
 
+/** Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for that query. */
+export function withSettingsReadback(
+  state: SchedulerState,
+  query: SettingsQueryCommandName,
+  fields: DecodedFields,
+  nowMs: number
+): SchedulerState {
+  return {
+    ...state,
+    latestSettingsReadbacks: { ...state.latestSettingsReadbacks, [query]: { fields, decodedAtMs: nowMs } },
+  };
+}
+
+/**
+ * Does the latest readback prove the inverter already holds this setter's target? Only a readback
+ * that can stand in for the inverter's state counts: decoded after every write touching that query,
+ * and with no pending confirm on the field (an ACKed write may still commit and change it). A setter
+ * with no readback mapping is never considered satisfied.
+ */
+export function readbackAlreadySatisfies(state: SchedulerState, command: string): boolean {
+  const checks = expectedReadbackChecksForSetter(command);
+  if (!checks.length) return false;
+  return checks.every(check => {
+    const readback = state.latestSettingsReadbacks[check.query];
+    if (!readback || readback.decodedAtMs <= lastWriteTouchingQuery(state, check.query)) return false;
+    const confirmStillPending = state.confirm?.checks.some(
+      pending => pending.query === check.query && pending.field === check.field
+    );
+    return !confirmStillPending && checkIsSatisfied(check, { [check.query]: readback.fields });
+  });
+}
+
+function lastWriteTouchingQuery(state: SchedulerState, query: SettingsQueryCommandName): number {
+  let latestSentAt = -Infinity;
+  for (const [command, sentAt] of Object.entries(state.lastSentAtByCommand)) {
+    if (expectedReadbackChecksForSetter(command).some(check => check.query === query)) {
+      latestSentAt = Math.max(latestSentAt, sentAt);
+    }
+  }
+  return latestSentAt;
+}
+
+/**
+ * Should a running poll round yield to a control write? Not for a setter the readback already
+ * satisfies: consumers queue desired state on every change, and those must not chop rounds short.
+ */
 export function hasEligibleSetter(state: SchedulerState, nowMs: number): boolean {
-  return state.queuedSetters.some(setter => setter.notBefore <= nowMs);
+  return state.queuedSetters.some(
+    setter => setter.notBefore <= nowMs && !readbackAlreadySatisfies(state, setter.command)
+  );
 }

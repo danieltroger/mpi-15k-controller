@@ -16,15 +16,14 @@ export function useSetBuyingParameters({
   const currentlyBuying = createMemo(() => $usbValues.ac_charge_battery !== "disabled");
 
   createEffect(() => {
-    // replacesPrefix "EDB" drops any queued-but-unsent opposite command so we can't flip-flop stale state
+    // Desired state, queued even when the readback already matches: replacesPrefix "EDB" drops any
+    // queued-but-unsent opposite command so stale state can't land later, and the session sends
+    // nothing when the inverter already holds the wanted value
+    if (!$usbValues.ac_charge_battery) return;
     if (shouldBuy()) {
-      if ($usbValues.ac_charge_battery === "disabled") {
-        queueSetter({ command: "EDB1", replacesPrefix: "EDB", refreshAfterSend: ["HECS"] });
-      }
+      queueSetter({ command: "EDB1", replacesPrefix: "EDB", refreshAfterSend: ["HECS"] });
     } else if (!chargingAmperageForBuying()) {
-      if ($usbValues.ac_charge_battery === "enabled") {
-        queueSetter({ command: "EDB0", replacesPrefix: "EDB", refreshAfterSend: ["HECS"] });
-      }
+      queueSetter({ command: "EDB0", replacesPrefix: "EDB", refreshAfterSend: ["HECS"] });
     }
   });
 

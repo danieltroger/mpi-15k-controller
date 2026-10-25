@@ -15,7 +15,15 @@
  * 4. A timeout is only declared after the event loop has had its I/O turn (setImmediate): after a
  *    main-thread stall the timer and an already-arrived response become ready together, and libuv
  *    runs timers before I/O callbacks.
- * 5. One retry, then the exchange fails loudly (the session errorLogs it).
+ * 5. One retry, then the exchange fails loudly (the session errorLogs it). An answer that only
+ *    came on the retry marks the line too: it may be the FIRST attempt's late answer, with the
+ *    retry's own answer still to come — which must not land on the next command (setters all
+ *    share the 5-byte ACK/NAK shape, so only time separates them).
+ * 6. close() settles the exchange in flight at once as "closed" — no retry, no failure — so a
+ *    session torn down by a main() crash restart goes quietly instead of errorLogging (= a P2).
+ *
+ * All timing here is monotonic (performance.now()): a wall-clock step must not stretch or skip a
+ * quiet wait.
  */
 import { classifyFrame, createFrameAccumulator, type ClassifiedFrame } from "./pi17Frames.ts";
 import { frameMismatchForExpectation, type ExchangeExpectation } from "./pi17ResponseShapes.ts";
@@ -38,7 +46,8 @@ export const LINE_QUIET_MAX_WAIT_MS = 5_000;
 const ANOMALY_LOG_INTERVAL_MS = 60_000;
 
 export type AcceptedFrame = Exclude<ClassifiedFrame, { kind: "invalid" }>;
-export type ExchangeResult = { frame: AcceptedFrame } | { failed: string };
+/** `closed`: the exchange was abandoned because the owner closed the line — not a failure */
+export type ExchangeResult = { frame: AcceptedFrame } | { failed: string } | { closed: true };
 
 /** Cumulative counts since the session started — observability for harnesses and debugging */
 export type SerialExchangeCounters = {
@@ -70,6 +79,7 @@ export function createSerialExchange({
 }): SerialExchange {
   const state: ExchangeState = {
     connection: undefined,
+    closed: false,
     frameAccumulator: createFrameAccumulator(),
     inFlight: undefined,
     lastByteReceivedAt: 0,
@@ -105,7 +115,7 @@ export function createSerialExchange({
   return {
     exchange: (frameBytes, expectation, description) => exchangeWithRetry(state, frameBytes, expectation, description),
     isOpen: () => connection.isOpen(),
-    close: () => connection.close(),
+    close: () => closeExchange(state, connection),
     counters: () => ({ ...state.counters }),
   };
 }
@@ -118,14 +128,20 @@ type InFlightExchange = {
   timer: ReturnType<typeof setTimeout> | undefined;
 };
 
-type SingleAttemptOutcome = { answered: AcceptedFrame } | { timedOut: true; rejectedFrameReasons: string[] };
+type SingleAttemptOutcome =
+  | { answered: AcceptedFrame }
+  | { timedOut: true; rejectedFrameReasons: string[] }
+  | { closed: true };
 
 type RateLimitedWarn = ReturnType<typeof createRateLimitedWarnLog>;
 
 type ExchangeState = {
   connection: SerialConnection | undefined;
+  /** Set by close(): every exchange from then on settles as { closed } */
+  closed: boolean;
   frameAccumulator: ReturnType<typeof createFrameAccumulator>;
   inFlight: InFlightExchange | undefined;
+  /** Monotonic ms */
   lastByteReceivedAt: number;
   lineNeedsQuiet: boolean;
   /** When the most recent anomaly happened — the quiet window counts from here or the last byte, whichever is later */
@@ -147,14 +163,20 @@ async function exchangeWithRetry(
 ): Promise<ExchangeResult> {
   const rejectedAcrossAttempts: string[] = [];
   for (let attempt = 0; attempt <= RESPONSE_RETRIES; attempt++) {
+    if (state.closed) return { closed: true };
     let outcome: SingleAttemptOutcome;
     try {
       outcome = await exchangeOnce(state, frameBytes, expectation, description);
     } catch (writeError) {
+      if (state.closed) return { closed: true };
       // The write itself failed (device closed/unplugged — serialConnection already logs and reopens)
       return { failed: `write failed: ${writeError instanceof Error ? writeError.message : String(writeError)}` };
     }
-    if ("answered" in outcome) return { frame: outcome.answered };
+    if ("closed" in outcome) return { closed: true };
+    if ("answered" in outcome) {
+      if (attempt > 0) markLineNeedsQuiet(state); // the retry's own answer may still be on its way
+      return { frame: outcome.answered };
+    }
     rejectedAcrossAttempts.push(...outcome.rejectedFrameReasons);
     if (attempt < RESPONSE_RETRIES) {
       warnLog(
@@ -179,6 +201,7 @@ async function exchangeOnce(
   description: string
 ): Promise<SingleAttemptOutcome> {
   if (state.lineNeedsQuiet) await waitForQuietLine(state, description);
+  if (state.closed) return { closed: true };
   // Whatever is still buffered belongs to an earlier exchange — never match it to this command
   const staleByteCount = state.frameAccumulator.flush();
   if (staleByteCount)
@@ -188,6 +211,7 @@ async function exchangeOnce(
   // reads, so the in-flight exchange below exists before any answer can be processed (and a frame
   // that somehow beat it would only count as unsolicited — never be misattributed).
   await state.connection.write(frameBytes);
+  if (state.closed) return { closed: true };
   state.counters.framesWritten++;
   return new Promise<SingleAttemptOutcome>(resolve => {
     const inFlight: InFlightExchange = {
@@ -212,8 +236,19 @@ async function exchangeOnce(
   });
 }
 
+function closeExchange(state: ExchangeState, connection: SerialConnection): void {
+  state.closed = true;
+  const inFlight = state.inFlight;
+  if (inFlight) {
+    clearTimeout(inFlight.timer);
+    state.inFlight = undefined;
+    inFlight.settle({ closed: true });
+  }
+  connection.close();
+}
+
 function handleIncomingBytes(state: ExchangeState, chunk: Buffer): void {
-  state.lastByteReceivedAt = Date.now();
+  state.lastByteReceivedAt = performance.now();
   const { frames, discardedByteCount, problems } = state.frameAccumulator.push(chunk);
   if (discardedByteCount) {
     state.counters.discardedBytes += discardedByteCount;
@@ -260,9 +295,9 @@ function handleIncomingBytes(state: ExchangeState, chunk: Buffer): void {
 
 async function waitForQuietLine(state: ExchangeState, description: string): Promise<void> {
   state.counters.quietWaits++;
-  const waitStartedAt = Date.now();
-  while (true) {
-    const now = Date.now();
+  const waitStartedAt = performance.now();
+  while (!state.closed) {
+    const now = performance.now();
     const quietForMs = now - Math.max(state.lastByteReceivedAt, state.lineNeedsQuietSince);
     if (quietForMs >= LINE_QUIET_BEFORE_SEND_MS) break;
     if (now - waitStartedAt >= LINE_QUIET_MAX_WAIT_MS) {
@@ -282,7 +317,7 @@ async function waitForQuietLine(state: ExchangeState, description: string): Prom
 
 function markLineNeedsQuiet(state: ExchangeState): void {
   state.lineNeedsQuiet = true;
-  state.lineNeedsQuietSince = Date.now();
+  state.lineNeedsQuietSince = performance.now();
 }
 
 function describeRejections(reasons: readonly string[]): string {

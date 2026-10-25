@@ -32,13 +32,16 @@ const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", impo
 /** More blocked jobs than the pool has threads (default 4; production runs UV_THREADPOOL_SIZE=32) */
 const THREADPOOL_BLOCKERS = Math.max(64, 2 * Number(process.env.UV_THREADPOOL_SIZE ?? 4));
 const EVENT_LOOP_STALL_MS = 3_500;
-const CLEAN_WINDOW_MS = 4_000;
+/** After the faults and the stall settle, GS cadence is measured over this window (median gap) */
+const SETTLED_WINDOW_MS = 8_000;
+/** ≤ 1.33 s per GS+PS round; the retired daemon managed ~1.2 s, the live engine ~1.15 s */
+const MAX_MEDIAN_GS_GAP_MS = 1_330;
 const HARD_TIMEOUT_MS = 90_000;
 /** Values every fake GS/PS answer carries (the live 2026-10-25 frames) — a misattributed frame can't */
 const FAKE_GS_BATTERY_VOLTAGE = 53.2;
 const FAKE_PS_SOLAR_POWER_1 = 80;
 
-type FrameRole = "answer" | "stale" | "late" | "implausible" | "corrupt";
+type FrameRole = "answer" | "stale" | "late" | "implausible" | "corrupt" | "duplicate";
 type FakeInverterEvent =
   | { event: "ready"; t: number; device: string }
   | {
@@ -61,7 +64,8 @@ type FakeInverterEvent =
   | { event: "fault"; t: number; fault: string }
   | { event: "faults_done"; t: number }
   | { event: "lost"; t: number; answering: string }
-  | { event: "crc_bumped_answer"; t: number; serial: number }
+  | { event: "setter_answer_held"; t: number; answering: string }
+  | { event: "crc_bumped_answer"; t: number; serial: number; crc: string }
   | { event: "summary"; t: number; overlaps: number; counts: Record<string, number>; faults_remaining: string[] }
   | { event: "garbage" | "unparseable_command" | "unknown_query"; t: number };
 
@@ -139,6 +143,18 @@ async function runEndToEnd(): Promise<void> {
       }),
     9_000
   );
+  // A burst (the evening-feed flip): the fake holds EDF0's first answer, then sends it late together
+  // with the retry's own NAK 150 ms later — which must not be credited to EDG0
+  setTimeout(() => {
+    for (const command of ["EDF0", "EDG0"] as const) {
+      engine.queueSetter({
+        command,
+        replacesPrefix: command.slice(0, 3),
+        refreshAfterSend: ["HECS"],
+        onResult: ({ acknowledged }) => setterResults.set(command, acknowledged),
+      });
+    }
+  }, 14_000);
 
   // Once every wire fault has been served: stall the main thread for longer than the response
   // timeout right after a frame goes out. Its answer lands in the kernel buffer meanwhile; the
@@ -148,11 +164,13 @@ async function runEndToEnd(): Promise<void> {
   await sleep(2_000);
   const timeoutsAfterStall = engine.exchangeCounters().timeouts;
 
-  const cleanWindowStart = Date.now();
-  await sleep(CLEAN_WINDOW_MS);
-  const cleanWindowGsRounds = decodedRounds.filter(
-    round => round.command === "GS" && round.decodedAt >= cleanWindowStart
-  ).length;
+  const settledWindowStart = Date.now();
+  await sleep(SETTLED_WINDOW_MS);
+  const settledGsTimes = decodedRounds
+    .filter(round => round.command === "GS" && round.decodedAt >= settledWindowStart)
+    .map(round => round.decodedAt);
+  const settledGsGaps = settledGsTimes.slice(1).map((time, index) => time - settledGsTimes[index]!);
+  const medianGsGapMs = median(settledGsGaps);
 
   const counters = engine.exchangeCounters();
   const threadpoolStillBlocked = !threadpool.probeCompleted();
@@ -164,7 +182,7 @@ async function runEndToEnd(): Promise<void> {
   console.log("engine counters:", JSON.stringify(counters));
   console.log(
     `${decodedRounds.length} decoded rounds in ${(runDurationMs / 1000).toFixed(1)} s;`,
-    `${cleanWindowGsRounds} GS rounds in the ${CLEAN_WINDOW_MS} ms clean window`
+    `median GS gap ${medianGsGapMs?.toFixed(0)} ms over ${settledGsGaps.length} gaps in the settled ${SETTLED_WINDOW_MS} ms window`
   );
 
   evaluate({
@@ -174,7 +192,7 @@ async function runEndToEnd(): Promise<void> {
     setterResults,
     stall,
     timeoutsAfterStall,
-    cleanWindowGsRounds,
+    medianGsGapMs,
     threadpoolStillBlocked,
   });
 }
@@ -186,7 +204,7 @@ function evaluate({
   setterResults,
   stall,
   timeoutsAfterStall,
-  cleanWindowGsRounds,
+  medianGsGapMs,
   threadpoolStillBlocked,
 }: {
   decodedRounds: readonly DecodedRound[];
@@ -195,7 +213,7 @@ function evaluate({
   setterResults: ReadonlyMap<string, boolean>;
   stall: { timeoutsBefore: number; framesWrittenAtStall: number };
   timeoutsAfterStall: number;
-  cleanWindowGsRounds: number;
+  medianGsGapMs: number | undefined;
   threadpoolStillBlocked: boolean;
 }) {
   check("the threadpool stayed blocked for the whole run (the probe job never ran)", threadpoolStillBlocked);
@@ -279,11 +297,12 @@ function evaluate({
   const bumpedAnswerSerial = fakeEvents.flatMap(event =>
     event.event === "crc_bumped_answer" ? [event.serial] : []
   )[0];
+  const bumpedAnswerCrc = fakeEvents.flatMap(event => (event.event === "crc_bumped_answer" ? [event.crc] : []))[0];
   check(
-    "the answer whose CRC needed the firmware's byte bump was decoded",
+    "the answer with a mixed CRC (one byte 0x00, the other bumped) was decoded",
     bumpedAnswerSerial !== undefined &&
       gsRounds.some(round => round.fields.inner_temperature === bumpedAnswerSerial % 100),
-    `serial ${bumpedAnswerSerial}`
+    `serial ${bumpedAnswerSerial}, sent CRC ${bumpedAnswerCrc}`
   );
 
   // ---- timeouts, retries and the quiet line ----
@@ -332,12 +351,38 @@ function evaluate({
     )
   );
 
+  // ---- a setter burst after a late first answer: the retry's own NAK must not shift onto EDG0 ----
+  check("EDF0 was ACKed (its first attempt's late ACK, accepted on the retry)", setterResults.get("EDF0") === true);
+  check(
+    "EDG0 got its own ACK — the retry's duplicate NAK landed as unsolicited during the quiet wait",
+    setterResults.get("EDG0") === true &&
+      framesSent.some(frame => frame.role === "duplicate") &&
+      counters.unsolicitedFrames >= 1,
+    `EDG0 acknowledged=${setterResults.get("EDG0")}, unsolicited=${counters.unsolicitedFrames}`
+  );
+  check(
+    "HECS readback confirms both feed-grid flags disabled after the burst",
+    decodedRounds.some(
+      round =>
+        round.command === "HECS" &&
+        round.fields.battery_discharge_to_feed_grid_when_solar_input_normal === "disabled" &&
+        round.fields.battery_discharge_to_feed_grid_when_solar_input_loss === "disabled"
+    )
+  );
+
   // ---- throughput with the pool blocked: back-to-back rounds at least as fast as the old daemon ----
   check(
-    `≥ 3 GS rounds in a fault-free ${CLEAN_WINDOW_MS} ms window (≤ 1.33 s per round; the old daemon managed ~1.2 s)`,
-    cleanWindowGsRounds >= 3,
-    `${cleanWindowGsRounds} rounds`
+    `median GS gap ≤ ${MAX_MEDIAN_GS_GAP_MS} ms over a settled ${SETTLED_WINDOW_MS} ms window`,
+    medianGsGapMs !== undefined && medianGsGapMs <= MAX_MEDIAN_GS_GAP_MS,
+    `${medianGsGapMs?.toFixed(0)} ms`
   );
+}
+
+function median(values: readonly number[]): number | undefined {
+  if (!values.length) return undefined;
+  const sorted = [...values].sort((first, second) => first - second);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function startFakeInverter() {
