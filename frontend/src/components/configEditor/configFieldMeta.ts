@@ -543,7 +543,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["alerting", "solar_forecast_accuracy_p2"],
         "PV forecast accuracy",
-        "P2 when the day-ahead PV forecast has been badly off for a week, two daily checks in a row. Backtest: twice in 26 months (a snow week, one forecast miss), against 13 for the old model.",
+        "P2 when the day-ahead PV forecast has been badly off for a week, two daily checks in a row. One push per episode; snow and outage days don't count. Backtest: 1 push in 26 months, against 8 for the old model.",
         { heading: "PV forecast accuracy" }
       ),
       f(

@@ -33,7 +33,7 @@ export const default_config: Config = {
     inverter_stuck_sustain_minutes: 30,
     inverter_stuck_buy_window_sustain_minutes: 5,
     inverter_stuck_p1_after_minutes: 0,
-    // Backtested over 26 months: fires on a snow week and one forecast-miss week, never on normal weather
+    // Backtested over 26 months: 1 push (a forecast-miss week in March 2026) against 8 for the old model, snow weeks excluded
     solar_forecast_accuracy_p2: true,
     solar_forecast_week_min_ratio: 0.65,
     solar_forecast_week_max_ratio: 1.5,

@@ -157,7 +157,7 @@ export type AlertingConfig = {
   inverter_stuck_p1_after_minutes: number;
   /**
    * P2 when the day-ahead PV forecast has been badly off for a week (rolling 7 days, two evaluations
-   * in a row): it would have fired twice in 26 months of backtest, the old linear model 13 times.
+   * in a row, once per episode, snow weeks excluded): 1 push in 26 months of backtest, the old linear model 8.
    */
   solar_forecast_accuracy_p2: boolean;
   /** …when actual/forecast PV over the week falls below this (only weeks forecasting ≥ 70 kWh) */
