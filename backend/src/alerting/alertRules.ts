@@ -8,6 +8,7 @@ import type { AutoTraderStatus } from "../autoTrading/autoTraderState.types.ts";
 import type { AlertManager } from "./alertManager.ts";
 import type { AlertSeverity } from "./alerting.types.ts";
 import { formatSekForAlert, round1, thresholdState } from "./alertingLogic.ts";
+import { startInverterStuckAlerts } from "./inverterStuckAlerts.ts";
 
 /**
  * The watchers: each rule reads signals that already drive the rest of the controller and turns
@@ -26,6 +27,10 @@ export function startAlertRules(ctx: {
   averageSOC: Accessor<number | undefined>;
   currentBatteryPower: Accessor<CurrentBatteryPowerBroadcast | undefined>;
   autoTraderStatus: Accessor<AutoTraderStatus | undefined>;
+  /** Battery-side amps the buy schedule is asking for (0/undefined outside buy windows) */
+  chargingAmperageForBuying: Accessor<number | undefined>;
+  /** HECS readback: the inverter confirmed AC charging is enabled */
+  acChargingEnabledOnInverter: Accessor<boolean>;
 }) {
   const bootedAtMs = Date.now();
   const alerting = createMemo(() => ctx.config().alerting);
@@ -205,6 +210,18 @@ export function startAlertRules(ctx: {
     );
   }, 15_000);
   onCleanup(() => clearInterval(pollTimer));
+
+  // ——— stuck inverter: DC side latched off behind normal-looking telemetry (2026-10-21, 59 h) ———
+  startInverterStuckAlerts({
+    config: ctx.config,
+    manager: ctx.manager,
+    mqttValues: ctx.mqttValues,
+    averageSOC: ctx.averageSOC,
+    currentBatteryPower: ctx.currentBatteryPower,
+    chargingAmperageForBuying: ctx.chargingAmperageForBuying,
+    acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter,
+    inGracePeriod,
+  });
 
   // ——— trader guard interventions + P3 digests (watched via the status signal — autoTrader.ts untouched) ———
   let previousGuardAction: string | undefined;

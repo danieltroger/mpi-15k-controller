@@ -25,7 +25,10 @@ import { NowProvider } from "./utilities/useNow.ts";
 import { useShouldBuyPower } from "./buying/useShouldBuyPower.ts";
 import { MQTTValuesProvider, useFromMqttProvider } from "./mqttValues/MQTTValuesProvider.ts";
 import { useCurrentMeasuring } from "./currentMeasuring/useCurrentMeasuring.ts";
-import { UsbInverterConfigurationProvider } from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import {
+  UsbInverterConfigurationProvider,
+  useUsbInverterConfiguration,
+} from "./usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
 import { InfluxClientProvider } from "./utilities/InfluxClientProvider.ts";
 import { useAutoTrader } from "./autoTrading/autoTrader.ts";
 import { latestSpotPrices } from "./autoTrading/priceService.ts";
@@ -143,7 +146,11 @@ function main() {
                       );
                     });
 
+                    const { exportAmountForSelling } = shouldSellPower(config);
+                    const { chargingAmperageForBuying } = useShouldBuyPower({ config });
+
                     const { mqttValues } = useFromMqttProvider();
+                    const { $usbValues } = useUsbInverterConfiguration();
                     const alertManager = createAlertManager(config);
                     catchError(
                       () =>
@@ -155,14 +162,14 @@ function main() {
                           averageSOC: clampedSocAh,
                           currentBatteryPower: currentPower,
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
+                          chargingAmperageForBuying,
+                          acChargingEnabledOnInverter: () => $usbValues.ac_charge_battery === "enabled",
                         }),
                       // Alerting going down must never take the controller with it — and this failure
                       // is itself worth a push, which the errorLog hook provides.
                       e => errorLog("Alert rules crashed — alerting rules disabled until restart", e)
                     );
 
-                    const { exportAmountForSelling } = shouldSellPower(config);
-                    const { chargingAmperageForBuying } = useShouldBuyPower({ config });
                     const isCharging = createMemo(() => {
                       if (prematureWorkaroundErrored()) return;
                       return catchError(

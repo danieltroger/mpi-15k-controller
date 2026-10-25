@@ -2,7 +2,13 @@
  * Self-test for the pure alerting decision logic. Run from backend/ with:
  *   yarn node src/alerting/alerting.selftest.ts
  */
-import { decideSend, errorLogDedupeKey, severityToPushoverPriority, thresholdState } from "./alertingLogic.ts";
+import {
+  decideSend,
+  errorLogDedupeKey,
+  expiredCooldownKeys,
+  severityToPushoverPriority,
+  thresholdState,
+} from "./alertingLogic.ts";
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -55,6 +61,18 @@ check(
   decideSend({ ...base, severity: "P1", pushedAtMsLastHour: fullHour }),
   "send"
 );
+
+// ——— cooldown entries are pruned once they can't suppress anything ———
+const weekMs = 7 * 86_400_000;
+const lastSent = new Map([
+  ["inverter-stuck:1792556110000", { atMs: base.nowMs - weekMs - 1 }],
+  ["inverter-stuck:1792900000000", { atMs: base.nowMs - 60_000 }],
+  ["test-alert-1", { atMs: base.nowMs - weekMs + 1 }],
+]);
+check("entries older than a week expire", expiredCooldownKeys(lastSent, base.nowMs, base.cooldownMs), [
+  "inverter-stuck:1792556110000",
+]);
+check("a cooldown longer than a week keeps its entries", expiredCooldownKeys(lastSent, base.nowMs, 2 * weekMs), []);
 
 // ——— hysteresis ———
 check("above set threshold → active", thresholdState(97.2, 97, 92), true);

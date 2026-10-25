@@ -4,7 +4,13 @@ import process from "process";
 import { type Accessor, createSignal, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { AlertRecord, AlertSeverity } from "./alerting.types.ts";
-import { decideSend, errorLogDedupeKey, formatErrorLogMessage, severityToPushoverPriority } from "./alertingLogic.ts";
+import {
+  decideSend,
+  errorLogDedupeKey,
+  expiredCooldownKeys,
+  formatErrorLogMessage,
+  severityToPushoverPriority,
+} from "./alertingLogic.ts";
 import { sendPushoverMessage } from "./pushoverTransport.ts";
 import { debugLog, logLog, setOnErrorLog, warnLog } from "../utilities/logging.ts";
 
@@ -83,11 +89,13 @@ export function createAlertManager(config: Accessor<Config>): AlertManager {
     const isForwardedErrorLog = alert.key.startsWith("errorlog:");
     const budgetBucket = isForwardedErrorLog ? errorLogPushedAtMs : pushedAtMs;
     while (budgetBucket.length && budgetBucket[0] < nowMs - 3600_000) budgetBucket.shift();
+    const cooldownMs = alertingConfig.cooldown_minutes * 60_000;
+    for (const expiredKey of expiredCooldownKeys(lastSentByKey, nowMs, cooldownMs)) lastSentByKey.delete(expiredKey);
     const decision = decideSend({
       nowMs,
       severity: alert.severity,
       lastSentForKey: lastSentByKey.get(alert.key),
-      cooldownMs: alertingConfig.cooldown_minutes * 60_000,
+      cooldownMs,
       pushedAtMsLastHour: budgetBucket,
       maxPushesPerHour: isForwardedErrorLog
         ? alertingConfig.max_errorlog_pushes_per_hour

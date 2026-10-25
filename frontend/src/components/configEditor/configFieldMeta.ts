@@ -444,6 +444,30 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "P2 when every thermometer has been silent for this long.",
         { unit: "min" }
       ),
+      f(
+        ["alerting", "inverter_stuck_p2"],
+        "Stuck inverter alert",
+        "P2 when the inverter's DC side looks latched off (battery idle with the house on grid, PV idle in daylight, or a grid-charge window that charges nothing) — the October 2026 failure that ran 59 h unnoticed and needed a power-cycle. One alert for all three signs, then a quiet P3 once power flows again.",
+        { heading: "Stuck inverter" }
+      ),
+      f(
+        ["alerting", "inverter_stuck_sustain_minutes"],
+        "Idle / PV-stall delay",
+        "How long the battery-idle or PV-stalled picture must hold before alerting. Replaying October 2026, it alerts 31 min after the inverter stopped.",
+        { unit: "min", min: 1 }
+      ),
+      f(
+        ["alerting", "inverter_stuck_buy_window_sustain_minutes"],
+        "Buy-window delay",
+        "How long a grid-charge window the inverter has confirmed may go without the battery charging before alerting. Healthy windows reach full current within about a minute.",
+        { unit: "min", min: 1 }
+      ),
+      f(
+        ["alerting", "inverter_stuck_p1_after_minutes"],
+        "Escalate to P1 after",
+        "Page as P1 (rings through Do Not Disturb) if it is still seen stuck this long after the first alert; never once a fix has shown up. 0 = never escalate.",
+        { unit: "min", min: 0 }
+      ),
       f(["alerting", "error_log_p2"], "Forward error logs", "Send every backend errorLog() as a deduplicated P2.", {
         heading: "Delivery",
       }),
