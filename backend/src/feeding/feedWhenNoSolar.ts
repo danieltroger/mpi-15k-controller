@@ -9,7 +9,7 @@ import { useOutputPowerSuddenlyRose } from "./useOutputPowerSuddenlyRose.ts";
 import { useSetBuyingParameters } from "../buying/useSetBuyingParameters.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
-import { useUsbInverterConfiguration } from "../usbInverterConfiguration/UsbInverterConfigurationProvider.ts";
+import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
 import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
 
 /**
@@ -34,7 +34,7 @@ export function feedWhenNoSolar({
   let lastChange = 0;
   const { mqttValues } = useFromMqttProvider();
 
-  const { $usbValues, triggerGettingUsbValues, setCommandQueue } = useUsbInverterConfiguration();
+  const { $usbValues, queueSetter } = useInverterComms();
   const acOutputPower = () => {
     const powerR = mqttValues?.["ac_output_active_power_r"]?.value;
     const powerS = mqttValues?.["ac_output_active_power_s"]?.value;
@@ -229,30 +229,18 @@ export function feedWhenNoSolar({
     }
 
     if (wantFeedIntoGrid == undefined) return;
-    const commandsToSend: ("EDF" | "EDG")[] = [];
-    const xAbled = wantFeedIntoGrid ? "enabled" : "disabled";
-    if (
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss &&
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_loss !== xAbled
-    ) {
-      commandsToSend.push("EDG");
-    }
-    if (
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal &&
-      $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== xAbled
-    ) {
-      commandsToSend.push("EDF");
-    }
-    if (!commandsToSend.length) return;
-    for (const command of commandsToSend) {
-      setCommandQueue(prev => {
-        // Remove any not yet executed commands regarding the parameter
-        const newQueue = new Set([...prev].filter(item => !item.command.startsWith(command)));
-        newQueue.add({
-          command: `${command}${+wantFeedIntoGrid ? 1 : 0}`,
-          refreshAfterSend: ["HECS"],
-        });
-        return newQueue;
+    // Desired state, queued even when the readback already matches: that replaces any queued
+    // opposite command (which would otherwise still land once its identical-setter gate opened),
+    // and the session drops a setter the inverter already holds without sending anything.
+    const commandsToQueue: ("EDF" | "EDG")[] = [];
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_loss) commandsToQueue.push("EDG");
+    if ($usbValues.battery_discharge_to_feed_grid_when_solar_input_normal) commandsToQueue.push("EDF");
+    for (const command of commandsToQueue) {
+      // replacesPrefix drops any queued-but-unsent command for the same parameter
+      queueSetter({
+        command: `${command}${+wantFeedIntoGrid ? 1 : 0}`,
+        replacesPrefix: command,
+        refreshAfterSend: ["HECS"],
       });
     }
   });
@@ -285,15 +273,14 @@ export function feedWhenNoSolar({
       }
     }
     const target = Math.round(shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar);
-    if ($usbValues.maximum_feeding_grid_power && target !== parseFloat($usbValues.maximum_feeding_grid_power)) {
-      setCommandQueue(prev => {
-        // Remove any not yet executed commands regarding AC charging amperage
-        const newQueue = new Set([...prev].filter(item => !item.command.startsWith("GPMP0")));
-        newQueue.add({
-          command: `GPMP0${(target + "").padStart(5, "0")}`,
-          refreshAfterSend: ["GPMP"],
-        });
-        return newQueue;
+    // Desired state, queued even when the readback already shows it (see the EDF/EDG effect above):
+    // replacesPrefix drops any queued-but-unsent max-feed-in-power command for this newer target,
+    // and the session sends nothing when the inverter already holds it
+    if ($usbValues.maximum_feeding_grid_power) {
+      queueSetter({
+        command: `GPMP0${(target + "").padStart(5, "0")}`,
+        replacesPrefix: "GPMP0",
+        refreshAfterSend: ["GPMP"],
       });
     }
   });

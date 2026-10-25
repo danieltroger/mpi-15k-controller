@@ -844,8 +844,8 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     fields: [
       f(
         ["usb_parameter_setting", "min_seconds_between_commands"],
-        "Command spacing",
-        "Minimum time between inverter parameter commands — it misbehaves when hurried.",
+        "Command spacing (unused)",
+        "Retired with the mpp-solar CLI queue — the native serial engine paces itself (quiet gap after every write). Kept only so existing config files load.",
         { unit: "s" }
       ),
       f(
@@ -854,7 +854,11 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "How often the inverter's settings are read back outside of writes.",
         { unit: "s" }
       ),
-      f(["mqtt_host"], "MQTT broker", "Host publishing the inverter telemetry the controller consumes."),
+      f(
+        ["mqtt_host"],
+        "MQTT broker",
+        "Broker the controller publishes inverter telemetry, temperatures and SOC to (telegraf feeds them into InfluxDB)."
+      ),
     ],
   },
   {

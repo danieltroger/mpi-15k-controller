@@ -7,7 +7,7 @@
 #
 # Overridable via env (defaults fit the current pi):
 #   SERVICE_USER=ubuntu   user the controller runs as (needs passwordless sudo for
-#                         `sudo dtoverlay`, plus a systemd user instance for mpp-solar)
+#                         `sudo dtoverlay`, and dialout access to the inverter serial port)
 #   REPO_DIR=<auto>       repo root; defaults to the checkout this script lives in
 #   LOG_FILE=/var/log/mpi-15k-controller.log
 #
@@ -93,9 +93,10 @@ fi
 was_active=0
 systemctl is-active --quiet "${SERVICE_NAME}" && was_active=1
 
-# The controller drives the mpp-solar *user* unit via `systemctl --user`; lingering
-# keeps the user instance (and mpp-solar) alive at boot without an SSH session.
-sudo loginctl enable-linger "${SERVICE_USER}"
+# No user units are needed any more: the backend speaks PI17 over the serial port itself, so the
+# retired mpp-solar user unit (which the old controller drove via `systemctl --user`, hence the
+# lingering this script used to enable) must stay disabled — two writers on one serial port
+# interleave garbage.
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SERVICE_NAME}"

@@ -1,7 +1,6 @@
 import { type Accessor, createEffect, createMemo, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { CurrentBatteryPowerBroadcast } from "../sharedTypes.ts";
-import { mqttValueKeys } from "../sharedTypes.ts";
 import type { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import type { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
 import type { AutoTraderStatus } from "../autoTrading/autoTraderState.types.ts";
@@ -9,6 +8,7 @@ import type { AlertManager } from "./alertManager.ts";
 import type { AlertSeverity } from "./alerting.types.ts";
 import { formatSekForAlert, round1, thresholdState } from "./alertingLogic.ts";
 import { startInverterStuckAlerts } from "./inverterStuckAlerts.ts";
+import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
 
 /**
  * The watchers: each rule reads signals that already drive the rest of the controller and turns
@@ -181,11 +181,13 @@ export function startAlertRules(ctx: {
     const nowMs = Date.now();
     const limits = untrack(alerting);
 
-    const newestMqttMs = Math.max(0, ...mqttValueKeys.map(key => untrack(() => ctx.mqttValues[key])?.time ?? 0));
+    // Per command: a GS stream that only ever fails the plausibility gate must not hide behind fresh PS
+    const staleLimitMs = limits.stale_mqtt_p2_minutes * 60_000;
+    const telemetryStaleness = untrack(() => inverterTelemetryStaleness(ctx.mqttValues, nowMs, bootedAtMs));
     staleMqttAlert.update(
-      newestMqttMs === 0 ? undefined : nowMs - newestMqttMs > limits.stale_mqtt_p2_minutes * 60_000,
+      telemetryStaleness === undefined ? undefined : telemetryStaleness.silentForMs > staleLimitMs,
       "Inverter data stale",
-      () => `No mqtt updates for ${Math.round((nowMs - newestMqttMs) / 60_000)} min — USB reading daemon dead?`
+      () => (telemetryStaleness ? describeTelemetryStaleness(telemetryStaleness, staleLimitMs) : "")
     );
 
     const readings = untrack(() => Object.values(ctx.temperatures()).map(reading => reading()));
