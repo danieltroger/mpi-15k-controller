@@ -205,8 +205,9 @@ export const default_config: Config = {
  * alerting.inverter_temp_p1_celsius is the exception: it reads like the live overheat threshold, and
  * the config page would render it as an editable do-nothing field. It became
  * scheduled_power_selling.only_sell_below_inverter_temp_celsius, so it seeds that once (a site that
- * tuned it keeps its value) and is dropped; the next config write takes it off disk, and the
- * config_pre_*.backup.json keeps the old file.
+ * tuned it keeps its value) and is dropped. It leaves the disk at the first boot: the config writer
+ * sees the merged config differ from the file text and rewrites it ~300 ms in, keeping the old file
+ * as config_pre_*.backup.json.
  */
 export function mergeWithDefaults(partial: Partial<Config>): Config {
   const { inverter_temp_p1_celsius: retiredInverterTempP1, ...alerting }: AlertingConfig & RetiredAlertingKeys = {

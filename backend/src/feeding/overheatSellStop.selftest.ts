@@ -9,6 +9,7 @@
  */
 import process from "process";
 import {
+  effectiveResumeBelowCelsius,
   MAX_TEMPERATURE_READING_AGE_MS,
   OVERHEAT_SELL_STOP_BOOT_STATE,
   overheatLimitsMisordered,
@@ -120,11 +121,43 @@ check(
   stateTrace(swappedLimits, [92, 92, 92, 92, 92, 92]),
   [true, true, true, true, true, true]
 );
+// Not min(stop, resume): a zero-width band bang-bangs, because the stop itself cools the reading a
+// degree and the resume heats it back (review of b88c4b9: 15 P1/h in simulation)
 check(
-  "swapped limits resume below the lower limit (90 °C), not the configured 95 °C",
-  stateTrace(swappedLimits, [92, 94, 90.1, 89.9, 89.9]),
-  [true, true, true, false, false]
+  "a misordered pair resumes 7 °C below the stop limit; a sane pair resumes where configured",
+  [
+    effectiveResumeBelowCelsius(limits),
+    effectiveResumeBelowCelsius(swappedLimits),
+    effectiveResumeBelowCelsius({ ...limits, start_selling_again_below_inverter_temp_celsius: 97 }),
+    // A retired inverter_temp_p1_celsius of 88 seeded as the stop limit, against the default resume of 90
+    effectiveResumeBelowCelsius({ ...limits, only_sell_below_inverter_temp_celsius: 88 }),
+  ],
+  [90, 83, 90, 81]
 );
+check("swapped limits (90/95) resume only below 83 °C", stateTrace(swappedLimits, [92, 94, 89.9, 83.5, 82.9]), [
+  true,
+  true,
+  true,
+  true,
+  false,
+]);
+for (const [label, stopLimitCelsius, resumeLimitCelsius] of [
+  ["equal 97/97", 97, 97],
+  ["swapped 90/95", 90, 95],
+  ["migrated 88 vs resume 90", 88, 90],
+  ["default 97/90", 97, 90],
+] as const) {
+  const ditherLimits: OverheatSellStopLimits = {
+    only_sell_below_inverter_temp_celsius: stopLimitCelsius,
+    start_selling_again_below_inverter_temp_celsius: resumeLimitCelsius,
+  };
+  const trace = stateTrace(ditherLimits, ditherAtLimit(stopLimitCelsius, 30), 2 * 60_000);
+  check(
+    `dithering at the stop limit for an hour (${label}): one stop, no resume`,
+    [countFlips(trace), trace.at(-1)],
+    [1, true]
+  );
+}
 
 // ——— a live 14 kW sell window through an overheat ———
 const overheatTrace = [88, 94, 96.8, 97.1, 96.9, 97.3, 95, 92, 90.4, 90, 89.8, 90.3, 91, 93];
@@ -266,11 +299,15 @@ function stepAt(previousState: OverheatSellStopState, temperatureCelsius: number
   });
 }
 
-/** sellingStopped after each fresh GS round (~1.1 s apart) of the given temperatures */
-function stateTrace(stopLimits: OverheatSellStopLimits, temperaturesCelsius: number[]): boolean[] {
+/** sellingStopped after each fresh reading (GS rounds arrive ~1.1 s apart) of the given temperatures */
+function stateTrace(
+  stopLimits: OverheatSellStopLimits,
+  temperaturesCelsius: number[],
+  roundIntervalMs = 1100
+): boolean[] {
   let state = OVERHEAT_SELL_STOP_BOOT_STATE;
   return temperaturesCelsius.map((temperatureCelsius, roundIndex) => {
-    const roundAtMs = nowMs + roundIndex * 1100;
+    const roundAtMs = nowMs + roundIndex * roundIntervalMs;
     state = stepOverheatSellStop({
       ...stopLimits,
       previousState: state,
@@ -279,6 +316,26 @@ function stateTrace(stopLimits: OverheatSellStopLimits, temperaturesCelsius: num
     });
     return state.sellingStopped;
   });
+}
+
+/** Integer readings alternating limit / limit − 1, as the stop's own cooling and the resume's heating make them */
+function ditherAtLimit(stopLimitCelsius: number, rounds: number): number[] {
+  const temperaturesCelsius: number[] = [];
+  for (let roundIndex = 0; roundIndex < rounds; roundIndex++) {
+    temperaturesCelsius.push(roundIndex % 2 === 0 ? stopLimitCelsius : stopLimitCelsius - 1);
+  }
+  return temperaturesCelsius;
+}
+
+/** State changes along a trace, counting the boot state (not stopped) as the starting point */
+function countFlips(trace: boolean[]): number {
+  let flips = 0;
+  let previouslyStopped = false;
+  for (const stopped of trace) {
+    if (stopped !== previouslyStopped) flips++;
+    previouslyStopped = stopped;
+  }
+  return flips;
 }
 
 type SellTick = {

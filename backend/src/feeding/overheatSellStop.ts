@@ -20,24 +20,33 @@ export function stepOverheatSellStop(
 ): OverheatSellStopState {
   const { previousState, reading } = input;
   if (!reading || input.nowMs - reading.time > MAX_TEMPERATURE_READING_AGE_MS) return previousState;
-  // A swapped pair (resume limit ≥ stop limit) would flip on every GS round between the two and
-  // toggle 14 kW with it; the lower of the two leaves at worst a zero-width band that only flips
-  // when the reading itself moves. useOverheatSellStop errorLogs the misconfiguration.
-  const resumeBelowCelsius = Math.min(
-    input.start_selling_again_below_inverter_temp_celsius,
-    input.only_sell_below_inverter_temp_celsius
-  );
   const crossedLimit = previousState.sellingStopped
-    ? reading.value < resumeBelowCelsius
+    ? reading.value < effectiveResumeBelowCelsius(input)
     : reading.value >= input.only_sell_below_inverter_temp_celsius;
   if (!crossedLimit) return previousState;
   return { sellingStopped: !previousState.sellingStopped, flipReading: { value: reading.value, time: reading.time } };
+}
+
+/**
+ * Where selling actually resumes. A misordered pair (resume limit ≥ stop limit) has no hysteresis,
+ * and the stop moves the reading itself: cutting 14 kW cools the inverter a degree, resuming heats
+ * it back, so even a zero-width band bang-bangs 14 kW and pages a P1 per cycle. Such a pair falls
+ * back to the default pair's gap below the stop limit; useOverheatSellStop errorLogs it. A retired
+ * inverter_temp_p1_celsius ≤ 90 seeded as the stop limit lands here too.
+ */
+export function effectiveResumeBelowCelsius(limits: OverheatSellStopLimits): number {
+  return overheatLimitsMisordered(limits)
+    ? limits.only_sell_below_inverter_temp_celsius - MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS
+    : limits.start_selling_again_below_inverter_temp_celsius;
 }
 
 /** True when the resume limit leaves no hysteresis gap below the stop limit */
 export function overheatLimitsMisordered(limits: OverheatSellStopLimits): boolean {
   return limits.start_selling_again_below_inverter_temp_celsius >= limits.only_sell_below_inverter_temp_celsius;
 }
+
+/** The default pair's gap (97 → 90 °C) */
+export const MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS = 7;
 
 /**
  * component_max_temperature arrives with every GS round, seconds apart. A reading older than this

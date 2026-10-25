@@ -3,6 +3,8 @@ import type { Config } from "../config/config.types.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import {
+  effectiveResumeBelowCelsius,
+  MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS,
   OVERHEAT_SELL_STOP_BOOT_STATE,
   overheatLimitsMisordered,
   type OverheatSellStopState,
@@ -31,10 +33,9 @@ export function useOverheatSellStop(config: Accessor<Config>): Accessor<Overheat
   const limitsMisordered = createMemo(() => overheatLimitsMisordered(config().scheduled_power_selling));
   createEffect(() => {
     if (!limitsMisordered()) return;
-    const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius } =
-      untrack(config).scheduled_power_selling;
+    const limits = untrack(config).scheduled_power_selling;
     errorLog(
-      `Overheat sell stop misconfigured: start_selling_again_below_inverter_temp_celsius (${start_selling_again_below_inverter_temp_celsius}°C) must be below only_sell_below_inverter_temp_celsius (${only_sell_below_inverter_temp_celsius}°C) — resuming only below ${Math.min(only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius)}°C, with no hysteresis gap`
+      `Overheat sell stop misconfigured: start_selling_again_below_inverter_temp_celsius (${limits.start_selling_again_below_inverter_temp_celsius}°C) must be below only_sell_below_inverter_temp_celsius (${limits.only_sell_below_inverter_temp_celsius}°C) — until that's fixed, selling resumes only below ${effectiveResumeBelowCelsius(limits)}°C (the default ${MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS}°C gap below the stop limit)`
     );
   });
 
@@ -42,15 +43,15 @@ export function useOverheatSellStop(config: Accessor<Config>): Accessor<Overheat
     const { sellingStopped, flipReading } = overheatSellStop();
     // Boot state: nothing has crossed a limit yet
     if (!flipReading) return;
-    const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius } =
-      untrack(config).scheduled_power_selling;
+    const limits = untrack(config).scheduled_power_selling;
+    const resumeBelowCelsius = effectiveResumeBelowCelsius(limits);
     if (sellingStopped) {
       warnLog(
-        `Inverter overheating: component_max_temperature ${flipReading.value}°C reached ${only_sell_below_inverter_temp_celsius}°C — stopping scheduled selling until it drops below ${start_selling_again_below_inverter_temp_celsius}°C`
+        `Inverter overheating: component_max_temperature ${flipReading.value}°C reached ${limits.only_sell_below_inverter_temp_celsius}°C — stopping scheduled selling until it drops below ${resumeBelowCelsius}°C`
       );
     } else {
       logLog(
-        `Inverter cooled: component_max_temperature ${flipReading.value}°C is below ${start_selling_again_below_inverter_temp_celsius}°C — scheduled selling allowed again`
+        `Inverter cooled: component_max_temperature ${flipReading.value}°C is below ${resumeBelowCelsius}°C — scheduled selling allowed again`
       );
     }
   });
