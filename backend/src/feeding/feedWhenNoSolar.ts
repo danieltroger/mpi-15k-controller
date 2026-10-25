@@ -275,6 +275,11 @@ export function feedWhenNoSolar({
       if (stillFeedingIn()) {
         return;
       }
+    } else if (currentlyBuying()) {
+      // Like the EDF/EDG enable above, the feed restore waits for HECS to show AC charging off: a buy
+      // window's step-down can hold EDB0 back for longer than the feed debounce (#53), and lowering GPMP
+      // before EDB0 is a separate F14 lever, not part of the window-end sequence
+      return;
     }
     const target = Math.round(shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar);
     // Desired state, queued even when the readback already shows it (see the EDF/EDG effect above):
