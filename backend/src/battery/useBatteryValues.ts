@@ -56,5 +56,5 @@ export function useBatteryValues(
     return Math.max(0, Math.min(100, soc));
   });
 
-  return { socAh, clampedSocAh, latestAnchor };
+  return { socAh, clampedSocAh, latestAnchor, batteryCurrentAmps };
 }
