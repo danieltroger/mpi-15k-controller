@@ -26,6 +26,10 @@ alert_state.json
 backend/alert_state.json
 inverter_stuck_state.json
 backend/inverter_stuck_state.json
+overheat_alert_state.json
+backend/overheat_alert_state.json
+overheat_alert_state.json.tmp
+backend/overheat_alert_state.json.tmp
 solar_model_state.json
 backend/solar_model_state.json
 backend/solar_cache/

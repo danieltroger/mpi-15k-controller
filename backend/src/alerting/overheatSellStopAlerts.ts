@@ -5,9 +5,10 @@ import {
   type OverheatSellStopLimits,
   type OverheatSellStopSignals,
 } from "../feeding/overheatSellStop.ts";
+import { warnLog } from "../utilities/logging.ts";
 import type { AlertManager } from "./alertManager.ts";
-import type { AlertRecord } from "./alerting.types.ts";
 import { round1 } from "./alertingLogic.ts";
+import { loadOverheatEpisode, saveOverheatEpisode } from "./overheatEpisodeStore.ts";
 
 /**
  * The inverter-temperature P1 rides the overheat sell stop's edges instead of keeping a threshold
@@ -16,12 +17,12 @@ import { round1 } from "./alertingLogic.ts";
  * Episode keys: the stop makes a sawtooth inside one long window (stop at 97 °C, cool below 90 °C,
  * 14 kW again, stop again), and a cycle can be shorter than cooldown_minutes. So a stop that follows
  * a resume is a new episode keyed by its own onset, and the previous episode's cooldown can't
- * swallow it. "Follows a resume" survives restarts: the boot memory comes from the persisted
- * recentAlerts (alert_state.json), so a restart between the resume and the re-stop still pages the
- * P1 the resume notice promised. A stop already in force across a restart or main() crash loop
- * continues the episode the history ends on, under that episode's key, and its persisted cooldown
- * keeps the loop from re-paging (the plain "inverter-temp" key while nothing has resumed yet).
- * Keys with onsets age out of alert_state.json like any other key (expiredCooldownKeys).
+ * swallow it. "Follows a resume" survives restarts: every edge is persisted (overheatEpisodeStore),
+ * so a restart between the resume and the re-stop still pages the P1 the resume notice promised.
+ * A stop already in force across a restart or main() crash loop continues the persisted episode,
+ * under that episode's key, and its persisted cooldown keeps the loop from re-paging (the plain
+ * "inverter-temp" key while nothing has resumed yet). Keys with onsets age out of alert_state.json
+ * like any other key (expiredCooldownKeys).
  */
 export function startOverheatSellStopAlerts(ctx: {
   config: Accessor<Config>;
@@ -29,31 +30,37 @@ export function startOverheatSellStopAlerts(ctx: {
   overheatSellStop: OverheatSellStopSignals;
 }) {
   // Seeded with "not stopped", not with the first state: a stop that is already in force when
-  // alerting starts must still page (under the history's episode key, so a loop can't re-page).
-  createEffect<OverheatAlertMemory>(
-    memory => {
-      const { sellingStopped, flipReading } = ctx.overheatSellStop.state();
-      if (!flipReading || sellingStopped === memory.stopped) return memory;
-      const limits = untrack(ctx.config).scheduled_power_selling;
-      if (sellingStopped) {
-        const episodeKey = memory.lastEdgeWasResume ? `${OVERHEAT_ALERT_KEY}:${flipReading.time}` : memory.episodeKey;
-        void ctx.manager.raise(
-          describeOverheatSellStop({
+  // alerting starts must still page (under the persisted episode key, so a loop can't re-page).
+  createEffect<OverheatAlertMemory>(memory => {
+    const { sellingStopped, flipReading } = ctx.overheatSellStop.state();
+    if (!flipReading || sellingStopped === memory.stopped) return memory;
+    const limits = untrack(ctx.config).scheduled_power_selling;
+    const nextMemory: OverheatAlertMemory = sellingStopped
+      ? {
+          stopped: true,
+          lastEdgeWasResume: false,
+          episodeKey: memory.lastEdgeWasResume ? `${OVERHEAT_ALERT_KEY}:${flipReading.time}` : memory.episodeKey,
+        }
+      : { stopped: false, lastEdgeWasResume: true, episodeKey: memory.episodeKey };
+    // Before raising: a push can sit in a 15 s Pushover timeout, and a restart meanwhile must still
+    // know this edge happened
+    saveOverheatEpisode({ last_edge_was_resume: nextMemory.lastEdgeWasResume, episode_key: nextMemory.episodeKey });
+    void ctx.manager.raise(
+      sellingStopped
+        ? describeOverheatSellStop({
             ...limits,
-            episodeKey,
+            episodeKey: nextMemory.episodeKey,
             temperatureCelsius: flipReading.value,
             withheldSellWatts: untrack(ctx.overheatSellStop.withheldSellWatts),
           })
-        );
-        return { stopped: true, lastEdgeWasResume: false, episodeKey };
-      }
-      void ctx.manager.raise(
-        describeOverheatSellResume({ ...limits, episodeKey: memory.episodeKey, temperatureCelsius: flipReading.value })
-      );
-      return { stopped: false, lastEdgeWasResume: true, episodeKey: memory.episodeKey };
-    },
-    bootMemoryFromHistory(untrack(ctx.manager.recentAlerts))
-  );
+        : describeOverheatSellResume({
+            ...limits,
+            episodeKey: nextMemory.episodeKey,
+            temperatureCelsius: flipReading.value,
+          })
+    );
+    return nextMemory;
+  }, bootMemoryFromStore());
 }
 
 /**
@@ -88,7 +95,7 @@ export function describeOverheatSellResume(
   input: OverheatSellStopLimits & { episodeKey: string; temperatureCelsius: number }
 ): AlertToRaise {
   return {
-    key: `${input.episodeKey}${RESOLVED_SUFFIX}`,
+    key: `${input.episodeKey}:resolved`,
     severity: "P3",
     title: "Inverter cooled — selling resumed",
     message:
@@ -97,34 +104,28 @@ export function describeOverheatSellResume(
   };
 }
 
-/**
- * Where the previous process left off. recentAlerts is newest first and only holds alerts that were
- * actually sent (or dry-run): a raise swallowed by its cooldown isn't recorded, so a crash loop keeps
- * finding the episode's original P1. With no overheat alert in the history (or alerting off), the
- * first stop gets the plain key.
- */
-function bootMemoryFromHistory(recentAlerts: readonly AlertRecord[]): OverheatAlertMemory {
-  const newestOverheatRecord = recentAlerts.find(
-    record => record.key === OVERHEAT_ALERT_KEY || record.key.startsWith(`${OVERHEAT_ALERT_KEY}:`)
-  );
-  if (!newestOverheatRecord) return { stopped: false, lastEdgeWasResume: false, episodeKey: OVERHEAT_ALERT_KEY };
-  const wasResume = newestOverheatRecord.key.endsWith(RESOLVED_SUFFIX);
-  return {
-    stopped: false,
-    lastEdgeWasResume: wasResume,
-    episodeKey: wasResume ? newestOverheatRecord.key.slice(0, -RESOLVED_SUFFIX.length) : newestOverheatRecord.key,
-  };
+/** Where the previous process left off; no (or an unusable) file means the plain key's first episode */
+function bootMemoryFromStore(): OverheatAlertMemory {
+  const freshMemory: OverheatAlertMemory = { stopped: false, lastEdgeWasResume: false, episodeKey: OVERHEAT_ALERT_KEY };
+  const persisted = loadOverheatEpisode();
+  if (!persisted) return freshMemory;
+  const { episode_key } = persisted;
+  // A key outside the family (a hand edit) would let this alert borrow — and burn — another alert's cooldown
+  if (episode_key !== OVERHEAT_ALERT_KEY && !episode_key.startsWith(`${OVERHEAT_ALERT_KEY}:`)) {
+    warnLog("Overheat alerts: ignoring a persisted episode key outside the inverter-temp family", episode_key);
+    return freshMemory;
+  }
+  return { stopped: false, lastEdgeWasResume: persisted.last_edge_was_resume, episodeKey: episode_key };
 }
 
 /** The key the inverter-temperature P1 has always used — persisted cooldowns in alert_state.json carry over */
 export const OVERHEAT_ALERT_KEY = "inverter-temp";
-const RESOLVED_SUFFIX = ":resolved";
 
 type AlertToRaise = Parameters<AlertManager["raise"]>[0];
 
 type OverheatAlertMemory = {
   stopped: boolean;
-  /** The newest edge (this process, or the persisted history at boot) was a resume: the next stop is a repeat */
+  /** The newest edge (this process, or the persisted one at boot) was a resume: the next stop is a repeat */
   lastEdgeWasResume: boolean;
   /** The current (or last) stop episode's key, which its resume notice derives from */
   episodeKey: string;

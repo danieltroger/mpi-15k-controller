@@ -35,7 +35,7 @@ export function useOverheatSellStop(config: Accessor<Config>): Accessor<Overheat
     if (!limitsMisordered()) return;
     const limits = untrack(config).scheduled_power_selling;
     errorLog(
-      `Overheat sell stop misconfigured: start_selling_again_below_inverter_temp_celsius (${limits.start_selling_again_below_inverter_temp_celsius}°C) must be below only_sell_below_inverter_temp_celsius (${limits.only_sell_below_inverter_temp_celsius}°C) — until that's fixed, selling resumes only below ${effectiveResumeBelowCelsius(limits)}°C (the default ${MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS}°C gap below the stop limit)`
+      `Overheat sell stop misconfigured: start_selling_again_below_inverter_temp_celsius (${limits.start_selling_again_below_inverter_temp_celsius}°C) must sit at least one whole degree below only_sell_below_inverter_temp_celsius (${limits.only_sell_below_inverter_temp_celsius}°C) — the inverter reports whole °C, so a narrower gap leaves no reading that holds and selling would flap on and off. Until that's fixed, selling resumes only below ${effectiveResumeBelowCelsius(limits)}°C (the default ${MISORDERED_LIMITS_FALLBACK_GAP_CELSIUS}°C gap below the stop limit)`
     );
   });
 

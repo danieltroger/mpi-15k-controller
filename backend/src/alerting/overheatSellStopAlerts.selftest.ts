@@ -1,14 +1,19 @@
 /**
  * Self-test for the overheat sell stop's alerts: the live effect run inside a createRoot against a
- * manager that applies the real per-key cooldown (decideSend) and keeps a recentAlerts history like
- * alert_state.json, across simulated restarts — plus the alert texts. Run from backend/ with:
+ * manager that applies the real per-key cooldown (decideSend) and keeps a capped recentAlerts list
+ * like alert_state.json, across simulated restarts that share the episode store's file — plus the
+ * alert texts. Run from backend/ with:
  *   yarn node src/alerting/overheatSellStopAlerts.selftest.ts
  */
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
 import process from "process";
 import { createRoot, createSignal } from "solid-js";
 import type { AlertManager } from "./alertManager.ts";
 import type { AlertRecord, AlertSeverity } from "./alerting.types.ts";
 import { decideSend, expiredCooldownKeys } from "./alertingLogic.ts";
+import { flushOverheatEpisodeWrites, useOverheatEpisodeStatePathForTests } from "./overheatEpisodeStore.ts";
 import {
   describeOverheatSellResume,
   describeOverheatSellStop,
@@ -35,10 +40,14 @@ function check(name: string, actual: unknown, expected: unknown) {
 }
 
 const COOLDOWN_MS = default_config.alerting.cooldown_minutes * 60_000;
+/** alertManager's RECENT_CAP */
+const RECENT_ALERTS_CAP = 50;
 const startMs = 1_751_300_000_000;
 const minuteMs = 60_000;
 const limits = default_config.scheduled_power_selling;
 const STOPPED_AT_BOOT: OverheatSellStopState = { sellingStopped: true, flipReading: { value: 97.6, time: startMs } };
+const scratchDirectory = mkdtempSync(path.join(tmpdir(), "overheat-episode-selftest-"));
+const episodeStore = { path: "", scenarioCount: 0 };
 
 // ——— the sawtooth: stop → resume → stop again 28 min after the first page (review of #60) ———
 check(
@@ -84,17 +93,13 @@ check(
 );
 sawtooth.dispose();
 
-// ——— restarts (review of b88c4b9): two roots in sequence sharing one alert_state.json ———
+// ——— restarts: roots in sequence sharing alert_state.json and the episode file ———
 const beforeRestart = createAlertHarness({ initialState: OVERHEAT_SELL_STOP_BOOT_STATE });
 beforeRestart.setWithheldSellWatts(14000);
 flip(beforeRestart, true, 97.2, startMs);
 flip(beforeRestart, false, 89.8, startMs + 12 * minuteMs);
-beforeRestart.dispose(); // systemctl restart / main() crash at +15 min
-const afterRestart = createAlertHarness({
-  initialState: OVERHEAT_SELL_STOP_BOOT_STATE,
-  persisted: beforeRestart.persisted,
-  startedAtMs: startMs + 15 * minuteMs,
-});
+// systemctl restart / main() crash at +15 min
+const afterRestart = await rebootHarness(beforeRestart, OVERHEAT_SELL_STOP_BOOT_STATE, startMs + 15 * minuteMs);
 afterRestart.setWithheldSellWatts(14000);
 flip(afterRestart, true, 97.1, startMs + 28 * minuteMs);
 flip(afterRestart, false, 89.4, startMs + 40 * minuteMs);
@@ -108,21 +113,62 @@ check(
 );
 afterRestart.dispose();
 
-const firstBoot = createAlertHarness({ initialState: STOPPED_AT_BOOT });
-const crashLoopRaises = [...firstBoot.raised];
-let crashLoopPersisted = firstBoot.persisted;
-firstBoot.dispose();
+// The boot memory must not depend on what else gets alerted (review of 1425dae: the 50-entry
+// recentAlerts list used to carry it, and a rate-capped errorLog storm churns it in a minute)
+const unrelatedAhead = createAlertHarness({ initialState: OVERHEAT_SELL_STOP_BOOT_STATE });
+flip(unrelatedAhead, true, 97.2, startMs);
+flip(unrelatedAhead, false, 89.8, startMs + 12 * minuteMs);
+unrelatedAhead.persisted.recentNewestFirst.unshift(
+  unrelatedRecord(`inverter-stuck:${startMs + 13 * minuteMs}`, "pushed", startMs + 13 * minuteMs)
+);
+const unrelatedAheadRebooted = await rebootHarness(
+  unrelatedAhead,
+  OVERHEAT_SELL_STOP_BOOT_STATE,
+  startMs + 15 * minuteMs
+);
+flip(unrelatedAheadRebooted, true, 97.1, startMs + 28 * minuteMs);
+check(
+  "a newer inverter-stuck:<onset> alert ahead of the resume notice doesn't hide the resume",
+  summarize(unrelatedAheadRebooted.raised),
+  [["P1", `${OVERHEAT_ALERT_KEY}:${startMs + 28 * minuteMs}`, "pushed"]]
+);
+unrelatedAheadRebooted.dispose();
+
+const stormed = createAlertHarness({ initialState: OVERHEAT_SELL_STOP_BOOT_STATE });
+flip(stormed, true, 97.2, startMs);
+flip(stormed, false, 89.8, startMs + 12 * minuteMs);
+for (let repeatIndex = 0; repeatIndex < 60; repeatIndex++) {
+  stormed.persisted.recentNewestFirst.unshift(
+    unrelatedRecord(
+      "errorlog:Inverter value # out of range",
+      "rate_capped",
+      startMs + 13 * minuteMs + repeatIndex * 1000
+    )
+  );
+}
+stormed.persisted.recentNewestFirst.splice(RECENT_ALERTS_CAP);
+check(
+  "precondition: the storm evicted every overheat record from recentAlerts",
+  stormed.persisted.recentNewestFirst.some(record => record.key.startsWith(OVERHEAT_ALERT_KEY)),
+  false
+);
+const stormedRebooted = await rebootHarness(stormed, OVERHEAT_SELL_STOP_BOOT_STATE, startMs + 15 * minuteMs);
+flip(stormedRebooted, true, 97.1, startMs + 28 * minuteMs);
+check(
+  "after a rate-capped errorLog storm and a restart, the re-stop still pages under its own key",
+  summarize(stormedRebooted.raised),
+  [["P1", `${OVERHEAT_ALERT_KEY}:${startMs + 28 * minuteMs}`, "pushed"]]
+);
+stormedRebooted.dispose();
+
+let crashLoop = createAlertHarness({ initialState: STOPPED_AT_BOOT });
+const crashLoopRaises = [...crashLoop.raised];
 for (let restartIndex = 1; restartIndex <= 4; restartIndex++) {
   // main() restarts 10 s after a crash; the inverter is still at 97+ °C on every boot
-  const rebooted = createAlertHarness({
-    initialState: STOPPED_AT_BOOT,
-    persisted: crashLoopPersisted,
-    startedAtMs: startMs + restartIndex * minuteMs,
-  });
-  crashLoopRaises.push(...rebooted.raised);
-  crashLoopPersisted = rebooted.persisted;
-  rebooted.dispose();
+  crashLoop = await rebootHarness(crashLoop, STOPPED_AT_BOOT, startMs + restartIndex * minuteMs);
+  crashLoopRaises.push(...crashLoop.raised);
 }
+crashLoop.dispose();
 check(
   "a crash loop mid-overheat keeps the plain key and pages once: the cooldown holds the rest",
   summarize(crashLoopRaises),
@@ -139,12 +185,11 @@ const repeatEpisode = createAlertHarness({ initialState: OVERHEAT_SELL_STOP_BOOT
 flip(repeatEpisode, true, 97.2, startMs);
 flip(repeatEpisode, false, 89.8, startMs + 12 * minuteMs);
 flip(repeatEpisode, true, 97.1, startMs + 28 * minuteMs);
-repeatEpisode.dispose();
-const repeatEpisodeRebooted = createAlertHarness({
-  initialState: { sellingStopped: true, flipReading: { value: 97.4, time: startMs + 30 * minuteMs } },
-  persisted: repeatEpisode.persisted,
-  startedAtMs: startMs + 30 * minuteMs,
-});
+const repeatEpisodeRebooted = await rebootHarness(
+  repeatEpisode,
+  { sellingStopped: true, flipReading: { value: 97.4, time: startMs + 30 * minuteMs } },
+  startMs + 30 * minuteMs
+);
 check(
   "a crash inside a repeat episode continues that episode's key, so its cooldown holds too",
   summarize(repeatEpisodeRebooted.raised),
@@ -152,12 +197,40 @@ check(
 );
 repeatEpisodeRebooted.dispose();
 
+// ——— the episode file itself ———
+const writer = createAlertHarness({ initialState: OVERHEAT_SELL_STOP_BOOT_STATE });
+flip(writer, true, 97.2, startMs);
+await flushOverheatEpisodeWrites();
+check(
+  "each edge lands atomically in the episode file (no temp file left behind)",
+  [JSON.parse(readFileSync(episodeStore.path, { encoding: "utf-8" })), existsSync(`${episodeStore.path}.tmp`)],
+  [{ last_edge_was_resume: false, episode_key: OVERHEAT_ALERT_KEY }, false]
+);
+writer.dispose();
+for (const [label, fileText] of [
+  ["an unparseable episode file", "{ not json"],
+  ["a malformed episode file", JSON.stringify({ last_edge_was_resume: "yes", episode_key: OVERHEAT_ALERT_KEY })],
+  [
+    "a key outside the inverter-temp family",
+    JSON.stringify({ last_edge_was_resume: false, episode_key: "ventilation" }),
+  ],
+] as const) {
+  pointEpisodeStoreAtFreshFile();
+  writeFileSync(episodeStore.path, fileText, { encoding: "utf-8" });
+  const booted = createAlertHarness({ initialState: STOPPED_AT_BOOT, keepEpisodeStore: true });
+  check(`${label} boots a fresh memory: the plain key`, summarize(booted.raised), [
+    ["P1", OVERHEAT_ALERT_KEY, "pushed"],
+  ]);
+  booted.dispose();
+}
+
 // ——— a misordered pair must not page in a loop: the stop cools the reading a degree, the resume
-// heats it back (review of b88c4b9: zero-width band → 15 P1/h). Integer readings dither at the stop
-// limit every 2 min for an hour. ———
+// heats it back (review of b88c4b9: zero-width band → 15 P1/h; review of 1425dae: readings are whole
+// °C, so 97/96.5 is zero-width too). Integer readings dither at the stop limit every 2 min for an hour. ———
 for (const [label, stopLimitCelsius, resumeLimitCelsius] of [
   ["equal 97/97", 97, 97],
   ["swapped 90/95", 90, 95],
+  ["within 1 °C 97/96.5", 97, 96.5],
   ["migrated old P1 threshold 88 vs default resume 90", 88, 90],
   ["default 97/90", 97, 90],
 ] as const) {
@@ -192,7 +265,7 @@ for (const [label, stopLimitCelsius, resumeLimitCelsius] of [
 // ——— edges only ———
 const alreadyStopped = createAlertHarness({ initialState: STOPPED_AT_BOOT });
 check(
-  "a stop already in force when alerting starts pages, under the plain key on a fresh history",
+  "a stop already in force when alerting starts pages, under the plain key with no episode file",
   summarize(alreadyStopped.raised),
   [["P1", OVERHEAT_ALERT_KEY, "pushed"]]
 );
@@ -258,6 +331,8 @@ check(
   []
 );
 
+await flushOverheatEpisodeWrites();
+rmSync(scratchDirectory, { recursive: true, force: true });
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
@@ -270,18 +345,22 @@ type PersistedAlerts = {
   lastSentByKey: Map<string, { atMs: number; severity: AlertSeverity }>;
 };
 
+type AlertHarness = ReturnType<typeof createAlertHarness>;
+
 /**
  * The live effect in a root of its own — one "process" — against a manager that applies the real
  * per-key cooldown at the harness's simulated clock and, like alertManager.raise, records only sent
- * alerts in recentAlerts (a cooldown-swallowed raise returns early). Pass the previous harness's
- * `persisted` to simulate a restart.
+ * alerts in the capped recentAlerts (a cooldown-swallowed raise returns early). A new scenario gets
+ * a fresh episode file; rebootHarness keeps both it and alert_state.json.
  */
 function createAlertHarness(options: {
   initialState: OverheatSellStopState;
   persisted?: PersistedAlerts;
+  keepEpisodeStore?: boolean;
   config?: Config;
   startedAtMs?: number;
 }) {
+  if (!options.persisted && !options.keepEpisodeStore) pointEpisodeStoreAtFreshFile();
   const persisted: PersistedAlerts = options.persisted ?? { recentNewestFirst: [], lastSentByKey: new Map() };
   const [state, setState] = createSignal(options.initialState);
   const [withheldSellWatts, setWithheldSellWatts] = createSignal(0);
@@ -308,6 +387,7 @@ function createAlertHarness(options: {
       if (decision === "send") {
         persisted.lastSentByKey.set(alert.key, { atMs: clock.nowMs, severity: alert.severity });
         persisted.recentNewestFirst.unshift(record);
+        persisted.recentNewestFirst.splice(RECENT_ALERTS_CAP);
       }
       raised.push(record);
       return record;
@@ -324,12 +404,24 @@ function createAlertHarness(options: {
   return { raised, persisted, clock, setState, setWithheldSellWatts, dispose };
 }
 
-function flip(
-  harness: ReturnType<typeof createAlertHarness>,
-  sellingStopped: boolean,
-  temperatureCelsius: number,
-  atMs: number
-) {
+/** A restart: the old process is gone, its queued episode write has landed, alert_state.json carries over */
+async function rebootHarness(previous: AlertHarness, initialState: OverheatSellStopState, startedAtMs: number) {
+  previous.dispose();
+  await flushOverheatEpisodeWrites();
+  return createAlertHarness({ initialState, persisted: previous.persisted, startedAtMs });
+}
+
+function pointEpisodeStoreAtFreshFile() {
+  episodeStore.scenarioCount++;
+  episodeStore.path = path.join(scratchDirectory, `overheat_alert_state_${episodeStore.scenarioCount}.json`);
+  useOverheatEpisodeStatePathForTests(episodeStore.path);
+}
+
+function unrelatedRecord(key: string, delivery: AlertRecord["delivery"], atMs: number): AlertRecord {
+  return { key, severity: "P2", title: "Unrelated", message: "", at: new Date(atMs).toISOString(), delivery };
+}
+
+function flip(harness: AlertHarness, sellingStopped: boolean, temperatureCelsius: number, atMs: number) {
   harness.clock.nowMs = atMs;
   harness.setState({ sellingStopped, flipReading: { value: temperatureCelsius, time: atMs } });
 }

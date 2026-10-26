@@ -116,6 +116,20 @@ check(
   ],
   [false, true, true]
 );
+// Readings are whole °C: what matters is whether some integer reading sits in [resume, stop)
+check(
+  "within 1 °C counts as misordered when no whole-degree reading holds (97/96.5, 97/96.9), not otherwise",
+  [
+    overheatLimitsMisordered({ ...limits, start_selling_again_below_inverter_temp_celsius: 96.5 }),
+    overheatLimitsMisordered({ ...limits, start_selling_again_below_inverter_temp_celsius: 96.9 }),
+    overheatLimitsMisordered({ ...limits, start_selling_again_below_inverter_temp_celsius: 96 }),
+    overheatLimitsMisordered({
+      only_sell_below_inverter_temp_celsius: 96.5,
+      start_selling_again_below_inverter_temp_celsius: 96,
+    }),
+  ],
+  [true, true, false, false]
+);
 check(
   "swapped limits, 92 °C held over 6 GS rounds: stops once and stays stopped",
   stateTrace(swappedLimits, [92, 92, 92, 92, 92, 92]),
@@ -131,8 +145,10 @@ check(
     effectiveResumeBelowCelsius({ ...limits, start_selling_again_below_inverter_temp_celsius: 97 }),
     // A retired inverter_temp_p1_celsius of 88 seeded as the stop limit, against the default resume of 90
     effectiveResumeBelowCelsius({ ...limits, only_sell_below_inverter_temp_celsius: 88 }),
+    effectiveResumeBelowCelsius({ ...limits, start_selling_again_below_inverter_temp_celsius: 96.5 }),
+    effectiveResumeBelowCelsius({ ...limits, start_selling_again_below_inverter_temp_celsius: 96 }),
   ],
-  [90, 83, 90, 81]
+  [90, 83, 90, 81, 90, 96]
 );
 check("swapped limits (90/95) resume only below 83 °C", stateTrace(swappedLimits, [92, 94, 89.9, 83.5, 82.9]), [
   true,
@@ -144,6 +160,7 @@ check("swapped limits (90/95) resume only below 83 °C", stateTrace(swappedLimit
 for (const [label, stopLimitCelsius, resumeLimitCelsius] of [
   ["equal 97/97", 97, 97],
   ["swapped 90/95", 90, 95],
+  ["within 1 °C 97/96.5", 97, 96.5],
   ["migrated 88 vs resume 90", 88, 90],
   ["default 97/90", 97, 90],
 ] as const) {

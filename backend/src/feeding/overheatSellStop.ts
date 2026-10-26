@@ -28,8 +28,8 @@ export function stepOverheatSellStop(
 }
 
 /**
- * Where selling actually resumes. A misordered pair (resume limit ≥ stop limit) has no hysteresis,
- * and the stop moves the reading itself: cutting 14 kW cools the inverter a degree, resuming heats
+ * Where selling actually resumes. A misordered pair (no whole-degree reading between resume and
+ * stop limit, see overheatLimitsMisordered) has no hysteresis, and the stop moves the reading itself: cutting 14 kW cools the inverter a degree, resuming heats
  * it back, so even a zero-width band bang-bangs 14 kW and pages a P1 per cycle. Such a pair falls
  * back to the default pair's gap below the stop limit; useOverheatSellStop errorLogs it. A retired
  * inverter_temp_p1_celsius ≤ 90 seeded as the stop limit lands here too.
@@ -40,9 +40,15 @@ export function effectiveResumeBelowCelsius(limits: OverheatSellStopLimits): num
     : limits.start_selling_again_below_inverter_temp_celsius;
 }
 
-/** True when the resume limit leaves no hysteresis gap below the stop limit */
+/**
+ * True when no reading would hold the state between the two limits. component_max_temperature is
+ * whole °C (an INT field in pi17FieldTables), so 97/96.5 stops at 97 and resumes at 96 with nothing
+ * in between, and flaps exactly like a swapped pair. 97/96 keeps its one-reading band.
+ */
 export function overheatLimitsMisordered(limits: OverheatSellStopLimits): boolean {
-  return limits.start_selling_again_below_inverter_temp_celsius >= limits.only_sell_below_inverter_temp_celsius;
+  return (
+    Math.ceil(limits.start_selling_again_below_inverter_temp_celsius) >= limits.only_sell_below_inverter_temp_celsius
+  );
 }
 
 /** The default pair's gap (97 → 90 °C) */
