@@ -5,6 +5,7 @@
  * after 30 s more, and an identical setter is re-sent no sooner than 60 s after the last one.
  */
 import {
+  type AcChargingReading,
   type BuyWindowEndInputs,
   type BuyWindowEndStepDownState,
   holdsAcChargingOn,
@@ -24,7 +25,7 @@ export type Simulation = {
 export const nightBuying: BuyWindowEndInputs = {
   gridChargingWanted: true,
   wantedLimitAmps: 261,
-  acChargingReadback: "enabled",
+  acChargingReadback: hecs("enabled", -600_000),
   limitReadback: { amps: 261, observedAtMs: -600_000 },
   hallBatteryAmps: 280,
   solarWatts: 0,
@@ -36,7 +37,17 @@ export const windowEnd: Partial<BuyWindowEndInputs> = {
   wantedLimitAmps: IDLE_AC_CHARGING_LIMIT_AMPS,
 };
 export const COMMIT_AFTER_WRITE_MS = 6_000;
-export const CONFIRM_AFTER_WRITE_MS = 12_500;
+/** #48's post-write radio silence: its confirm readback is decoded this long after a write */
+export const QUIET_GAP_AFTER_WRITE_MS = 12_000;
+/** From the window-end tick: the cap goes out ~0.5 s later, its confirm a quiet gap after that */
+export const CONFIRM_AFTER_WRITE_MS = 500 + QUIET_GAP_AFTER_WRITE_MS;
+/** #48's identical-setter gate: the same command string goes out again no sooner than this */
+export const IDENTICAL_SETTER_GATE_MS = 60_000;
+
+/** A HECS "AC charge battery" readback observed at `observedAtMs` */
+export function hecs(state: AcChargingReading["state"], observedAtMs: number): AcChargingReading {
+  return { state, observedAtMs };
+}
 
 /** A simulation that has been in this state for a minute of steps, so its history is realistic */
 export function buyingFor(inputs: BuyWindowEndInputs): Simulation {

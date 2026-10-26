@@ -56,7 +56,5 @@ export function useBatteryValues(
     return Math.max(0, Math.min(100, soc));
   });
 
-  // The raw hall amps are passed through for consumers that act on the battery current itself: the
-  // buy-window end step-down checks the charge current really dropped before disabling AC charging
   return { socAh, clampedSocAh, latestAnchor, batteryCurrentAmps };
 }

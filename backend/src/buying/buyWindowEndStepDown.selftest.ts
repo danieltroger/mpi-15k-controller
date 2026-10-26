@@ -6,12 +6,17 @@
  */
 import process from "process";
 import {
+  acChargingLimitReassertions,
   allowedHallAmps,
   type BuyWindowEndInputs,
+  EDB0_RETRY_SPACING_MS,
+  edb0RetryRequests,
   HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS,
   holdsAcChargingOn,
   IDLE_AC_CHARGING_LIMIT_AMPS,
   initialBuyWindowEndStepDownState,
+  MAX_EDB0_RETRIES,
+  MAX_LIMIT_REASSERTIONS,
   SETTLED_FOR_MS,
   STEP_DOWN_TIMEOUT_MS,
   wantedAcChargingLimitAmps,
@@ -21,6 +26,7 @@ import {
   COMMIT_AFTER_WRITE_MS,
   CONFIRM_AFTER_WRITE_MS,
   eventsAfter,
+  hecs,
   heldAtAnyStep,
   holdsAtEveryStep,
   kindsAt,
@@ -81,7 +87,7 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
     "the stale HECS 'enabled' before EDB0's confirm doesn't start another step-down",
     !heldOnStaleHecs && simulation.state.progress.phase === "released" && eventsAfter(simulation, 12_600).length === 0
   );
-  stepAt(simulation, 25_500, { acChargingReadback: "disabled" });
+  stepAt(simulation, 25_500, { acChargingReadback: hecs("disabled", 25_500) });
   const disabledConfirmed = lastEvent(simulation, "ac_charging_disabled_confirmed");
   check(
     "HECS shows AC charging off → back to idle, logged with timings",
@@ -157,6 +163,13 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
     hallBatteryAmps: atMs < 60_500 + COMMIT_AFTER_WRITE_MS ? 280 : 12,
   }));
   check("confirm gave up, limit still 261 A → held", heldThroughGiveUp);
+  const reassertions = simulation.events.filter(recorded => recorded.event.kind === "limit_reasserted");
+  check(
+    `the first 261 A readback re-asserts the cap, later ones don't (max ${MAX_LIMIT_REASSERTIONS})`,
+    reassertions.length === 1 &&
+      reassertions[0]?.atMs === CONFIRM_AFTER_WRITE_MS &&
+      acChargingLimitReassertions(simulation.state) === MAX_LIMIT_REASSERTIONS
+  );
   stepAt(simulation, 72_500, { limitReadback: { amps: 10, observedAtMs: 72_500 } });
   check(
     "…the re-sent MUCHGC0100 confirms at +72.5 s → released then, inside the timeout",
@@ -175,6 +188,11 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
       timedOut !== undefined &&
       timedOut.limitConfirmedAfterMs === undefined &&
       timedOut.limitReadback?.amps === 261
+  );
+  check(
+    "…with one re-assertion in total, and none left once released",
+    neverApplied.events.filter(recorded => recorded.event.kind === "limit_reasserted").length === 1 &&
+      acChargingLimitReassertions(neverApplied.state) === 0
   );
 }
 
@@ -230,14 +248,53 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
 }
 
 {
-  // Someone else disables AC charging (the inverter's LCD) mid-step-down
+  // Someone else disables AC charging (the inverter's LCD) mid-step-down: a "disabled" closer than the
+  // commit margin to the window end can't be told from one still racing a write, so only a later one counts
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
-  stepAt(simulation, 8_000, { acChargingReadback: "disabled" });
+  stepAt(simulation, 8_000, { acChargingReadback: hecs("disabled", 8_000) });
   check(
-    "AC charging off by other means → cancelled, nothing held",
+    "HECS 'disabled' 8 s after the end → still held (inside the commit margin)",
+    holdsAcChargingOn(simulation.state)
+  );
+  stepAt(simulation, 13_000, { acChargingReadback: hecs("disabled", 13_000) });
+  check(
+    "…a 'disabled' 13 s after the end → cancelled, nothing held",
     lastEvent(simulation, "cancelled")?.reason === "AC charging already disabled" &&
       !holdsAcChargingOn(simulation.state)
+  );
+}
+
+{
+  // EDB0 ACKed but never applied: HECS after the release keeps showing "enabled" (settings poll ~180 s)
+  const simulation = buyingFor(nightBuying);
+  stepAt(simulation, 0, windowEnd);
+  stepAt(simulation, 6_000, { hallBatteryAmps: 11 });
+  stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
+  const releasedAtMs = CONFIRM_AFTER_WRITE_MS;
+  // EDB0's confirm and its backoff re-check, both inside the retry spacing → no retry yet
+  stepAt(simulation, releasedAtMs + 12_500, { acChargingReadback: hecs("enabled", releasedAtMs + 12_500) });
+  stepAt(simulation, releasedAtMs + 42_500, { acChargingReadback: hecs("enabled", releasedAtMs + 42_500) });
+  check("EDB0's own confirm + re-check showing 'enabled' → no retry yet", edb0RetryRequests(simulation.state) === 0);
+  const pollTimes = [180_000, 360_000, 540_000, 720_000, 900_000];
+  for (const atMs of pollTimes) stepAt(simulation, atMs, { acChargingReadback: hecs("enabled", atMs) });
+  const retries = simulation.events
+    .filter(recorded => recorded.event.kind === "edb0_retry")
+    .map(recorded => recorded.atMs);
+  const exhausted = simulation.events.filter(recorded => recorded.event.kind === "edb0_retries_exhausted");
+  check(
+    `EDB0 re-requested at most ${MAX_EDB0_RETRIES} times, ≥ ${EDB0_RETRY_SPACING_MS / 1000} s apart, then given up once`,
+    retries.join() === "180000,360000" && exhausted.length === 1 && exhausted[0]?.atMs === 540_000,
+    `retries at ${retries.join()} exhausted at ${exhausted.map(recorded => recorded.atMs).join()}`
+  );
+  check(
+    "…the request count stays at the cap and nothing is held",
+    edb0RetryRequests(simulation.state) === MAX_EDB0_RETRIES && !holdsAcChargingOn(simulation.state)
+  );
+  stepAt(simulation, 950_000, { acChargingReadback: hecs("disabled", 950_000) });
+  check(
+    "…a later 'disabled' still ends it cleanly",
+    simulation.state.progress.phase === "idle" && edb0RetryRequests(simulation.state) === 0
   );
 }
 
