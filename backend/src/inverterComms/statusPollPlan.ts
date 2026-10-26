@@ -169,6 +169,12 @@ export function faultRecordIdOfQuery(query: `HFS0${FaultRecordId}`): FaultRecord
   return Number(query.slice(3)) as FaultRecordId;
 }
 
+/** The slot an HFS wire command asked for (a decoded round carries it), or undefined for any other */
+export function faultRecordIdOfWireCommand(wireCommand: string): FaultRecordId | undefined {
+  const slotMatch = /^HFS0([0-8])$/.exec(wireCommand);
+  return slotMatch ? (Number(slotMatch[1]) as FaultRecordId) : undefined;
+}
+
 /** The decode table / response shape a status query's answer is read with (every HFS slot shares one) */
 export function decodeTableOfStatusQuery(
   query: InverterStatusQuery

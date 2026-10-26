@@ -36,6 +36,8 @@ export type DecodedFields = Record<string, DecodedFieldValue>;
 /** One decoded query response, as delivered to the reactive stores and the MQTT publisher. */
 export type DecodedRound = {
   command: Pi17QueryCommandName;
+  /** The query as it went on the wire: the same as `command` except for arguments (HFS03) */
+  wireCommand: string;
   fields: DecodedFields;
   /** Date.now() when the response frame was decoded — becomes the per-field `time` in the store */
   decodedAt: number;

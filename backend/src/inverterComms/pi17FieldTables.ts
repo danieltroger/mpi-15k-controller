@@ -1,7 +1,8 @@
 /**
  * PI17 response field tables, ported verbatim from the repo owner's mpp-solar fork (pi17.py) —
- * except the status queries CFS/WS/HFS, which the fork lacks: those follow the official 2022 PI17
- * spec, checked against this inverter's answers in the WiFi datalogger's raw uploads (2026-10).
+ * except the status queries CFS/WS/HFS, which the fork lacks: CFS and WS follow the official 2022
+ * PI17 spec, checked against this inverter's answers in the WiFi datalogger's raw uploads
+ * (2026-10); HFS follows the layout inferred from this inverter's own records (see its table).
  * The human-readable names are load-bearing: influxFieldName() derives from them the exact field
  * names mpp-solar has always published to MQTT/InfluxDB (e.g. "Solar input voltage 1" →
  * solar_input_voltage_1), so Influx series and Grafana dashboards continue seamlessly. Do not
@@ -179,36 +180,44 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
     warningFlag("Equalization state"),
     warningFlag("Rapid shutdown active"),
   ],
-  // ^P006HFSnn: the fault record in flash slot nn. Only the first four fields are relied on; the
-  // value snapshot after them stays verbatim strings because its alignment against the spec looks
-  // shifted by one on this firmware (2026-10 forensics §4.2). The "Fault record" prefix keeps the
-  // names from colliding with the live GS fields (and their plausibility ranges) they resemble.
+  // ^P006HFSnn: the fault record in flash slot nn, 25 fixed-width tokens. The 2022 spec's layout
+  // doesn't fit this firmware: the layout below is inferred from the nine records read on
+  // 2026-10-26 against the incidents they hold, each reading checked on at least two of them —
+  // the 2026-10-21 F14's grid 237.1 V and 54.4 V match Influx; the 2025-04-13 F23 outage reads grid
+  // 0 V / 0 Hz, output 230.0 V / 50.00 Hz, ~5.7 kVA a phase and 114 % load; the 2025-06-30 F57
+  // reads grid 246–247 V and 80/99 °C; the 2024-05 F12s an empty pack at 41.0–41.2 V. Tokens no
+  // reading fits stay verbatim strings ("unidentified"): the "time" reads 7599… and the "work mode"
+  // 66, 84 … in all but one record; 4–6 look like PV but read ~110 V at night where Influx had 0 V;
+  // 12 is 7599 in every record; 13 is signed but positive while discharging. The "Fault record"
+  // prefix keeps the names from colliding with the live GS fields (and their plausibility ranges).
   HFS: [
+    // The firmware leaves this 00 in every slot: a record is filed under the slot that was asked for
     field("Fault record id", INT, ""),
     field("Fault record fault code", INT, ""),
-    field("Fault record time", STRING, "YYMMDDhhmmss"),
+    field("Fault record time", STRING, ""),
     field("Fault record work mode", STRING, ""),
-    field("Fault record solar input voltage 1", STRING, "0.1 V"),
-    field("Fault record solar input voltage 2", STRING, "0.1 V"),
-    field("Fault record solar input power 1", STRING, "W"),
-    field("Fault record solar input power 2", STRING, "W"),
-    field("Fault record AC input voltage R", STRING, "0.1 V"),
-    field("Fault record AC input voltage S", STRING, "0.1 V"),
-    field("Fault record AC input voltage T", STRING, "0.1 V"),
-    field("Fault record AC input frequency", STRING, "0.01 Hz"),
-    field("Fault record battery voltage", STRING, "0.1 V"),
-    field("Fault record battery current", STRING, "0.1 A"),
-    field("Fault record AC output voltage R", STRING, "0.1 V"),
-    field("Fault record AC output voltage S", STRING, "0.1 V"),
-    field("Fault record AC output voltage T", STRING, "0.1 V"),
-    field("Fault record AC output frequency", STRING, "0.01 Hz"),
-    field("Fault record AC output apparent power R", STRING, "VA"),
-    field("Fault record AC output apparent power S", STRING, "VA"),
-    field("Fault record AC output apparent power T", STRING, "VA"),
-    field("Fault record AC output power percentage", STRING, "%"),
-    field("Fault record inner temperature", STRING, "°C"),
-    field("Fault record component max temperature", STRING, "°C"),
-    field("Fault record external battery temperature", STRING, "°C"),
+    field("Fault record unidentified 4", STRING, ""),
+    field("Fault record unidentified 5", STRING, ""),
+    field("Fault record unidentified 6", STRING, ""),
+    field("Fault record AC input voltage R", INT_TENTHS, "V"),
+    field("Fault record AC input voltage S", INT_TENTHS, "V"),
+    field("Fault record AC input voltage T", INT_TENTHS, "V"),
+    field("Fault record AC input frequency", INT_HUNDREDTHS, "Hz"),
+    field("Fault record battery voltage", INT_TENTHS, "V"),
+    field("Fault record unidentified 12", STRING, ""),
+    field("Fault record unidentified 13", STRING, ""),
+    field("Fault record AC output voltage R", INT_TENTHS, "V"),
+    field("Fault record AC output voltage S", INT_TENTHS, "V"),
+    field("Fault record AC output frequency", INT_HUNDREDTHS, "Hz"),
+    field("Fault record AC output apparent power R", INT, "VA"),
+    field("Fault record AC output apparent power S", INT, "VA"),
+    field("Fault record AC output apparent power T", INT, "VA"),
+    field("Fault record AC output load percentage", INT, "%"),
+    field("Fault record inner temperature", INT, "°C"),
+    field("Fault record component max temperature", INT, "°C"),
+    // 000 in every record, like the live GS field (no external sensor is fitted)
+    field("Fault record external battery temperature", INT, "°C"),
+    field("Fault record unidentified 24", STRING, ""),
   ],
 };
 

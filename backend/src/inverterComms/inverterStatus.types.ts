@@ -46,27 +46,55 @@ export type InverterWarningsReading = {
 
 /** One HFS slot as read from the inverter's flash */
 export type InverterFaultRecord = {
+  /** The flash slot that was asked for (HFS03 → 3): the record's own slot field reads 00 in every slot */
   record_id: number;
   fault_code: number;
   fault_text: string;
-  /** YYMMDDhhmmss per the spec; this firmware's slot 00 reads 759900560005, so treat it as opaque */
-  recorded_at_text: string;
-  /** The working mode stored with the record: its name when it is a known code, else the raw code */
-  work_mode: string;
+  /** The record's readable values from the moment of the fault, when every one of them decoded */
+  values: InverterFaultRecordValues | undefined;
   /**
-   * The 21 value-snapshot tokens after the first four fields, comma-joined and verbatim: the spec's
-   * field alignment looks shifted by one on this firmware (2026-10 forensics: the "battery voltage"
-   * slot reads 759.9 V), so nothing here is interpreted.
+   * The tokens no reading fits yet, verbatim and comma-joined: the "time" (7599… on this firmware),
+   * the "work mode" (66, 84, …), tokens 4–6, 12, 13 and 24 (see the HFS table in pi17FieldTables.ts)
    */
-  snapshot: string;
+  unidentified: string;
   time: number;
+};
+
+/**
+ * What a fault record shows about the moment of the fault, in this firmware's layout — inferred
+ * from the nine records read on 2026-10-26 against the incidents they record, since the 2022
+ * spec's layout doesn't fit (pi17FieldTables.ts)
+ */
+export type InverterFaultRecordValues = {
+  /** V */
+  ac_input_voltage_r: number;
+  ac_input_voltage_s: number;
+  ac_input_voltage_t: number;
+  /** Hz */
+  ac_input_frequency: number;
+  /** V */
+  battery_voltage: number;
+  /** V; the record has no T phase for the output */
+  ac_output_voltage_r: number;
+  ac_output_voltage_s: number;
+  /** Hz */
+  ac_output_frequency: number;
+  /** VA */
+  ac_output_apparent_power_r: number;
+  ac_output_apparent_power_s: number;
+  ac_output_apparent_power_t: number;
+  /** % of the rated output */
+  ac_output_load_percent: number;
+  /** °C */
+  inner_temperature: number;
+  component_max_temperature: number;
 };
 
 export type InverterOperatingStatus = {
   working_mode: InverterWorkingModeReading | undefined;
   latest_fault: InverterLatestFaultReading | undefined;
   warnings: InverterWarningsReading | undefined;
-  /** Every slot that answered with a record, by ascending record id */
+  /** Every slot that answered with a record, by ascending slot */
   fault_records: InverterFaultRecord[];
 };
 

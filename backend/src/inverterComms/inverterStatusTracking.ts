@@ -27,7 +27,8 @@ import type {
 } from "./inverterStatus.types.ts";
 import { influxFieldName, PI17_QUERY_RESPONSE_FIELDS, WORKING_MODE_TEXT_BY_CODE } from "./pi17FieldTables.ts";
 import { describeInverterFaultCode } from "./inverterFaultCodes.ts";
-import { ALL_FAULT_RECORD_QUERIES } from "./statusPollPlan.ts";
+import { ALL_FAULT_RECORD_QUERIES, faultRecordIdOfWireCommand } from "./statusPollPlan.ts";
+import { faultRecordOf, sameFaultRecordContent } from "./inverterFaultRecords.ts";
 
 export function afterDecodedRound(previous: InverterStatusTracking, round: DecodedRound): StatusTrackingStep {
   if (round.command === "MOD") return afterWorkingModeReading(previous, round);
@@ -98,11 +99,6 @@ const WARNING_FLAG_NAMES: readonly { key: string; name: string }[] = PI17_QUERY_
   name: spec.name,
 }));
 
-/** The HFS snapshot tokens after id, code, time and work mode, in protocol order */
-const FAULT_RECORD_SNAPSHOT_KEYS: readonly string[] = PI17_QUERY_RESPONSE_FIELDS.HFS.slice(4).map(spec =>
-  influxFieldName(spec.name)
-);
-
 function afterWorkingModeReading(previous: InverterStatusTracking, round: DecodedRound): StatusTrackingStep {
   const code = workingModeCodeForText(round.fields.working_mode);
   if (!code) return unreadable(previous, round, `working_mode ${JSON.stringify(round.fields.working_mode)}`);
@@ -158,15 +154,13 @@ function afterWarningsReading(previous: InverterStatusTracking, round: DecodedRo
 }
 
 function afterFaultRecordReading(previous: InverterStatusTracking, round: DecodedRound): StatusTrackingStep {
-  const record = faultRecordOf(round.fields, round.decodedAt);
-  if (!record) return unreadable(previous, round, `fields ${JSON.stringify(round.fields).slice(0, 200)}`);
+  const slot = faultRecordIdOfWireCommand(round.wireCommand);
+  const record = slot === undefined ? undefined : faultRecordOf(round.fields, slot, round.decodedAt);
+  if (!record) {
+    return unreadable(previous, round, `${round.wireCommand}: ${JSON.stringify(round.fields).slice(0, 200)}`);
+  }
   const lastRead = previous.status.fault_records.find(existing => existing.record_id === record.record_id);
-  const sameContent =
-    lastRead !== undefined &&
-    lastRead.fault_code === record.fault_code &&
-    lastRead.recorded_at_text === record.recorded_at_text &&
-    lastRead.work_mode === record.work_mode &&
-    lastRead.snapshot === record.snapshot;
+  const sameContent = lastRead !== undefined && sameFaultRecordContent(lastRead, record);
   const faultRecords = [
     ...previous.status.fault_records.filter(existing => existing.record_id !== record.record_id),
     record,
@@ -198,38 +192,11 @@ function afterTelemetryReading(previous: InverterStatusTracking, round: DecodedR
   return { tracking, events: [{ kind: "dc_idle_reported" }], requestedQueries: ["MOD"] };
 }
 
-function faultRecordOf(fields: DecodedFields, decodedAt: number): InverterFaultRecord | undefined {
-  const {
-    fault_record_id: recordId,
-    fault_record_fault_code: faultCode,
-    fault_record_time: recordedAtText,
-    fault_record_work_mode: workModeCode,
-  } = fields;
-  if (typeof recordId !== "number" || typeof faultCode !== "number") return undefined;
-  const knownWorkModeCode = knownWorkingModeCode(workModeCode);
-  return {
-    record_id: recordId,
-    fault_code: faultCode,
-    fault_text: describeInverterFaultCode(faultCode),
-    recorded_at_text: typeof recordedAtText === "string" ? recordedAtText : "",
-    work_mode: knownWorkModeCode
-      ? `${WORKING_MODE_TEXT_BY_CODE[knownWorkModeCode]} (${knownWorkModeCode})`
-      : String(workModeCode ?? ""),
-    snapshot: FAULT_RECORD_SNAPSHOT_KEYS.map(key => String(fields[key] ?? "")).join(","),
-    time: decodedAt,
-  };
-}
-
 const WORKING_MODE_CODES = Object.keys(WORKING_MODE_TEXT_BY_CODE) as InverterWorkingModeCode[];
 
 /** MOD decodes to the mode's name (str_keyed), so map it back to the code alerts reason about */
 function workingModeCodeForText(text: DecodedFields[string] | undefined): InverterWorkingModeCode | undefined {
   return WORKING_MODE_CODES.find(code => WORKING_MODE_TEXT_BY_CODE[code] === text);
-}
-
-/** An HFS record stores the bare code */
-function knownWorkingModeCode(code: DecodedFields[string] | undefined): InverterWorkingModeCode | undefined {
-  return WORKING_MODE_CODES.find(knownCode => knownCode === code);
 }
 
 function unreadable(previous: InverterStatusTracking, round: DecodedRound, detail: string): StatusTrackingStep {

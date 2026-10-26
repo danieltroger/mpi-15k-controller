@@ -19,7 +19,7 @@
  * new fault code and read every slot again.
  *
  * Run from backend/ with:  yarn node src/inverterComms/inverterSession.pty.selftest.ts
- * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~70 s.
+ * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~80 s.
  */
 import process from "process";
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from "child_process";
@@ -38,7 +38,8 @@ import {
   INITIAL_INVERTER_STATUS_TRACKING,
   type InverterStatusEvent,
 } from "./inverterStatusTracking.ts";
-import { ALL_FAULT_RECORD_QUERIES } from "./statusPollPlan.ts";
+import { ALL_FAULT_RECORD_QUERIES, faultRecordIdOfWireCommand } from "./statusPollPlan.ts";
+import type { InverterFaultRecord } from "./inverterStatus.types.ts";
 import { WORKING_MODE_TEXT_BY_CODE } from "./pi17FieldTables.ts";
 
 const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", import.meta.url));
@@ -49,14 +50,19 @@ const EVENT_LOOP_STALL_MS = 3_500;
 const SETTLED_WINDOW_MS = 8_000;
 /** ≤ 1.33 s per GS+PS round; the retired daemon managed ~1.2 s, the live engine ~1.15 s */
 const MAX_MEDIAN_GS_GAP_MS = 1_330;
-/** From the EDB0 to the second read of the last fault-record slot: quiet gap, confirm, ~12 rounds */
-const LATCH_SCENARIO_TIMEOUT_MS = 30_000;
+/**
+ * From the EDB0 to the second read of the last fault-record slot: quiet gap, confirm, ~12 rounds,
+ * nine of them carrying a 138-byte record
+ */
+const LATCH_SCENARIO_TIMEOUT_MS = 45_000;
 /**
  * The fault-14 latch must be read as Fault mode this soon (quiet gap 1.5 s + confirm + 2–3 rounds),
  * i.e. by the DC-idle trigger — the minute poll isn't due until ~60 s into the run
  */
 const MAX_LATCH_TO_FAULT_MODE_READ_S = 8;
 const HARD_TIMEOUT_MS = 150_000;
+/** The fake's flash, as the real inverter answered HFS00..HFS08 on 2026-10-26 */
+const FAULT_CODES_BY_SLOT: readonly number[] = [14, 12, 12, 12, 14, 23, 57, 14, 12];
 /** Values every fake GS/PS answer carries (the live 2026-10-25 frames) — a misattributed frame can't */
 const FAKE_GS_BATTERY_VOLTAGE = 53.2;
 const FAKE_PS_SOLAR_POWER_1 = 80;
@@ -253,7 +259,14 @@ async function runEndToEnd(): Promise<void> {
     medianGsGapMs,
     threadpoolStillBlocked,
   });
-  evaluateStatusQueries({ decodedRounds, fakeEvents, statusEvents, setterResults, latchScenarioCompleted });
+  evaluateStatusQueries({
+    decodedRounds,
+    fakeEvents,
+    statusEvents,
+    faultRecords: statusTracking.status.fault_records,
+    setterResults,
+    latchScenarioCompleted,
+  });
 }
 
 /** MOD/CFS/WS/HFS on the wire and the tracker's loop around them, ending with the fault-14 latch */
@@ -261,12 +274,14 @@ function evaluateStatusQueries({
   decodedRounds,
   fakeEvents,
   statusEvents,
+  faultRecords,
   setterResults,
   latchScenarioCompleted,
 }: {
   decodedRounds: readonly DecodedRound[];
   fakeEvents: readonly FakeInverterEvent[];
   statusEvents: readonly InverterStatusEvent[];
+  faultRecords: readonly InverterFaultRecord[];
   setterResults: ReadonlyMap<string, boolean>;
   latchScenarioCompleted: boolean;
 }) {
@@ -287,7 +302,9 @@ function evaluateStatusQueries({
       warningRounds.every(round => Object.values(round.fields).every(flag => flag === "inactive")) &&
       faultRecordRounds.length >= 2 &&
       faultRecordRounds.every(
-        round => round.fields.fault_record_id === 0 && round.fields.fault_record_fault_code === 12
+        round =>
+          round.fields.fault_record_fault_code ===
+          FAULT_CODES_BY_SLOT[faultRecordIdOfWireCommand(round.wireCommand) ?? -1]
       ),
     `MOD ${modeRounds.length}, CFS ${latestFaultRounds.length}, WS ${warningRounds.length}, HFS ${faultRecordRounds.length}`
   );
@@ -297,7 +314,7 @@ function evaluateStatusQueries({
   const slotQueries = ALL_FAULT_RECORD_QUERIES.map(query => `^P006${query}`);
   const slotReadsBeforeLatch = received.filter(event => slotQueries.includes(event.command) && event.t < latchedAt);
   check(
-    "at startup every fault-record slot was read exactly once (empty slots' NAKs taken at once, never retried)",
+    "at startup every fault-record slot was read exactly once (never retried)",
     slotQueries.every(query => slotReadsBeforeLatch.filter(event => event.command === query).length === 1),
     slotReadsBeforeLatch.map(event => event.command.slice(5)).join(",")
   );
@@ -306,11 +323,11 @@ function evaluateStatusQueries({
     return received.some(event => event.command === "^P003GS" && event.t > previousSlotReadAt && event.t < slotRead.t);
   });
   check("one fault-record slot per poll round (a GS between every two)", slotReadsSpreadOverRounds);
-  const declinedSlotAnswers = fakeEvents.filter(event => event.event === "frame_sent" && event.role === "declined");
   check(
-    "slots 01–08 were declined with a NAK at startup and after the latch (16 NAKs, each slot read once per batch)",
-    declinedSlotAnswers.length === 16,
-    `${declinedSlotAnswers.length} NAKs`
+    "the nine records (each naming slot 00 itself) were filed under the slots they were read from",
+    JSON.stringify(faultRecords.map(record => [record.record_id, record.fault_code])) ===
+      JSON.stringify(FAULT_CODES_BY_SLOT.map((faultCode, slot) => [slot, faultCode])),
+    faultRecords.map(record => `${record.record_id}:F${record.fault_code}`).join(" ")
   );
 
   check(
