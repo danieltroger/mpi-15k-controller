@@ -13,11 +13,11 @@ import {
   decideNextAction,
   initialSchedulerState,
   type SchedulerState,
-  type SchedulerTiming,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
 } from "../inverterComms/schedulerCore.ts";
+import type { SchedulerTiming } from "../inverterComms/schedulerTiming.ts";
 import {
   advanceTo,
   createWiringHarness,

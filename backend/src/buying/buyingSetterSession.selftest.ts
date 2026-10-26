@@ -221,12 +221,12 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
-  // Extend-and-re-end within seconds with a gap-0-like confirm cadence (#62: confirms soon after a write
-  // and re-checks every few seconds), where a readback can predate MUCHGC2610's commit
+  // Extend-and-re-end within seconds under #62's real gap 0 (interleaved confirms: polling continues, a
+  // check is judged from its write + 6 s and re-read every 4 s), where a readback can predate MUCHGC2610's commit
   const simulation = createSessionSimulation({
     chargingAmperageForBuying: 261,
     inverter: nightWindowInverter,
-    timingOverrides: { quietGapAfterWriteMs: 4_000, confirmBackoffMs: 4_000 },
+    timingOverrides: { quietGapAfterWriteMs: 0 },
   });
   runUntil(simulation, 0);
   simulation.harness.setChargingAmperage(0);
@@ -237,7 +237,7 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
   check(
-    "gap-0-like cadence, extended and re-ended: EDB0 only with the cap in effect, not while MUCHGC2610 is",
+    "gap 0 (#62 interleaved), extended and re-ended: EDB0 only with the cap in effect, not while MUCHGC2610 is",
     edb0Sends.length === 1 &&
       edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS,
