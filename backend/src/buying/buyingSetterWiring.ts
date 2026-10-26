@@ -7,6 +7,7 @@ import {
   alternateCapRequests,
   type BuyWindowEndStepDownState,
   holdsAcChargingOn,
+  IDLE_AC_CHARGING_LIMIT_AMPS,
   initialBuyWindowEndStepDownState,
   stepBuyWindowEndStepDown,
   wantedAcChargingLimitAmps,
@@ -14,6 +15,7 @@ import {
 import { edb0RetryRequests } from "./buyWindowEndRelease.ts";
 import { createAcChargingReadbacks } from "./acChargingReadbacks.ts";
 import { logStepDownEvent } from "./buyWindowEndStepDownLog.ts";
+import { warnLog } from "../utilities/logging.ts";
 
 /** A hall reading older than this doesn't describe the battery any more (it arrives at ~4 Hz) */
 export const HALL_READING_MAX_AGE_MS = 5_000;
@@ -113,7 +115,7 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   }, 0);
   createEffect<number>(previousRequests => {
     const requests = alternateCaps();
-    if (requests > previousRequests) queueAcChargingLimit(queueSetter, ALTERNATE_CAP_AMPS);
+    if (requests > previousRequests) queueAlternateCap(queueSetter);
     return requests;
   }, 0);
   createEffect<number>(previousRetries => {
@@ -137,12 +139,33 @@ function queueAcChargingSwitch(queueSetter: BuyingSetterEnvironment["queueSetter
   queueSetter({ command, replacesPrefix: "EDB", refreshAfterSend: ["HECS"] });
 }
 
-function queueAcChargingLimit(queueSetter: BuyingSetterEnvironment["queueSetter"], amps: number) {
+function queueAcChargingLimit(
+  queueSetter: BuyingSetterEnvironment["queueSetter"],
+  amps: number,
+  onResult?: SetterQueueItem["onResult"]
+) {
   const targetDeciAmperes = Math.round(amps * 10);
   // replacesPrefix drops any queued-but-unsent AC charging amperage command for this newer target
   queueSetter({
     command: `MUCHGC${(targetDeciAmperes + "").padStart(4, "0")}`,
     replacesPrefix: "MUCHGC",
     refreshAfterSend: [],
+    onResult,
+  });
+}
+
+/**
+ * The extension's alternate cap. MUCHGC0090 had never been sent to this inverter before #63, and the
+ * PI17 sheet gives no range: if the firmware NAKs a limit below 10 A, the extension still gets a cap
+ * re-assert — the idle MUCHGC0100, whose identical-setter gate is long open by then.
+ */
+function queueAlternateCap(queueSetter: BuyingSetterEnvironment["queueSetter"]) {
+  queueAcChargingLimit(queueSetter, ALTERNATE_CAP_AMPS, result => {
+    if (result.acknowledged) return;
+    warnLog(
+      `Buy-window end step-down: the inverter rejected the ${ALTERNATE_CAP_AMPS} A alternate cap (NAK) — its`,
+      `firmware may refuse limits below ${IDLE_AC_CHARGING_LIMIT_AMPS} A; re-asserting MUCHGC0100 instead`
+    );
+    queueAcChargingLimit(queueSetter, IDLE_AC_CHARGING_LIMIT_AMPS);
   });
 }

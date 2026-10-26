@@ -2,8 +2,6 @@
  * Types of the buy-window end step-down (buyWindowEndStepDown.ts): its inputs, phases and events.
  * Pure — no runtime imports.
  */
-import type { Released } from "./buyWindowEndRelease.ts";
-
 /** The BATS "max. AC charging current" readback, stamped when the shell observed it (same clock as nowMs) */
 export type AcChargingLimitReadback = { amps: number; observedAtMs: number };
 /** The HECS "AC charge battery" readback, stamped like the BATS one (-Infinity: from before the shell existed) */
@@ -41,6 +39,16 @@ export type SteppingDown = {
   deadlineMs: number;
   /** The hold was extended — which also asks for the alternate cap */
   extended: boolean;
+};
+
+/** EDB0 is allowed; waiting for a HECS readback newer than the release to show it (buyWindowEndRelease.ts) */
+export type Released = {
+  phase: "released";
+  startedAtMs: number;
+  releasedAtMs: number;
+  edb0Retries: number;
+  lastEdb0RequestAtMs: number;
+  edb0RetriesExhausted: boolean;
 };
 
 export type StepDownProgress = { phase: "idle" } | SteppingDown | Released;

@@ -16,7 +16,7 @@ export type SimulatedClock = { monotonicMs: number };
 export type WiringHarness = {
   clock: SimulatedClock;
   /** Every command the wiring queued, in order, with the simulated time */
-  queued: { atMs: number; command: string }[];
+  queued: { atMs: number; command: string; item: SetterQueueItem }[];
   /** Stands in for the session's send record unless one is passed in (see recordSend) */
   sendRecord: Record<string, number>;
   wiring: ReturnType<typeof wireBuyingSetters>;
@@ -75,7 +75,7 @@ export function createWiringHarness(
       solarWatts,
       batteryVoltage: () => 55,
       queueSetter: item => {
-        queued.push({ atMs: clock.monotonicMs, command: item.command });
+        queued.push({ atMs: clock.monotonicMs, command: item.command, item });
         queueSetter?.(item);
       },
       lastSentAtMsByCommand: lastSentAtMsByCommand ?? (() => sendRecord),

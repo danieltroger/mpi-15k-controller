@@ -208,6 +208,19 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
       fullPackTimeout.limitEvidence === "shows_higher_limit" &&
       lastEvent(fullPack, "hold_extended") === undefined
   );
+  // The review's deadline tick: the step that extends the hold is the one a fresh 261 A BATS triggers,
+  // with the re-assert still unspent — it must extend without re-asserting MUCHGC0100 over the 0090
+  const deadlineTick = buyingFor(nightBuying);
+  stepAt(deadlineTick, 0, windowEnd);
+  holdsAtEveryStep(deadlineTick, 250, STEP_DOWN_TIMEOUT_MS - 250, () => ({}));
+  stepAt(deadlineTick, STEP_DOWN_TIMEOUT_MS, { limitReadback: { amps: 261, observedAtMs: STEP_DOWN_TIMEOUT_MS } });
+  check(
+    "a 261 A readback on the deadline's own step extends the hold and re-asserts nothing",
+    kindsAt(deadlineTick, STEP_DOWN_TIMEOUT_MS).join() === "hold_extended" &&
+      acChargingLimitReassertions(deadlineTick.state) === 0 &&
+      alternateCapRequests(deadlineTick.state) === 1,
+    kindsAt(deadlineTick, STEP_DOWN_TIMEOUT_MS).join()
+  );
 }
 
 {

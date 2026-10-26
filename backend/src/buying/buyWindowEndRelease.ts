@@ -6,6 +6,7 @@
 import type {
   BuyWindowEndInputs,
   BuyWindowEndStepDownState,
+  Released,
   StepDownEvent,
   StepDownProgress,
 } from "./buyWindowEndStepDown.types.ts";
@@ -18,15 +19,6 @@ import type {
 export const EDB0_RETRY_SPACING_MS = 60_000;
 /** EDB0 re-requests before giving up loudly (errorLog); AC charging then stays on until the next window */
 export const MAX_EDB0_RETRIES = 2;
-
-export type Released = {
-  phase: "released";
-  startedAtMs: number;
-  releasedAtMs: number;
-  edb0Retries: number;
-  lastEdb0RequestAtMs: number;
-  edb0RetriesExhausted: boolean;
-};
 
 export function releasedAt(startedAtMs: number, nowMs: number): Released {
   return {

@@ -228,6 +228,43 @@ const failedChecks: string[] = [];
 }
 
 {
+  // The review's deadline-tick probe through the graph: no BATS for 120 s, then the deadline's own tick is
+  // the one a fresh 261 A readback triggers — only the alternate cap may be queued in it
+  const harness = createWiringHarness({
+    chargingAmperageForBuying: 261,
+    acChargeBatteryState: "enabled",
+    hallBatteryAmps: 280,
+  });
+  decodeBats(harness, 261);
+  advanceTo(harness, 0);
+  harness.setChargingAmperage(0);
+  runWithHall(harness, 250, STEP_DOWN_TIMEOUT_MS - 250, () => 280);
+  harness.clock.monotonicMs = STEP_DOWN_TIMEOUT_MS;
+  const deadlineTick = queuedDuring(harness, () => decodeBats(harness, 261));
+  check(
+    "deadline tick: only MUCHGC0090 queued — no MUCHGC0100 after it to replace it in the session queue",
+    deadlineTick.join(" ") === "MUCHGC0090",
+    deadlineTick.join(" ")
+  );
+
+  // MUCHGC0090 has never been sent to the real inverter: if its firmware NAKs a limit below 10 A, the item's
+  // onResult re-asserts MUCHGC0100 (with a warnLog); an ACK adds nothing
+  const alternateCapItem = harness.queued.filter(entry => entry.command === "MUCHGC0090").at(-1)?.item;
+  const afterAck = queuedDuring(harness, () => alternateCapItem?.onResult?.({ acknowledged: true }));
+  check("alternate cap ACKed → nothing more queued", alternateCapItem !== undefined && afterAck.length === 0);
+  const warnings: string[] = [];
+  const afterNak = queuedDuring(harness, () =>
+    withWarningsCaptured(warnings, () => alternateCapItem?.onResult?.({ acknowledged: false }))
+  );
+  check(
+    "alternate cap NAKed → MUCHGC0100 re-asserted, with a warnLog",
+    afterNak.join(" ") === "MUCHGC0100" && warnings.some(text => text.includes("rejected the 9 A alternate cap")),
+    `${afterNak.join(" ")} | ${warnings.join(" | ")}`
+  );
+  harness.dispose();
+}
+
+{
   // The bounded re-asks: a cap the inverter never applies, then an EDB0 it never applies
   const reportedErrors: string[] = [];
   setOnErrorLog(args => reportedErrors.push(args.join(" ")));
@@ -313,6 +350,17 @@ console.log("\nAll buying setter wiring checks passed");
 function check(name: string, condition: boolean, detail = "") {
   console.log(`${condition ? "PASS" : "FAIL"}: ${name} ${detail}`);
   if (!condition) failedChecks.push(name);
+}
+
+/** Runs `action` with console.warn (where warnLog prints) collected into `warnings` */
+function withWarningsCaptured(warnings: string[], action: () => void): void {
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    action();
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 /** A night window charging at 261 A for a while, its readbacks long confirmed, the clock at 0 */

@@ -309,8 +309,13 @@ function nextLimitReassertions(
 ): number {
   const isNewReadback = readback !== undefined && readback.observedAtMs !== progress.lastLimitReadbackAtMs;
   if (!isNewReadback || readback.amps <= IDLE_AC_CHARGING_LIMIT_AMPS) return progress.limitReassertions;
-  // Not during an extension: a queued MUCHGC0100 would replace the alternate cap in the session queue
-  if (progress.extended || progress.limitReassertions >= MAX_LIMIT_REASSERTIONS) return progress.limitReassertions;
+  // Not during an extension: a queued MUCHGC0100 would replace the alternate cap in the session queue. Nor
+  // on the deadline's own step, which extends (sending the alternate cap) or sends EDB0 — `extended` is
+  // still false there, and both caps would be queued in one tick with MUCHGC0100 last
+  const atOrPastDeadline = progress.startedAtMs + afterMs >= progress.deadlineMs;
+  if (progress.extended || atOrPastDeadline || progress.limitReassertions >= MAX_LIMIT_REASSERTIONS) {
+    return progress.limitReassertions;
+  }
   events.push({ kind: "limit_reasserted", afterMs, limitReadbackAmps: readback.amps });
   return progress.limitReassertions + 1;
 }

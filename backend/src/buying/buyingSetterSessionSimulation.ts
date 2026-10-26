@@ -44,6 +44,8 @@ export type InverterModel = {
   acChargingEnabled: boolean;
   /** Setters the inverter ACKs but never applies */
   neverApplies: ReadonlySet<string>;
+  /** Setters the inverter rejects (NAK): nothing commits, and onResult reports acknowledged: false */
+  rejects?: ReadonlySet<string>;
   pendingCommits: { atMs: number; command: string }[];
 };
 
@@ -166,12 +168,21 @@ function sendSetter(simulation: SessionSimulation, command: string, nowMs: numbe
     limitAmpsAtSend: inverter.limitAmps,
     hallAmpsAtSend: modelledHallAmps(inverter),
   });
-  if (!inverter.neverApplies.has(command)) {
+  const acknowledged = !inverter.rejects?.has(command);
+  if (acknowledged && !inverter.neverApplies.has(command)) {
     inverter.pendingCommits.push({ atMs: nowMs + COMMIT_AFTER_WRITE_MS, command });
   }
-  const ackedAtMs = nowMs + SETTER_EXCHANGE_MS;
-  session.scheduler = afterSetterSent(session.scheduler, command, item?.refreshAfterSend ?? [], ackedAtMs, true);
-  simulation.busyUntilMs = ackedAtMs;
+  const answeredAtMs = nowMs + SETTER_EXCHANGE_MS;
+  // Like the session: the send is recorded first, then the owner hears the ACK or NAK
+  session.scheduler = afterSetterSent(
+    session.scheduler,
+    command,
+    item?.refreshAfterSend ?? [],
+    answeredAtMs,
+    acknowledged
+  );
+  simulation.busyUntilMs = answeredAtMs;
+  item?.onResult?.({ acknowledged });
 }
 
 /** Answers the settings queries from the model, recording them the way the session does before consumers see them */

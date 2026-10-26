@@ -123,6 +123,33 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
+  // A firmware that NAKs limits below 10 A: the NAK of MUCHGC0090 re-asserts MUCHGC0100 inside the
+  // extension (its 60 s gate long open), still bounded — here 0100 never applies either, so EDB0 follows
+  // at the extended deadline
+  const simulation = createSessionSimulation({
+    chargingAmperageForBuying: 261,
+    inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100"]), rejects: new Set(["MUCHGC0090"]) },
+  });
+  runUntil(simulation, 0);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, THIRTY_MINUTES_MS);
+  const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
+  const rejectedAt = sentCommands(simulation, "MUCHGC0090", 0)[0]?.atMs ?? Infinity;
+  const fallbackSends = sentCommands(simulation, "MUCHGC0100", 0).filter(sent => sent.atMs > rejectedAt);
+  const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  check(
+    "MUCHGC0090 NAKed: MUCHGC0100 re-sent once inside the extension, then EDB0 at the deadline — nothing more",
+    fallbackSends.length === 1 &&
+      fallbackSends[0]!.atMs < extendedDeadlineMs &&
+      sentCommands(simulation, "MUCHGC0100", 0).length === 3 &&
+      edb0Sends.length === 1 &&
+      edb0Sends[0]!.atMs >= extendedDeadlineMs,
+    describe([...sentCommands(simulation, "MUCHGC0090", 0), ...sentCommands(simulation, "MUCHGC0100", 0), ...edb0Sends])
+  );
+  simulation.harness.dispose();
+}
+
+{
   // In a window, a target the inverter never applies is not re-sent by the buying module (as on main)
   const simulation = createSessionSimulation({
     chargingAmperageForBuying: 261,
