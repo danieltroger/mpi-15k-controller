@@ -4,7 +4,7 @@ import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { formatRelativeTime, useNowMs } from "~/helpers/format";
 
 import type { TemperatureReadingBroadcast } from "../../../../backend/src/sharedTypes";
-import { temperatureStaleAfterMs } from "../../../../backend/src/temperatureMeasuring/thermometerSweepInterval";
+import { temperatureStaleAfterMs } from "../../../../backend/src/temperatureMeasuring/thermometerSweepSettings";
 
 /**
  * A thermometer that hasn't reported for this long (or three sweep intervals, when the sweeps are slower) gets

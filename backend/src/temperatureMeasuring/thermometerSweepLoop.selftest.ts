@@ -1,10 +1,10 @@
 /**
- * Self-test of temperature_saving.thermometer_sweep_interval_seconds: the clamping and the cadence-aware
- * staleness limit (pure), then the live sweep loop run inside a createRoot against a config signal and a
- * simulated clock: start-to-start pacing, a live change re-measuring the running wait, 0 and intervals
- * shorter than a sweep running back to back without ever overlapping, a timer turn between sweeps even when a
- * sweep settles at once, the back-off after an empty or throwing sweep, warn-once on bad values, and stopping.
- * Run from backend/ with:
+ * Self-test of the thermometer sweep loop, run inside a createRoot against a config signal (through
+ * useThermometerSweepSettings, as in production) and a simulated clock: start-to-start pacing, a live change of
+ * temperature_saving.thermometer_sweep_interval_seconds re-measuring the running wait, 0 and intervals shorter
+ * than a sweep running back to back without ever overlapping, a timer turn between sweeps even when a sweep
+ * settles at once, the back-off after an empty or throwing sweep, corrected values, and stopping. The settings'
+ * bounds and warnings are in thermometerSweepSettings.selftest.ts. Run from backend/ with:
  *   yarn node src/temperatureMeasuring/thermometerSweepLoop.selftest.ts
  */
 import process from "process";
@@ -14,7 +14,7 @@ import type { Config } from "../config/config.types.ts";
 import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
 import type { SweepLogger, ThermometerSweepResult } from "./thermometerSweep.ts";
 import { type SweepClock, startThermometerSweepLoop } from "./thermometerSweepLoop.ts";
-import { effectiveSweepIntervalSeconds, temperatureStaleAfterMs } from "./thermometerSweepInterval.ts";
+import { useThermometerSweepSettings } from "./useThermometerSweepSettings.ts";
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -54,58 +54,6 @@ type LoopHarness = {
 };
 
 const TYPICAL_BULK_SWEEP_MS = 1150;
-const minuteMs = 60_000;
-
-// ——— the setting's bounds, pure ———
-check("interval: the default 10 s is kept", effectiveSweepIntervalSeconds(10), { intervalSeconds: 10 });
-check("interval: 0 (back to back) is valid", effectiveSweepIntervalSeconds(0), { intervalSeconds: 0 });
-check("interval: fractions are valid", effectiveSweepIntervalSeconds(2.5), { intervalSeconds: 2.5 });
-check("interval: the 300 s maximum is valid", effectiveSweepIntervalSeconds(300), { intervalSeconds: 300 });
-check("interval: above the maximum clamps to it, with the reason", effectiveSweepIntervalSeconds(301), {
-  intervalSeconds: 300,
-  correction: "301 s exceeds the 300 s maximum (the temperature alerts would lag too far behind), using the maximum",
-});
-check("interval: negative falls back to the default, with the reason", effectiveSweepIntervalSeconds(-1), {
-  intervalSeconds: 10,
-  correction: "-1 is not a non-negative number of seconds, using the default 10 s",
-});
-check(
-  "interval: a string, NaN, Infinity, null or a missing key fall back to the default",
-  ["10", NaN, Infinity, null, undefined].map(configured => effectiveSweepIntervalSeconds(configured).intervalSeconds),
-  [10, 10, 10, 10, 10]
-);
-check(
-  "interval: a string is quoted in the correction",
-  effectiveSweepIntervalSeconds("10").correction,
-  '"10" is not a non-negative number of seconds, using the default 10 s'
-);
-
-// ——— the staleness limit never undercuts three sweep intervals ———
-check(
-  "stale limit: at 10 s the configured 10 min stands",
-  temperatureStaleAfterMs(10 * minuteMs, { thermometer_sweep_interval_seconds: 10 }),
-  10 * minuteMs
-);
-check(
-  "stale limit: at 300 s it stretches to three intervals",
-  temperatureStaleAfterMs(10 * minuteMs, { thermometer_sweep_interval_seconds: 300 }),
-  15 * minuteMs
-);
-check(
-  "stale limit: back to back, a 1 min limit stands",
-  temperatureStaleAfterMs(minuteMs, { thermometer_sweep_interval_seconds: 0 }),
-  minuteMs
-);
-check(
-  "stale limit: an out-of-range interval counts as its clamped value",
-  temperatureStaleAfterMs(minuteMs, { thermometer_sweep_interval_seconds: 1000 }),
-  15 * minuteMs
-);
-check(
-  "stale limit: no config yet (the dashboard before it arrives) counts as the default interval",
-  temperatureStaleAfterMs(3 * minuteMs, undefined),
-  3 * minuteMs
-);
 
 // ——— 10 s start to start, then live changes re-measure the running wait ———
 {
@@ -125,7 +73,9 @@ check(
   );
   check(
     "10 → 30 s: the change is logged",
-    harness.lines.some(line => line.text === "Thermometer sweeps now every 30 s (were every 10 s)"),
+    harness.lines.some(
+      line => line.text === "temperature_saving.thermometer_sweep_interval_seconds: 10 → 30 s, from the next sweep"
+    ),
     true
   );
 
@@ -226,7 +176,7 @@ check(
   harness.stop();
 }
 
-// ——— bad values warn once each, not on every config write, and fall back or clamp ———
+// ——— bad values reach the loop corrected: a fallback to 10 s, a clamp to 300 s, each warned once ———
 {
   const harness = startHarness("ten", { durationMs: TYPICAL_BULK_SWEEP_MS, probesRead: 14, throws: false });
   await advanceTo(harness.timeline, 15_000);
@@ -292,12 +242,13 @@ function startHarness(configuredIntervalSeconds: unknown, sweepBehaviour: FakeSw
       setConfig,
       stop: dispose,
     };
+    const logger = capturingLogger(harness.lines);
     startThermometerSweepLoop({
-      getConfig: config,
+      intervalSeconds: useThermometerSweepSettings(config, logger).thermometer_sweep_interval_seconds,
       sweep: () => fakeSweep(harness),
       publish: () => harness.publishedSweeps++,
       clock: loopClock(timeline),
-      logger: capturingLogger(harness.lines),
+      logger,
     });
     return harness;
   });

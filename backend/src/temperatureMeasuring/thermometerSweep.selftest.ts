@@ -18,8 +18,10 @@ import {
   type SweepLogger,
   sweepThermometers,
   type ThermometerProbe,
+  type ThermometerSweepContextSettings,
   type ThermometerSweepState,
 } from "./thermometerSweep.ts";
+import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "./thermometerSweepSettings.ts";
 import { checkPlausibility, parseTemperatureAttribute, parseW1SlaveText } from "./thermometerReadingParsing.ts";
 import { errorLogDedupeKey } from "../alerting/alertingLogic.ts";
 
@@ -66,8 +68,9 @@ type LoggedLine = { level: "log" | "warn" | "error"; text: string };
 
 const SWEEP_INTERVAL_MS = 10_000;
 const timing = DEFAULT_THERMOMETER_SWEEP_TIMING;
+const SILENT_PAGE_AFTER_MS = DEFAULT_THERMOMETER_SWEEP_SETTINGS.thermometer_silent_page_after_minutes * 60_000;
 /** A probe's 5 min of silence before it pages, in sweeps at the default interval: 30, as before it was timed */
-const FAILED_SWEEPS_TO_PAGE = timing.probeSilencePageAfterMs / SWEEP_INTERVAL_MS;
+const FAILED_SWEEPS_TO_PAGE = SILENT_PAGE_AFTER_MS / SWEEP_INTERVAL_MS;
 const fakeDirectories: string[] = [];
 const runningAsRoot = process.getuid?.() === 0;
 
@@ -535,7 +538,90 @@ if (runningAsRoot) {
   check(
     "back to back: no page after 30 failed sweeps, the page on the first one 5 min after the last reading, once",
     [pageCountsAfterSweep[29], pageCountsAfterSweep.indexOf(1) + 1, pages(lines).length],
-    [0, Math.ceil(timing.probeSilencePageAfterMs / BACK_TO_BACK_SWEEP_MS), 1]
+    [0, Math.ceil(SILENT_PAGE_AFTER_MS / BACK_TO_BACK_SWEEP_MS), 1]
+  );
+}
+
+// ——— the bulk retry interval is a live setting, timed from the last attempt each sweep ———
+{
+  const kernel = createFakeKernel([[cell, 20000]], { denyTriggerWrite: true });
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  const outageStartedAtMs = kernel.nowMs;
+  await runSweep(kernel, state, lines, [cell], retryEvery(20));
+  check(
+    "retry setting: the outage warning names the configured interval",
+    warnings(lines)[0]?.includes("trying the bulk trigger again every 20 s"),
+    true
+  );
+  const triggerAttemptsAfterSweep: number[] = [];
+  for (const secondsIntoOutage of [10, 20, 30, 40]) {
+    kernel.nowMs = outageStartedAtMs + secondsIntoOutage * 1000;
+    await runSweep(kernel, state, lines, [cell], retryEvery(20));
+    triggerAttemptsAfterSweep.push(countTriggerAttempts(kernel));
+  }
+  check("retry setting: at 20 s, tried again at +20 s and +40 s", triggerAttemptsAfterSweep, [1, 2, 2, 3]);
+  // The last attempt was at +40 s
+  kernel.nowMs = outageStartedAtMs + 50_000;
+  await runSweep(kernel, state, lines, [cell], retryEvery(60));
+  const attemptsAfterLengthening = countTriggerAttempts(kernel);
+  kernel.nowMs = outageStartedAtMs + 60_000;
+  await runSweep(kernel, state, lines, [cell], retryEvery(10));
+  check(
+    "retry setting: changed to 60 s, not due 10 s after the last attempt; changed to 10 s, the next sweep tries",
+    [attemptsAfterLengthening, countTriggerAttempts(kernel)],
+    [3, 4]
+  );
+}
+
+// ——— the silent-probe delay is a live setting: lowered mid-silence it pages at the next failed sweep, once ———
+{
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  await runSweep(kernel, state, lines, [cell, outlet]);
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 16; sweepIndex++) {
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
+    // The default 5 min for the first 10 failed sweeps (100 s of silence), then 1 min
+    await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(sweepIndex <= 10 ? 5 : 1));
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check(
+    "silent setting: lowered to 1 min after 100 s of silence, paged at the next failed sweep and only then",
+    [pageCountsAfterSweep[9], pageCountsAfterSweep[10], pageCountsAfterSweep[15]],
+    [0, 1, 1]
+  );
+  check(
+    "silent setting: the page says how long the probe had been silent",
+    pages(lines)[0]?.includes("none for 1.8 min (11 sweeps in a row)"),
+    true
+  );
+}
+{
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  const quarterHour = pageAfterMinutes(15);
+  await runSweep(kernel, state, lines, [cell, outlet], quarterHour);
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 90; sweepIndex++) {
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
+    await runSweep(kernel, state, lines, [cell, outlet], quarterHour);
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check(
+    "silent setting: at 15 min, no page after 5 min of silence, one after 15",
+    [pageCountsAfterSweep[29], pageCountsAfterSweep[88], pageCountsAfterSweep[89]],
+    [0, 0, 1]
   );
 }
 
@@ -554,7 +640,21 @@ function advanceToNextSweepStart(kernel: FakeKernel, intervalMs: number) {
   kernel.nowMs += intervalMs - kernel.behaviour.triggerWriteBlocksMs;
 }
 
-function runSweep(kernel: FakeKernel, state: ThermometerSweepState, lines: LoggedLine[], probes: ThermometerProbe[]) {
+function retryEvery(seconds: number): ThermometerSweepContextSettings {
+  return { ...DEFAULT_THERMOMETER_SWEEP_SETTINGS, thermometer_bulk_retry_interval_seconds: seconds };
+}
+
+function pageAfterMinutes(minutes: number): ThermometerSweepContextSettings {
+  return { ...DEFAULT_THERMOMETER_SWEEP_SETTINGS, thermometer_silent_page_after_minutes: minutes };
+}
+
+function runSweep(
+  kernel: FakeKernel,
+  state: ThermometerSweepState,
+  lines: LoggedLine[],
+  probes: ThermometerProbe[],
+  settings: ThermometerSweepContextSettings = DEFAULT_THERMOMETER_SWEEP_SETTINGS
+) {
   return sweepThermometers({
     probes,
     state,
@@ -562,6 +662,7 @@ function runSweep(kernel: FakeKernel, state: ThermometerSweepState, lines: Logge
     logger: capturingLogger(lines),
     devicesDirectory: kernel.devicesDirectory,
     timing,
+    settings,
   });
 }
 

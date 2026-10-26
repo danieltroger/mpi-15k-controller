@@ -216,9 +216,19 @@ export type TemperatureSavingConfig = {
    * Start-to-start time between two sweeps of the 1-wire thermometers (one bulk conversion, then
    * every probe read: ~1.2 s). 0, or anything shorter than a sweep, sweeps back to back; sweeps
    * never overlap. At most 300. Live: applies from the next sweep, a running wait is re-measured.
-   * See temperatureMeasuring/thermometerSweepInterval.ts.
+   * Bounds of all thermometer_* settings: temperatureMeasuring/thermometerSweepSettings.ts.
    */
   thermometer_sweep_interval_seconds: number;
+  /**
+   * One probe without an accepted reading for this long (and at least 3 failed sweeps in a row) pages
+   * (errorLog → P2): temperatures-stale only sees all probes going silent. 1–60, default 5. Live.
+   */
+  thermometer_silent_page_after_minutes: number;
+  /**
+   * While the 1-wire bulk read fails (sweeps then read probe by probe, ~11 s), how often a sweep tries
+   * it again. 10–3600, default 60. Live: a change applies from the next sweep.
+   */
+  thermometer_bulk_retry_interval_seconds: number;
 };
 
 export type Config = {

@@ -5,7 +5,7 @@ import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
 import { QUIET_GAP_AFTER_WRITE_MS } from "../inverterComms/schedulerTiming.ts";
-import { DEFAULT_THERMOMETER_SWEEP_INTERVAL_SECONDS } from "../temperatureMeasuring/thermometerSweepInterval.ts";
+import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -189,7 +189,7 @@ export const default_config: Config = {
   temperature_saving: {
     database: "mppsolar",
     table: "battery_temperatures",
-    thermometer_sweep_interval_seconds: DEFAULT_THERMOMETER_SWEEP_INTERVAL_SECONDS,
+    ...DEFAULT_THERMOMETER_SWEEP_SETTINGS,
   },
   feed_from_battery_when_no_solar: {
     feed_amount_watts: 290,
@@ -215,8 +215,8 @@ export const default_config: Config = {
  * SOC ledger do raw arithmetic on these — a missing knob would silently NaN every projection; a
  * missing alerting threshold would silently never alert; a missing inverter-temperature limit would
  * silently never stop selling; a missing usb_parameter_setting.quiet_gap_after_write_ms would leave
- * the serial scheduler without its measured 12 s default; a missing
- * temperature_saving.thermometer_sweep_interval_seconds would warn and fall back on every boot).
+ * the serial scheduler without its measured 12 s default; a missing temperature_saving.thermometer_*
+ * setting would warn and fall back on every boot).
  * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
  * predating it still boots with the validated defaults. Orphaned keys from the deleted Wh fitter
  * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the

@@ -1,10 +1,6 @@
-import { type Accessor, createEffect, createMemo, on, onCleanup, untrack } from "solid-js";
-import type { Config } from "../config/config.types.ts";
+import { type Accessor, createEffect, on, onCleanup, untrack } from "solid-js";
 import type { SweepLogger, ThermometerSweepResult } from "./thermometerSweep.ts";
-import {
-  DEFAULT_THERMOMETER_SWEEP_INTERVAL_SECONDS,
-  effectiveSweepIntervalSeconds,
-} from "./thermometerSweepInterval.ts";
+import { THERMOMETER_SWEEP_SETTING_BOUNDS } from "./thermometerSweepSettings.ts";
 
 /** The timers the loop waits on: setTimeout in production, a simulated clock in the selftest */
 export type SweepClock = {
@@ -14,7 +10,8 @@ export type SweepClock = {
 };
 
 export type ThermometerSweepLoopOptions = {
-  getConfig: Accessor<Config>;
+  /** temperature_saving.thermometer_sweep_interval_seconds, live and corrected (useThermometerSweepSettings) */
+  intervalSeconds: Accessor<number>;
   sweep: () => Promise<ThermometerSweepResult>;
   /** Not called for a sweep that ends after the loop was stopped */
   publish: (sweep: ThermometerSweepResult) => void;
@@ -36,17 +33,14 @@ type SweepLoopControl = {
   endWaitEarly: (() => void) | undefined;
 };
 
-type SweepLoopContext = Omit<ThermometerSweepLoopOptions, "getConfig"> & {
-  control: SweepLoopControl;
-  intervalSeconds: Accessor<number>;
-};
+type SweepLoopContext = ThermometerSweepLoopOptions & { control: SweepLoopControl };
 
 /**
  * A sweep that read no probe at all (the bus gone, no probe configured, a sweep that threw) is followed by the
  * next only after at least the default interval. Back to back, such sweeps can finish in milliseconds and would
  * log every probe's failure many times a second.
  */
-const EMPTY_SWEEP_BACKOFF_MS = DEFAULT_THERMOMETER_SWEEP_INTERVAL_SECONDS * 1000;
+const EMPTY_SWEEP_BACKOFF_MS = THERMOMETER_SWEEP_SETTING_BOUNDS.thermometer_sweep_interval_seconds.defaultValue * 1000;
 
 /**
  * Sweeps the thermometers every temperature_saving.thermometer_sweep_interval_seconds, measured start to start,
@@ -55,37 +49,18 @@ const EMPTY_SWEEP_BACKOFF_MS = DEFAULT_THERMOMETER_SWEEP_INTERVAL_SECONDS * 1000
  * soon as it ends. The interval is live: a change re-measures the running wait at once, so going from 300 s to
  * 10 s doesn't sit out the old wait.
  */
-export function startThermometerSweepLoop({ getConfig, ...loopOptions }: ThermometerSweepLoopOptions) {
-  // The config signal changes as a whole: memoising the raw value first means a bad value warns once, not on
-  // every unrelated config write
-  const configuredIntervalSeconds = createMemo(() => getConfig().temperature_saving.thermometer_sweep_interval_seconds);
-  const intervalSetting = createMemo(() => effectiveSweepIntervalSeconds(configuredIntervalSeconds()));
-  const intervalSeconds = createMemo(() => intervalSetting().intervalSeconds);
+export function startThermometerSweepLoop(loopOptions: ThermometerSweepLoopOptions) {
   const control: SweepLoopControl = { stopped: false, endWaitEarly: undefined };
-  const { logger } = loopOptions;
-
-  createEffect(() => {
-    const { correction } = intervalSetting();
-    if (correction) logger.warn("temperature_saving.thermometer_sweep_interval_seconds:", correction);
-  });
-  createEffect(
-    on(intervalSeconds, (currentSeconds, previousSeconds) => {
-      if (previousSeconds === undefined) return;
-      logger.log(
-        `Thermometer sweeps now ${describeSweepCadence(currentSeconds)} (were ${describeSweepCadence(previousSeconds)})`
-      );
-      control.endWaitEarly?.();
-    })
-  );
+  createEffect(on(loopOptions.intervalSeconds, () => control.endWaitEarly?.(), { defer: true }));
   onCleanup(() => {
     control.stopped = true;
     control.endWaitEarly?.();
   });
 
-  logger.log(`Starting thermometer sweeps ${describeSweepCadence(untrack(intervalSeconds))}`);
+  loopOptions.logger.log(`Starting thermometer sweeps ${describeSweepCadence(untrack(loopOptions.intervalSeconds))}`);
   // The first sweep starts synchronously, inside whichever computation called this: untrack keeps its reads
   // from subscribing that computation
-  untrack(() => void runSweepLoop({ ...loopOptions, control, intervalSeconds }));
+  untrack(() => void runSweepLoop({ ...loopOptions, control }));
 }
 
 async function runSweepLoop(context: SweepLoopContext) {

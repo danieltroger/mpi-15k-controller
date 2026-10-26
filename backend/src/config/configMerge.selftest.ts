@@ -137,7 +137,7 @@ check(
   "patched" in stalePagePatch ? "(patch accepted, merge dropped it)" : `(patch refused: ${stalePagePatch.error})`
 );
 
-// ——— temperature_saving stored before the sweep interval became a setting (the live pi's, 2026-10-26) ———
+// ——— temperature_saving stored before the thermometer sweep settings existed (the live pi's, 2026-10-26) ———
 const liveTemperatureSaving = { database: "mppsolar", table: "battery_temperatures" };
 const withLiveTemperatureSaving = mergeWithDefaults({
   ...structuredClone(default_config),
@@ -145,35 +145,47 @@ const withLiveTemperatureSaving = mergeWithDefaults({
   temperature_saving: liveTemperatureSaving as Config["temperature_saving"],
 });
 check(
-  "merge: an older temperature_saving picks up the 10 s sweep interval and keeps its database and table",
+  "merge: an older temperature_saving picks up the sweep settings' defaults and keeps its database and table",
   JSON.stringify(withLiveTemperatureSaving.temperature_saving) ===
-    JSON.stringify({ ...liveTemperatureSaving, thermometer_sweep_interval_seconds: 10 })
+    JSON.stringify({
+      ...liveTemperatureSaving,
+      thermometer_sweep_interval_seconds: 10,
+      thermometer_silent_page_after_minutes: 5,
+      thermometer_bulk_retry_interval_seconds: 60,
+    })
 );
 const tunedSweepInterval = mergeWithDefaults({
   ...structuredClone(default_config),
-  temperature_saving: { ...liveTemperatureSaving, thermometer_sweep_interval_seconds: 0 },
+  temperature_saving: { ...default_config.temperature_saving, thermometer_sweep_interval_seconds: 0 },
 });
 check(
   "merge: a stored sweep interval, even 0 (back to back), wins over the default",
   tunedSweepInterval.temperature_saving.thermometer_sweep_interval_seconds === 0
 );
-const sweepIntervalPatch = applyConfigPatch(withLiveTemperatureSaving, {
-  path: ["temperature_saving", "thermometer_sweep_interval_seconds"],
-  op: "set",
-  value: 30,
-});
-check(
-  "patch: the config page can set the sweep interval on a merged live config",
-  "patched" in sweepIntervalPatch &&
-    mergeWithDefaults(sweepIntervalPatch.patched).temperature_saving.thermometer_sweep_interval_seconds === 30,
-  "error" in sweepIntervalPatch ? sweepIntervalPatch.error : ""
-);
-const stringSweepIntervalPatch = applyConfigPatch(withLiveTemperatureSaving, {
-  path: ["temperature_saving", "thermometer_sweep_interval_seconds"],
-  op: "set",
-  value: "30",
-});
-check("patch: a string sweep interval is refused (type preservation)", "error" in stringSweepIntervalPatch);
+const sweepSettingPatches: [keyof Config["temperature_saving"], number][] = [
+  ["thermometer_sweep_interval_seconds", 30],
+  ["thermometer_silent_page_after_minutes", 15],
+  ["thermometer_bulk_retry_interval_seconds", 300],
+];
+for (const [settingName, patchedValue] of sweepSettingPatches) {
+  const settingPatch = applyConfigPatch(withLiveTemperatureSaving, {
+    path: ["temperature_saving", settingName],
+    op: "set",
+    value: patchedValue,
+  });
+  check(
+    `patch: the config page can set ${settingName} on a merged live config`,
+    "patched" in settingPatch &&
+      mergeWithDefaults(settingPatch.patched).temperature_saving[settingName] === patchedValue,
+    "error" in settingPatch ? settingPatch.error : ""
+  );
+  const stringPatch = applyConfigPatch(withLiveTemperatureSaving, {
+    path: ["temperature_saving", settingName],
+    op: "set",
+    value: String(patchedValue),
+  });
+  check(`patch: a string ${settingName} is refused (type preservation)`, "error" in stringPatch);
+}
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);

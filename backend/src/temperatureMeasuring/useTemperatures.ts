@@ -22,6 +22,7 @@ import {
   type ThermometerProbe,
 } from "./thermometerSweep.ts";
 import { startThermometerSweepLoop, SYSTEM_SWEEP_CLOCK } from "./thermometerSweepLoop.ts";
+import { currentSweepSettings, useThermometerSweepSettings } from "./useThermometerSweepSettings.ts";
 
 type ProbeSignal = {
   thermometerDeviceId: string;
@@ -33,9 +34,11 @@ const SWEEP_LOGGER: SweepLogger = { log: logLog, warn: warnLog, error: errorLog 
 
 /**
  * Every configured thermometer's latest accepted reading, keyed by device id, swept over the 1-wire bus every
- * temperature_saving.thermometer_sweep_interval_seconds (thermometerSweepLoop.ts).
+ * temperature_saving.thermometer_sweep_interval_seconds (thermometerSweepLoop.ts). The temperature_saving.
+ * thermometer_* settings are live: each sweep runs with their current values.
  */
 export function useTemperatures(getConfig: Accessor<Config>) {
+  const sweepSettings = useThermometerSweepSettings(getConfig, SWEEP_LOGGER);
   const [busEnabled] = createResource(async () => {
     await enableOneWireBus(Object.keys(untrack(getConfig).thermometers));
     return true;
@@ -56,7 +59,7 @@ export function useTemperatures(getConfig: Accessor<Config>) {
     if (!busEnabled()) return;
     const sweepState = createThermometerSweepState();
     startThermometerSweepLoop({
-      getConfig,
+      intervalSeconds: sweepSettings.thermometer_sweep_interval_seconds,
       sweep: () =>
         sweepThermometers({
           probes: untrack(() => probesToSweep(probeSignals(), thermometers())),
@@ -65,6 +68,7 @@ export function useTemperatures(getConfig: Accessor<Config>) {
           logger: SWEEP_LOGGER,
           devicesDirectory: ONE_WIRE_DEVICES_DIRECTORY,
           timing: DEFAULT_THERMOMETER_SWEEP_TIMING,
+          settings: currentSweepSettings(sweepSettings),
         }),
       publish: sweep => publishReadings(untrack(probeSignals), sweep.readings),
       clock: SYSTEM_SWEEP_CLOCK,

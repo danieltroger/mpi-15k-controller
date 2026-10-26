@@ -8,6 +8,7 @@ import {
   parseW1SlaveText,
   type ProbeReadingCheck,
 } from "./thermometerReadingParsing.ts";
+import type { ThermometerSweepSettings } from "./thermometerSweepSettings.ts";
 
 export type ThermometerProbe = { thermometer_device_id: string; label: string };
 
@@ -15,11 +16,10 @@ export type ThermometerSweepTiming = {
   /** How long to poll therm_bulk_read for "done" after the trigger write has returned */
   conversionWaitLimitMs: number;
   statusPollIntervalMs: number;
-  /** While the bulk path is down, how often a sweep tries it again before falling back */
-  bulkRetryIntervalMs: number;
-  /** How long one probe may go without an accepted reading before it pages (logger.error)… */
-  probeSilencePageAfterMs: number;
-  /** …once it has also failed this many sweeps in a row, so one failed sweep at a long interval doesn't page */
+  /**
+   * A silent probe pages only once it has also failed this many sweeps in a row, so one failed sweep at a long
+   * interval doesn't page (its silence is timed by temperature_saving.thermometer_silent_page_after_minutes)
+   */
   probeSilencePageMinFailedSweeps: number;
 };
 
@@ -28,12 +28,14 @@ export const DEFAULT_THERMOMETER_SWEEP_TIMING: ThermometerSweepTiming = {
   // as soon as it returns. The limit is for a kernel that converts in the background: 12-bit time plus margin.
   conversionWaitLimitMs: 1000,
   statusPollIntervalMs: 50,
-  bulkRetryIntervalMs: 60_000,
-  // 30 sweeps at the default 10 s interval. Timed rather than counted since the interval is a setting:
-  // 30 back-to-back sweeps take 35 s, 30 sweeps at 300 s take 2.5 h.
-  probeSilencePageAfterMs: 5 * 60_000,
   probeSilencePageMinFailedSweeps: 3,
 };
+
+/** The settings a sweep reads, as config.json names them; live, so each sweep gets the current values */
+export type ThermometerSweepContextSettings = Pick<
+  ThermometerSweepSettings,
+  "thermometer_silent_page_after_minutes" | "thermometer_bulk_retry_interval_seconds"
+>;
 
 export type ThermometerSweepState = {
   /** Set from the first failed bulk attempt until one succeeds again */
@@ -70,6 +72,7 @@ export type ThermometerSweepContext = {
   /** /sys/bus/w1/devices in production */
   devicesDirectory: string;
   timing: ThermometerSweepTiming;
+  settings: ThermometerSweepContextSettings;
 };
 
 export type ThermometerSweepResult = {
@@ -81,7 +84,8 @@ export type ThermometerSweepResult = {
 
 type ReadMethod = "bulk" | "w1_slave";
 type ProbeAttribute = "temperature" | "w1_slave";
-type BulkReadOutage = { startedAtMs: number; failedAttempts: number; nextAttemptAtMs: number; lastReason: string };
+/** The next attempt is due a retry interval after lastAttemptAtMs, measured each sweep so a changed interval applies */
+type BulkReadOutage = { startedAtMs: number; failedAttempts: number; lastAttemptAtMs: number; lastReason: string };
 type BulkConversionOutcome = { ok: true } | { ok: false; reason: string };
 
 /** The bus master's bulk attribute, relative to the devices directory. All 14 probes are on master 1. */
@@ -98,7 +102,8 @@ const BULK_TRIGGER_COMMAND = "trigger\n";
  * reads the scratchpad: ~1 s for 14 probes, one thread-pool thread at a time. While the bulk path fails (no
  * write permission, missing attribute, a trigger the kernel ignored) it reads `w1_slave` instead, where every
  * read runs its own 750 ms conversion (~11 s for 14 probes), and tries the bulk path again every
- * bulkRetryIntervalMs. Sysfs failures never throw: they are logged here, and the probe is left out of `readings`.
+ * thermometer_bulk_retry_interval_seconds. Sysfs failures never throw: they are logged here, and the probe is left
+ * out of `readings`.
  */
 export async function sweepThermometers(context: ThermometerSweepContext): Promise<ThermometerSweepResult> {
   const sweepStartedAtMs = context.sysfs.nowMs();
@@ -127,10 +132,11 @@ export function createThermometerSweepState(): ThermometerSweepState {
 async function convertAllProbesIfDue(
   context: ThermometerSweepContext
 ): Promise<{ converted: boolean; announcement?: string }> {
-  const { state, sysfs, logger, timing } = context;
+  const { state, sysfs, logger, settings } = context;
   const outage = state.bulkOutage;
   const attemptedAtMs = sysfs.nowMs();
-  if (outage && attemptedAtMs < outage.nextAttemptAtMs) return { converted: false };
+  const retryIntervalMs = settings.thermometer_bulk_retry_interval_seconds * 1000;
+  if (outage && attemptedAtMs < outage.lastAttemptAtMs + retryIntervalMs) return { converted: false };
 
   const conversion = await triggerBulkConversion(context);
   if (conversion.ok) {
@@ -148,21 +154,20 @@ async function convertAllProbesIfDue(
       : { converted: true };
   }
 
-  const nextAttemptAtMs = attemptedAtMs + timing.bulkRetryIntervalMs;
   if (!outage) {
     state.bulkOutage = {
       startedAtMs: attemptedAtMs,
       failedAttempts: 1,
-      nextAttemptAtMs,
+      lastAttemptAtMs: attemptedAtMs,
       lastReason: conversion.reason,
     };
     logger.warn(
-      `1-wire bulk read unavailable: ${conversion.reason}. Falling back to per-probe w1_slave reads (a 750 ms conversion each, ~11 s per sweep) and trying the bulk trigger again every ${describeDurationMs(timing.bulkRetryIntervalMs)}. A permission error means deploy/99-w1-therm-bulk-read.rules isn't applied (see deploy/README.md).`
+      `1-wire bulk read unavailable: ${conversion.reason}. Falling back to per-probe w1_slave reads (a 750 ms conversion each, ~11 s per sweep) and trying the bulk trigger again every ${describeDurationMs(retryIntervalMs)}. A permission error means deploy/99-w1-therm-bulk-read.rules isn't applied (see deploy/README.md).`
     );
     return { converted: false };
   }
   outage.failedAttempts++;
-  outage.nextAttemptAtMs = nextAttemptAtMs;
+  outage.lastAttemptAtMs = attemptedAtMs;
   if (conversion.reason !== outage.lastReason) {
     // The outage itself was warned about when it began; a change of cause is still worth a line
     logger.log(`1-wire bulk read still unavailable, now: ${conversion.reason}`);
@@ -246,7 +251,7 @@ async function readAndCheckAttribute(
 }
 
 function recordProbeFailure(
-  { state, logger, timing, sysfs }: ThermometerSweepContext,
+  { state, logger, timing, settings, sysfs }: ThermometerSweepContext,
   probe: ThermometerProbe,
   reason: string
 ) {
@@ -264,7 +269,7 @@ function recordProbeFailure(
   if (
     streak.paged ||
     streak.failedSweeps < timing.probeSilencePageMinFailedSweeps ||
-    silentForMs < timing.probeSilencePageAfterMs
+    silentForMs < settings.thermometer_silent_page_after_minutes * 60_000
   ) {
     return;
   }

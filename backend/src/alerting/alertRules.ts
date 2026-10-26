@@ -14,7 +14,7 @@ import { startInverterFaultAlerts } from "./inverterFaultAlerts.ts";
 import type { InverterEpisodePaging } from "./inverterFaultAlertPolicy.ts";
 import type { InverterOperatingStatus } from "../inverterComms/inverterStatus.types.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
-import { temperatureStaleAfterMs } from "../temperatureMeasuring/thermometerSweepInterval.ts";
+import { temperatureStaleAfterMs } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 
 /**
  * The watchers: each rule reads signals that already drive the rest of the controller and turns

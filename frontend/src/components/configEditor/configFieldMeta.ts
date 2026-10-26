@@ -1,5 +1,8 @@
 import type { Config } from "../../../../backend/src/config/config.types";
-import { MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS } from "../../../../backend/src/temperatureMeasuring/thermometerSweepInterval";
+import {
+  THERMOMETER_SWEEP_SETTING_BOUNDS,
+  type ThermometerSweepSettingName,
+} from "../../../../backend/src/temperatureMeasuring/thermometerSweepSettings";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -77,6 +80,17 @@ const f = (
   help,
   ...extra,
 });
+
+/** Number-input hints for a thermometer sweep setting: the bounds the backend clamps to */
+function sweepSettingInput(settingName: ThermometerSweepSettingName): Partial<ConfigFieldMeta> {
+  const { min, max, unit } = THERMOMETER_SWEEP_SETTING_BOUNDS[settingName];
+  return { unit, min, max, step: 1 };
+}
+
+function describeSweepSettingBounds(settingName: ThermometerSweepSettingName): string {
+  const { min, max, unit, defaultValue } = THERMOMETER_SWEEP_SETTING_BOUNDS[settingName];
+  return `${min}–${max} ${unit}, default ${defaultValue}.`;
+}
 
 function hourAfterNextFullHourIso(): string {
   const start = new Date();
@@ -964,8 +978,20 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["temperature_saving", "thermometer_sweep_interval_seconds"],
         "Sweep interval",
-        `How often all thermometers are read, from the start of one sweep to the start of the next. A sweep runs one 12-bit conversion on every probe at once (~0.75 s) and then reads all of them, about 1.2 s in total, so 0 or anything shorter than that sweeps back to back: each sweep starts as soon as the previous one ends, and they never overlap. Without the bulk read, every probe converts on its own and a sweep takes ~11 s. Shorter means fresher temperatures and quicker temperature alerts, but more InfluxDB rows (one per probe per sweep) and more MQTT and live-page traffic, and near-continuous conversions warm each probe by a few tenths of a degree. Longer delays the battery and cooling-outlet alerts by up to one interval, and Stale thermometers waits at least three intervals. A single probe that stops reading still pages after 5 min (and at least 3 failed sweeps). Applies from the next sweep. 0–${MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS} s, default 10.`,
-        { unit: "s", min: 0, max: MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS, step: 1 }
+        `How often all thermometers are read, from the start of one sweep to the start of the next. A sweep runs one 12-bit conversion on every probe at once (~0.75 s) and then reads all of them, about 1.2 s in total, so 0 or anything shorter than that sweeps back to back: each sweep starts as soon as the previous one ends, and they never overlap. Without the bulk read, every probe converts on its own and a sweep takes ~11 s. Shorter means fresher temperatures and quicker temperature alerts, but more InfluxDB rows (one per probe per sweep) and more MQTT and live-page traffic, and near-continuous conversions warm each probe by a few tenths of a degree. Longer delays the battery and cooling-outlet alerts by up to one interval, and Stale thermometers waits at least three intervals. A single probe that stops reading pages after the silent-probe delay below, whatever the interval. Applies from the next sweep. ${describeSweepSettingBounds("thermometer_sweep_interval_seconds")}`,
+        sweepSettingInput("thermometer_sweep_interval_seconds")
+      ),
+      f(
+        ["temperature_saving", "thermometer_silent_page_after_minutes"],
+        "Silent probe alert after",
+        `P2 when one thermometer has given no reading for this long since its last good one, and has failed at least 3 sweeps in a row (so one failed sweep at a long interval can't page). Stale thermometers only fires once every probe is quiet, so without this a single dark battery probe goes unnoticed (cell_5 was dark for 40 min in October 2026). A probe stuck at its 85 °C power-on value counts as silent. Shorter pages sooner, but also on a passing run of read errors; longer leaves a dark probe unnoticed longer. Applies from the next sweep. ${describeSweepSettingBounds("thermometer_silent_page_after_minutes")}`,
+        sweepSettingInput("thermometer_silent_page_after_minutes")
+      ),
+      f(
+        ["temperature_saving", "thermometer_bulk_retry_interval_seconds"],
+        "Bulk read retry",
+        `While the bulk read (one conversion for all probes) fails, for example without its udev permission rule or on a kernel that ignores the trigger, sweeps read probe by probe with a conversion each (~11 s per sweep) and try the bulk read again this often. Shorter gets back to fast sweeps sooner once the cause is fixed, but each failed try can add about a second to its sweep. The outage is warned about once, and its end is logged. Applies from the next sweep. ${describeSweepSettingBounds("thermometer_bulk_retry_interval_seconds")}`,
+        sweepSettingInput("thermometer_bulk_retry_interval_seconds")
       ),
       f(["temperature_saving", "database"], "History database", "InfluxDB database temperature history is written to."),
       f(["temperature_saving", "table"], "History table", "InfluxDB table temperature history is written to."),
