@@ -62,7 +62,8 @@ const describe = (gate: BatteryStateGate) =>
     ...feedingConfig,
   });
   check(
-    "t=60 s, SOC still unknown (InfluxDB down) → stop feeding from the battery: EDF0/EDG0, GPMP to baseline",
+    // decision false is what feedWhenNoSolar's existing effects turn into EDF0/EDG0 and then the GPMP baseline
+    "t=60 s, SOC still unknown (InfluxDB down) → decision false (not feeding from the battery)",
     graceOver.settled && graceOver.decision === false && graceOver.reason.includes("no SOC"),
     describe(graceOver)
   );

@@ -123,7 +123,9 @@ export function feedWhenNoSolar({
       },
     } = config();
     // Unknown voltage/charging, the low-voltage cutoff, and the fallback for a SOC that stays unknown
-    // (InfluxDB down after a power cut) — see batteryStateFeedingGate.ts
+    // (InfluxDB down after a power cut) — see batteryStateFeedingGate.ts. feedingWhileSocUnknown.selftest.ts
+    // covers the gate itself, not this hook-up: prev, the elapsed time, and running after the throttle and
+    // the export/import override.
     const batteryGate = batteryStateFeedingGate({
       batteryVoltage: reactiveBatteryVoltage(),
       charging: isCharging(),
