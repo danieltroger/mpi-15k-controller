@@ -3,8 +3,8 @@
  * type-only from anywhere, including potential frontend code.
  */
 
-/** Query commands the backend has decode tables for. */
-export type Pi17QueryCommandName = "GS" | "PS" | "GPMP" | "HECS" | "BATS" | "MOD";
+/** Query commands the backend has decode tables for (HFS takes a slot argument on the wire: HFS03). */
+export type Pi17QueryCommandName = "GS" | "PS" | "GPMP" | "HECS" | "BATS" | "MOD" | "CFS" | "WS" | "HFS";
 
 /** The slow-cadence settings queries — also used as targeted post-write confirm queries. */
 export type SettingsQueryCommandName = "GPMP" | "HECS" | "BATS";

@@ -29,7 +29,9 @@ import type { SetterQueueItem } from "./inverterComms.types.ts";
 import { buildQueryFrame, buildSetterFrame } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 import { implausibleFieldsIn } from "./plausibilityGate.ts";
-import { afterGateAccept, afterGateDrop, type GateDropEpisodes } from "./gateDropEscalation.ts";
+import type { GateDropEpisodes } from "./gateDropEscalation.ts";
+import { recordGateAccept, recordGateDrop } from "./gateDropReporting.ts";
+import { type PumpWaiter, waitUntilOrWoken, wakePump } from "./pumpWaiter.ts";
 import { createSerialExchange, type SerialExchange } from "./serialExchange.ts";
 import { logSessionStats, STATS_LOG_INTERVAL_MS, type InverterSessionCounters } from "./inverterSessionStats.ts";
 import { createRateLimitedWarnLog } from "../utilities/rateLimitedWarnLog.ts";
@@ -54,12 +56,30 @@ import {
   type SetterCommitTracker,
 } from "./setterCommitTiming.ts";
 import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
+import type { InverterStatusQuery } from "./inverterStatus.types.ts";
+import {
+  afterLinkRecovered,
+  initialStatusPollPlan,
+  type StatusPollPlan,
+  takeStatusQueriesForRound,
+  withStatusQueriesRequested,
+} from "./statusPollPlan.ts";
+import {
+  afterRoundPreempted,
+  afterStatusQueryOutcome,
+  type QueryOutcome,
+  type RoundQuery,
+  roundQueriesWithStatus,
+} from "./statusPollRound.ts";
 
 /** Implausible rounds and decode problems log their first occurrence, then at most once a minute */
 const DROPPED_ROUND_LOG_INTERVAL_MS = 60_000;
 /** While the link is down, errorLog (a push candidate) at most this often; warnLog the rest */
 const FAILURE_ERRORLOG_INTERVAL_MS = 60_000;
-/** The continuous background poll: GS+PS every round, settings queries on their slower cadence */
+/**
+ * The continuous background poll: GS+PS every round, settings queries on their slower cadence,
+ * the status queries (MOD/CFS/WS/HFS) as statusPollPlan.ts hands them out
+ */
 const BACKGROUND_POLL_COMMANDS = ["GS", "PS"] as const;
 const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS"];
 
@@ -94,6 +114,7 @@ export function createInverterSession({
       ...schedulerTimingOverrides,
       quietGapAfterWriteMs: quietGapFromConfig(untrack(quiet_gap_after_write_ms)),
     }),
+    statusPollPlan: initialStatusPollPlan(),
     queuedSetterItems: new Map(),
     commitTracker: new Map(),
     writesConfirmed: 0,
@@ -135,6 +156,13 @@ export function createInverterSession({
      * replaced; identical commands are rate-gated (60 s); one the readback already shows is dropped.
      */
     queueSetter: (item: SetterQueueItem) => queueSetter(state, item),
+    /**
+     * Read these status queries on the next poll round(s), on top of the periodic MOD + CFS + WS
+     * every minute and the fault records at startup (statusPollPlan.ts)
+     */
+    requestStatusQueries: (queries: readonly InverterStatusQuery[]) => {
+      state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
+    },
     /** When the last control write went out — the signal behind the quiet-gap poll suppression */
     lastWriteAt,
     serialIsOpen,
@@ -144,7 +172,6 @@ export function createInverterSession({
 }
 
 type RateLimitedWarn = ReturnType<typeof createRateLimitedWarnLog>;
-type PumpWaiter = { resolve: () => void; timer: ReturnType<typeof setTimeout> | undefined };
 
 type SessionState = {
   poll_values_interval_seconds: Accessor<number>;
@@ -153,6 +180,7 @@ type SessionState = {
   setSerialIsOpen: Setter<boolean>;
   serialExchange: SerialExchange;
   scheduler: SchedulerState;
+  statusPollPlan: StatusPollPlan;
   /** The consumer items behind the scheduler's queued commands — always updated together */
   queuedSetterItems: Map<string, SetterQueueItem>;
   commitTracker: SetterCommitTracker;
@@ -214,54 +242,48 @@ function dropSatisfiedSetter(state: SessionState, command: string): void {
 
 /** Undefined when the query got no usable answer (no response, a round the gate dropped, or disposal) */
 async function runQuery(state: SessionState, command: Pi17QueryCommandName): Promise<DecodedFields | undefined> {
-  const description = `query ${command}`;
-  const result = await state.serialExchange.exchange(buildQueryFrame(command), { kind: "query", command }, description);
-  if ("closed" in result || state.disposed) return undefined;
+  const outcome = await runQueryWithOutcome(state, { command, wireCommand: command, statusQuery: undefined });
+  return outcome.kind === "decoded" ? outcome.fields : undefined;
+}
+
+/** The wire command differs from the decode table's only for arguments: HFS03 decodes as HFS */
+async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Promise<QueryOutcome> {
+  const { command, wireCommand } = query;
+  const description = `query ${wireCommand}`;
+  const result = await state.serialExchange.exchange(
+    buildQueryFrame(wireCommand),
+    { kind: "query", command },
+    description
+  );
+  if ("closed" in result || state.disposed) return { kind: "unanswered" };
   if ("failed" in result) {
-    reportTransactFailure(state, description, result.failed);
-    return undefined;
+    // A dead link shows in GS/PS failing too, so a status query's own failure is only a log line;
+    // one that keeps failing is backed off and reported once (statusPollRound.ts)
+    if (query.statusQuery) warnLog("Inverter", description, "failed:", result.failed);
+    else reportTransactFailure(state, description, result.failed);
+    return { kind: "unanswered" };
   }
   reportTransactSuccess(state);
+  // Only a query the inverter may decline accepts a NAK at all; statusPollRound.ts logs it
+  if (result.frame.kind === "nak") return { kind: "declined" };
   if (result.frame.kind !== "data") {
-    // The query expectation only ever accepts data frames — reaching this is an attribution bug
+    // The query expectation only ever accepts data frames (or a NAK, above) — reaching this is an attribution bug
     errorLog("Inverter answered", description, "with", result.frame.kind, "— expected a data frame");
-    return undefined;
+    return { kind: "unanswered" };
   }
   const { fields, problems } = decodeQueryPayload(command, result.frame.payloadText);
   for (const problem of problems) state.warnDecodeProblem("Decoding", command, "response:", problem);
   const implausibleFields = implausibleFieldsIn(fields);
   if (implausibleFields.length) {
     recordGateDrop(state, command, implausibleFields);
-    return undefined;
+    return { kind: "unanswered" };
   }
   recordGateAccept(state, command);
   if (isSettingsQuery(command)) {
     state.scheduler = withSettingsReadback(state.scheduler, command, fields, performance.now());
   }
   state.onDecodedRound({ command, fields, decodedAt: Date.now() });
-  return fields;
-}
-
-function recordGateDrop(state: SessionState, command: Pi17QueryCommandName, implausibleFields: string[]): void {
-  state.droppedImplausibleRounds++;
-  state.warnImplausibleRound(
-    "Dropping implausible",
-    command,
-    "round before any consumer sees it:",
-    implausibleFields.join("; "),
-    `(${state.droppedImplausibleRounds} dropped since start)`
-  );
-  const { episodes, escalation } = afterGateDrop(state.gateDropEpisodes, command, implausibleFields, performance.now());
-  state.gateDropEpisodes = episodes;
-  if (escalation) errorLog("Inverter plausibility gate:", escalation);
-}
-
-function recordGateAccept(state: SessionState, command: Pi17QueryCommandName): void {
-  const { episodes, endedEpisode } = afterGateAccept(state.gateDropEpisodes, command);
-  state.gateDropEpisodes = episodes;
-  if (endedEpisode?.escalated) {
-    logLog("Inverter", command, "rounds pass the plausibility gate again after", endedEpisode.droppedRounds, "drops");
-  }
+  return { kind: "decoded", fields };
 }
 
 async function sendQueuedSetter(state: SessionState, command: string): Promise<void> {
@@ -346,11 +368,28 @@ async function runPollRound(state: SessionState, includeSettingsPoll: boolean): 
   const commands: readonly Pi17QueryCommandName[] = includeSettingsPoll
     ? [...BACKGROUND_POLL_COMMANDS, ...SETTINGS_POLL_COMMANDS]
     : BACKGROUND_POLL_COMMANDS;
+  const statusRound = takeStatusQueriesForRound(state.statusPollPlan, roundStartedAt);
+  state.statusPollPlan = statusRound.plan;
+  const roundQueries = roundQueriesWithStatus(commands, statusRound.queries);
   let hadFailures = false;
-  for (const command of commands) {
+  for (const [queryIndex, roundQuery] of roundQueries.entries()) {
     // A freshly queued control write preempts the rest of the round
-    if (state.disposed || hasEligibleSetter(state.scheduler, performance.now())) break;
-    if (!(await runQuery(state, command))) hadFailures = true;
+    if (state.disposed || hasEligibleSetter(state.scheduler, performance.now())) {
+      state.statusPollPlan = afterRoundPreempted(state.statusPollPlan, roundQueries.slice(queryIndex));
+      break;
+    }
+    const outcome = await runQueryWithOutcome(state, roundQuery);
+    if (state.disposed) break;
+    if (outcome.kind === "unanswered") hadFailures = true;
+    // Status-query failures don't count as link failures, so 0 means GS/PS answer
+    const linkAnswering = state.consecutiveTransactFailures === 0;
+    state.statusPollPlan = afterStatusQueryOutcome(
+      state.statusPollPlan,
+      roundQuery.statusQuery,
+      outcome,
+      performance.now(),
+      linkAnswering
+    );
   }
   if (state.disposed) return;
   state.scheduler = afterPollRound(state.scheduler, {
@@ -383,6 +422,7 @@ function reportTransactFailure(state: SessionState, description: string, failure
 function reportTransactSuccess(state: SessionState): void {
   if (state.consecutiveTransactFailures === 0) return;
   logLog("Inverter serial link recovered after", state.consecutiveTransactFailures, "consecutive failed exchanges");
+  state.statusPollPlan = afterLinkRecovered(state.statusPollPlan);
   state.consecutiveTransactFailures = 0;
   state.lastTransactFailureErrorLogAt = -Infinity;
 }
@@ -397,26 +437,6 @@ function lineTraffic(state: SessionState): LineTraffic {
 function onSerialOpened(state: SessionState): void {
   state.setSerialIsOpen(true);
   wakePump(state);
-}
-
-function waitUntilOrWoken(state: SessionState, untilMs: number): Promise<void> {
-  return new Promise<void>(resolve => {
-    const waiter: PumpWaiter = { resolve, timer: undefined };
-    // Cap so a (theoretically impossible) Infinity can only ever nap, not hang the pump
-    const delayMs = Math.min(Math.max(0, untilMs - performance.now()), 60_000);
-    waiter.timer = setTimeout(() => settleWaiter(state, waiter), delayMs);
-    state.pumpWaiter = waiter;
-  });
-}
-
-function wakePump(state: SessionState): void {
-  if (state.pumpWaiter) settleWaiter(state, state.pumpWaiter);
-}
-
-function settleWaiter(state: SessionState, waiter: PumpWaiter): void {
-  clearTimeout(waiter.timer);
-  if (state.pumpWaiter === waiter) state.pumpWaiter = undefined;
-  waiter.resolve();
 }
 
 function isSettingsQuery(command: Pi17QueryCommandName): command is SettingsQueryCommandName {

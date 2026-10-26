@@ -12,8 +12,14 @@
  * and late answers, an implausible round, a CRC-corrupt frame, the firmware's CRC byte bump) and
  * a 3.5 s main-thread stall.
  *
+ * The status queries run with the real tracker (inverterStatusTracking.ts) closing the loop, as in
+ * production: the fault-record slots are read at startup, one per round, empty ones NAKed; then,
+ * once the cadence has been measured, an EDB0 latches fault 14 in the fake like 2026-10-21's buy
+ * window end did, and the engine must see the DC side go idle, read Fault mode at once, notice the
+ * new fault code and read every slot again.
+ *
  * Run from backend/ with:  yarn node src/inverterComms/inverterSession.pty.selftest.ts
- * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~35 s.
+ * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~70 s.
  */
 import process from "process";
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from "child_process";
@@ -27,6 +33,13 @@ import { createInverterSession } from "./inverterSession.ts";
 import type { DecodedRound } from "./pi17Protocol.types.ts";
 import { implausibleFieldsIn } from "./plausibilityGate.ts";
 import { LINE_QUIET_BEFORE_SEND_MS, RESPONSE_TIMEOUT_MS } from "./serialExchange.ts";
+import {
+  afterDecodedRound,
+  INITIAL_INVERTER_STATUS_TRACKING,
+  type InverterStatusEvent,
+} from "./inverterStatusTracking.ts";
+import { ALL_FAULT_RECORD_QUERIES } from "./statusPollPlan.ts";
+import { WORKING_MODE_TEXT_BY_CODE } from "./pi17FieldTables.ts";
 
 const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", import.meta.url));
 /** More blocked jobs than the pool has threads (default 4; production runs UV_THREADPOOL_SIZE=32) */
@@ -36,12 +49,19 @@ const EVENT_LOOP_STALL_MS = 3_500;
 const SETTLED_WINDOW_MS = 8_000;
 /** ≤ 1.33 s per GS+PS round; the retired daemon managed ~1.2 s, the live engine ~1.15 s */
 const MAX_MEDIAN_GS_GAP_MS = 1_330;
-const HARD_TIMEOUT_MS = 90_000;
+/** From the EDB0 to the second read of the last fault-record slot: quiet gap, confirm, ~12 rounds */
+const LATCH_SCENARIO_TIMEOUT_MS = 30_000;
+/**
+ * The fault-14 latch must be read as Fault mode this soon (quiet gap 1.5 s + confirm + 2–3 rounds),
+ * i.e. by the DC-idle trigger — the minute poll isn't due until ~60 s into the run
+ */
+const MAX_LATCH_TO_FAULT_MODE_READ_S = 8;
+const HARD_TIMEOUT_MS = 150_000;
 /** Values every fake GS/PS answer carries (the live 2026-10-25 frames) — a misattributed frame can't */
 const FAKE_GS_BATTERY_VOLTAGE = 53.2;
 const FAKE_PS_SOLAR_POWER_1 = 80;
 
-type FrameRole = "answer" | "stale" | "late" | "implausible" | "corrupt" | "duplicate";
+type FrameRole = "answer" | "stale" | "late" | "implausible" | "corrupt" | "duplicate" | "declined";
 type FakeInverterEvent =
   | { event: "ready"; t: number; device: string }
   | {
@@ -63,6 +83,7 @@ type FakeInverterEvent =
   | { event: "committed"; t: number; setter: string }
   | { event: "fault"; t: number; fault: string }
   | { event: "faults_done"; t: number }
+  | { event: "fault_14_latched"; t: number }
   | { event: "lost"; t: number; answering: string }
   | { event: "setter_answer_held"; t: number; answering: string }
   | { event: "crc_bumped_answer"; t: number; serial: number; crc: string }
@@ -108,6 +129,8 @@ async function runEndToEnd(): Promise<void> {
 
   const decodedRounds: DecodedRound[] = [];
   const setterResults = new Map<string, boolean>();
+  const statusEvents: InverterStatusEvent[] = [];
+  let statusTracking = INITIAL_INVERTER_STATUS_TRACKING;
   let session: ReturnType<typeof createInverterSession> | undefined;
   const disposeRoot = createRoot(dispose => {
     session = createInverterSession({
@@ -116,7 +139,14 @@ async function runEndToEnd(): Promise<void> {
       // Harness speed only: the production quiet gap (12 s) / backoff (30 s) are unchanged. The
       // silent strategy (any gap > 0) is what this run exercises; quietGapExperiment.pty covers 0.
       quiet_gap_after_write_ms: () => 1_500,
-      onDecodedRound: round => decodedRounds.push(round),
+      onDecodedRound: round => {
+        decodedRounds.push(round);
+        // The production loop (useInverterStatus.ts): tracker events, and its query wishes back to the engine
+        const step = afterDecodedRound(statusTracking, round);
+        statusTracking = step.tracking;
+        statusEvents.push(...step.events);
+        if (step.requestedQueries.length) session?.requestStatusQueries(step.requestedQueries);
+      },
       schedulerTimingOverrides: { confirmBackoffMs: 3_000 },
     });
     return dispose;
@@ -174,6 +204,32 @@ async function runEndToEnd(): Promise<void> {
   const settledGsGaps = settledGsTimes.slice(1).map((time, index) => time - settledGsTimes[index]!);
   const medianGsGapMs = median(settledGsGaps);
 
+  // A buy window: AC charging on (EDB1, confirmed by readback — EDB0 queued before that would be
+  // dropped as already satisfied), then its end (EDB0), which latches fault 14 in the fake. Then
+  // wait for the engine's whole reaction.
+  for (const command of ["EDB1", "EDB0"] as const) {
+    const roundsBeforeWrite = decodedRounds.length;
+    engine.queueSetter({
+      command,
+      replacesPrefix: "EDB",
+      refreshAfterSend: ["HECS"],
+      onResult: ({ acknowledged }) => setterResults.set(command, acknowledged),
+    });
+    const expectedFlag = command === "EDB1" ? "enabled" : "disabled";
+    await waitFor(
+      () =>
+        decodedRounds
+          .slice(roundsBeforeWrite)
+          .some(round => round.command === "HECS" && round.fields.ac_charge_battery === expectedFlag),
+      LATCH_SCENARIO_TIMEOUT_MS
+    );
+  }
+  const lastSlotQuery = ALL_FAULT_RECORD_QUERIES.at(-1);
+  const latchScenarioCompleted = await waitFor(
+    () => fake.events.filter(event => event.event === "frame_sent" && event.answering === lastSlotQuery).length >= 2,
+    LATCH_SCENARIO_TIMEOUT_MS
+  );
+
   const counters = engine.exchangeCounters();
   const threadpoolStillBlocked = !threadpool.probeCompleted();
   const runDurationMs = Date.now() - startedAt;
@@ -197,6 +253,102 @@ async function runEndToEnd(): Promise<void> {
     medianGsGapMs,
     threadpoolStillBlocked,
   });
+  evaluateStatusQueries({ decodedRounds, fakeEvents, statusEvents, setterResults, latchScenarioCompleted });
+}
+
+/** MOD/CFS/WS/HFS on the wire and the tracker's loop around them, ending with the fault-14 latch */
+function evaluateStatusQueries({
+  decodedRounds,
+  fakeEvents,
+  statusEvents,
+  setterResults,
+  latchScenarioCompleted,
+}: {
+  decodedRounds: readonly DecodedRound[];
+  fakeEvents: readonly FakeInverterEvent[];
+  statusEvents: readonly InverterStatusEvent[];
+  setterResults: ReadonlyMap<string, boolean>;
+  latchScenarioCompleted: boolean;
+}) {
+  const modeRounds = decodedRounds.filter(round => round.command === "MOD");
+  const latestFaultRounds = decodedRounds.filter(round => round.command === "CFS");
+  const warningRounds = decodedRounds.filter(round => round.command === "WS");
+  const faultRecordRounds = decodedRounds.filter(round => round.command === "HFS");
+  const modeTexts = new Set([WORKING_MODE_TEXT_BY_CODE["05"], WORKING_MODE_TEXT_BY_CODE["04"]]);
+  check(
+    "every MOD/CFS/WS/HFS round decoded the fake's own answer (none from another command's frame)",
+    modeRounds.length >= 2 &&
+      modeRounds.every(round => modeTexts.has(String(round.fields.working_mode))) &&
+      latestFaultRounds.length >= 2 &&
+      latestFaultRounds.every(
+        round => [12, 14].includes(Number(round.fields.latest_fault_code)) && round.fields.latest_fault_record_id === 0
+      ) &&
+      warningRounds.length >= 1 &&
+      warningRounds.every(round => Object.values(round.fields).every(flag => flag === "inactive")) &&
+      faultRecordRounds.length >= 2 &&
+      faultRecordRounds.every(
+        round => round.fields.fault_record_id === 0 && round.fields.fault_record_fault_code === 12
+      ),
+    `MOD ${modeRounds.length}, CFS ${latestFaultRounds.length}, WS ${warningRounds.length}, HFS ${faultRecordRounds.length}`
+  );
+
+  const received = fakeEvents.flatMap(event => (event.event === "received" ? [event] : []));
+  const latchedAt = fakeEvents.find(event => event.event === "fault_14_latched")?.t ?? Infinity;
+  const slotQueries = ALL_FAULT_RECORD_QUERIES.map(query => `^P006${query}`);
+  const slotReadsBeforeLatch = received.filter(event => slotQueries.includes(event.command) && event.t < latchedAt);
+  check(
+    "at startup every fault-record slot was read exactly once (empty slots' NAKs taken at once, never retried)",
+    slotQueries.every(query => slotReadsBeforeLatch.filter(event => event.command === query).length === 1),
+    slotReadsBeforeLatch.map(event => event.command.slice(5)).join(",")
+  );
+  const slotReadsSpreadOverRounds = slotReadsBeforeLatch.slice(1).every((slotRead, index) => {
+    const previousSlotReadAt = slotReadsBeforeLatch[index]!.t;
+    return received.some(event => event.command === "^P003GS" && event.t > previousSlotReadAt && event.t < slotRead.t);
+  });
+  check("one fault-record slot per poll round (a GS between every two)", slotReadsSpreadOverRounds);
+  const declinedSlotAnswers = fakeEvents.filter(event => event.event === "frame_sent" && event.role === "declined");
+  check(
+    "slots 01–08 were declined with a NAK at startup and after the latch (16 NAKs, each slot read once per batch)",
+    declinedSlotAnswers.length === 16,
+    `${declinedSlotAnswers.length} NAKs`
+  );
+
+  check(
+    "the buy window's EDB1 and its end's EDB0 were ACKed, and the fake latched fault 14",
+    setterResults.get("EDB1") === true && setterResults.get("EDB0") === true && latchedAt !== Infinity
+  );
+  const firstModeReadAfterLatch = received.find(event => event.command === "^P004MOD" && event.t > latchedAt);
+  check(
+    `the latch was read as Fault mode within ${MAX_LATCH_TO_FAULT_MODE_READ_S} s (DC-idle trigger, not the minute poll)`,
+    firstModeReadAfterLatch !== undefined && firstModeReadAfterLatch.t - latchedAt <= MAX_LATCH_TO_FAULT_MODE_READ_S,
+    firstModeReadAfterLatch ? `${(firstModeReadAfterLatch.t - latchedAt).toFixed(1)} s` : "no MOD after the latch"
+  );
+  const eventKinds = statusEvents.map(event =>
+    event.kind === "working_mode_changed"
+      ? `mode ${event.previous?.code ?? "-"}→${event.current.code}`
+      : event.kind === "latest_fault_changed"
+        ? `fault ${event.previous?.code ?? "-"}→${event.current.code}`
+        : event.kind
+  );
+  const latchSequence = ["dc_idle_reported", "mode 05→04", "fault 12→14"];
+  const latchSequenceIndexes = latchSequence.map(kind => eventKinds.indexOf(kind));
+  check(
+    "the tracker saw the latch in order: DC side idle → Fault mode → new fault code 12 → 14",
+    latchSequenceIndexes.every(
+      (eventIndex, position) =>
+        eventIndex !== -1 && (position === 0 || eventIndex > latchSequenceIndexes[position - 1]!)
+    ),
+    eventKinds.join(" | ")
+  );
+  check(
+    "startup baselines raised no change: the first mode and fault readings had nothing before them",
+    eventKinds.includes("mode -→05") && eventKinds.includes("fault -→12")
+  );
+  check(
+    "after the new fault code every slot was read again",
+    latchScenarioCompleted &&
+      slotQueries.every(query => received.filter(event => event.command === query && event.t > latchedAt).length === 1)
+  );
 }
 
 function evaluate({
@@ -406,6 +558,8 @@ function startFakeInverter() {
   return {
     ready,
     faultsDone,
+    /** Live: filled as the fake reports */
+    events,
     async stop(): Promise<readonly FakeInverterEvent[]> {
       child.stdin.end(); // EOF on its stdin makes it print the summary and exit
       await exited;
@@ -463,4 +617,14 @@ async function stallRightAfterNextWrite(engine: ReturnType<typeof createInverter
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+/** True once `condition` holds, false if it still doesn't after `timeoutMs` */
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+  const giveUpAt = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= giveUpAt) return false;
+    await sleep(50);
+  }
+  return true;
 }

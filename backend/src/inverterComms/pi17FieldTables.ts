@@ -1,5 +1,7 @@
 /**
- * PI17 response field tables, ported verbatim from the repo owner's mpp-solar fork (pi17.py).
+ * PI17 response field tables, ported verbatim from the repo owner's mpp-solar fork (pi17.py) —
+ * except the status queries CFS/WS/HFS, which the fork lacks: those follow the official 2022 PI17
+ * spec, checked against this inverter's answers in the WiFi datalogger's raw uploads (2026-10).
  * The human-readable names are load-bearing: influxFieldName() derives from them the exact field
  * names mpp-solar has always published to MQTT/InfluxDB (e.g. "Solar input voltage 1" →
  * solar_input_voltage_1), so Influx series and Grafana dashboards continue seamlessly. Do not
@@ -11,6 +13,7 @@
  * no checksum at all. The backend never uses them.
  */
 import type { Pi17FieldReading, Pi17FieldSpec, Pi17QueryCommandName } from "./pi17Protocol.types.ts";
+import type { InverterWorkingModeCode } from "./inverterStatus.types.ts";
 
 /** "Solar input voltage 1" → "solar_input_voltage_1" — mpp-solar's influx2_mqtt naming, byte-exact. */
 export function influxFieldName(humanReadableName: string): string {
@@ -22,6 +25,18 @@ const INT_TENTHS: Pi17FieldReading = { kind: "int", divisor: 10 };
 const INT_HUNDREDTHS: Pi17FieldReading = { kind: "int", divisor: 100 };
 const STRING: Pi17FieldReading = { kind: "string" };
 const ENABLED_DISABLED: Pi17FieldReading = { kind: "option", options: ["disabled", "enabled"] };
+const WARNING_FLAG: Pi17FieldReading = { kind: "option", options: ["inactive", "active"] };
+
+/** MOD's answer codes in mpp-solar's wording (the status tracker maps the text back to its code) */
+export const WORKING_MODE_TEXT_BY_CODE: Readonly<Record<InverterWorkingModeCode, string>> = {
+  "00": "Power on mode",
+  "01": "Standby mode",
+  "02": "Bypass mode",
+  "03": "Battery mode",
+  "04": "Fault mode",
+  "05": "Hybrid mode (Line mode, Grid mode)",
+  "06": "Charge mode",
+};
 
 function field(name: string, reading: Pi17FieldReading, unit: string): Pi17FieldSpec {
   return { name, reading, unit };
@@ -132,22 +147,82 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
     field("Reserved", { kind: "exclude" }, ""),
   ],
   GPMP: [field("Maximum Feeding Grid power", INT, "W")],
-  MOD: [
-    field(
-      "Working mode",
-      {
-        kind: "str_keyed",
-        mapping: {
-          "00": "Power on mode",
-          "01": "Standby mode",
-          "02": "Bypass mode",
-          "03": "Battery mode",
-          "04": "Fault mode",
-          "05": "Hybrid mode (Line mode, Grid mode)",
-          "06": "Charge mode",
-        },
-      },
-      ""
-    ),
+  MOD: [field("Working mode", { kind: "str_keyed", mapping: WORKING_MODE_TEXT_BY_CODE }, "")],
+  // ^D008AA,BB: the LATEST fault code (sticky, so not an active-fault flag) and its flash slot 0–8
+  CFS: [field("Latest fault code", INT, ""), field("Latest fault record id", INT, "")],
+  // The spec's flags A–X. This firmware answers the first 23, through "Equalization state", which
+  // reads 1 every night together with A/B (so it means nothing alarming here); mpp-solar knows 22.
+  WS: [
+    warningFlag("Solar input 1 loss"),
+    warningFlag("Solar input 2 loss"),
+    warningFlag("Solar input 1 voltage too high"),
+    warningFlag("Solar input 2 voltage too high"),
+    // Not mpp-solar's "Battery under voltage": that name derives the key of a BATS setting
+    warningFlag("Battery voltage under limit"),
+    warningFlag("Battery voltage low"),
+    warningFlag("Battery disconnected"),
+    warningFlag("Battery over voltage"),
+    warningFlag("Battery low in hybrid mode"),
+    warningFlag("Grid voltage high loss"),
+    warningFlag("Grid voltage low loss"),
+    warningFlag("Grid frequency high loss"),
+    warningFlag("Grid frequency low loss"),
+    warningFlag("AC input long-time average voltage over"),
+    warningFlag("AC input voltage loss"),
+    warningFlag("AC input frequency loss"),
+    warningFlag("AC input island"),
+    warningFlag("AC input phase dislocation"),
+    warningFlag("Over temperature"),
+    warningFlag("Over load"),
+    warningFlag("Emergency power off active"),
+    warningFlag("AC input wave loss"),
+    warningFlag("Equalization state"),
+    warningFlag("Rapid shutdown active"),
+  ],
+  // ^P006HFSnn: the fault record in flash slot nn. Only the first four fields are relied on; the
+  // value snapshot after them stays verbatim strings because its alignment against the spec looks
+  // shifted by one on this firmware (2026-10 forensics §4.2). The "Fault record" prefix keeps the
+  // names from colliding with the live GS fields (and their plausibility ranges) they resemble.
+  HFS: [
+    field("Fault record id", INT, ""),
+    field("Fault record fault code", INT, ""),
+    field("Fault record time", STRING, "YYMMDDhhmmss"),
+    field("Fault record work mode", STRING, ""),
+    field("Fault record solar input voltage 1", STRING, "0.1 V"),
+    field("Fault record solar input voltage 2", STRING, "0.1 V"),
+    field("Fault record solar input power 1", STRING, "W"),
+    field("Fault record solar input power 2", STRING, "W"),
+    field("Fault record AC input voltage R", STRING, "0.1 V"),
+    field("Fault record AC input voltage S", STRING, "0.1 V"),
+    field("Fault record AC input voltage T", STRING, "0.1 V"),
+    field("Fault record AC input frequency", STRING, "0.01 Hz"),
+    field("Fault record battery voltage", STRING, "0.1 V"),
+    field("Fault record battery current", STRING, "0.1 A"),
+    field("Fault record AC output voltage R", STRING, "0.1 V"),
+    field("Fault record AC output voltage S", STRING, "0.1 V"),
+    field("Fault record AC output voltage T", STRING, "0.1 V"),
+    field("Fault record AC output frequency", STRING, "0.01 Hz"),
+    field("Fault record AC output apparent power R", STRING, "VA"),
+    field("Fault record AC output apparent power S", STRING, "VA"),
+    field("Fault record AC output apparent power T", STRING, "VA"),
+    field("Fault record AC output power percentage", STRING, "%"),
+    field("Fault record inner temperature", STRING, "°C"),
+    field("Fault record component max temperature", STRING, "°C"),
+    field("Fault record external battery temperature", STRING, "°C"),
   ],
 };
+
+/**
+ * WS flags this inverter sets every night (the datalogger's 2026-10 uploads: A, B and the 23rd), so
+ * they say nothing about a fault: alert texts leave them out, the log and the /system card keep them.
+ */
+export const WARNING_FLAGS_SET_EVERY_NIGHT: ReadonlySet<string> = new Set([
+  "Solar input 1 loss",
+  "Solar input 2 loss",
+  "Equalization state",
+]);
+
+/** A WS flag: "0" clear, "1" set; anything else decodes as an invalid option, which the gate drops */
+function warningFlag(name: string): Pi17FieldSpec {
+  return field(name, WARNING_FLAG, "");
+}

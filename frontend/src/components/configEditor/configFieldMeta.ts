@@ -531,7 +531,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["alerting", "inverter_stuck_p1_after_minutes"],
         "Escalate to P1 after",
-        "Page as P1 (rings through Do Not Disturb) if it is still seen stuck this long after the first alert; never once a fix has shown up. 0 = never escalate.",
+        "Page as P1 (rings through Do Not Disturb) if it is still seen stuck this long after the first alert; never once a fix has shown up. 0 = never escalate. Sent as P2 instead if the fault-mode P1 below already paged for the same episode.",
         { unit: "min", min: 0 }
       ),
       f(
@@ -555,6 +555,34 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Week error share",
         "…or the summed daily misses exceed this share of the week's forecast (at least 35 kWh as the base).",
         { min: 0, step: 0.05 }
+      ),
+      f(
+        ["alerting", "inverter_fault_mode_p1"],
+        "Fault-mode alert",
+        "P1 when the inverter itself reports Fault mode — as it did for 59 h with fault 14 in October 2026. The page names the fault code and how to power-cycle the inverter; a quiet P3 follows once it runs again. A controller restart within the alert cooldown keeps the page; after a longer downtime it pages again.",
+        { heading: "Inverter fault" }
+      ),
+      f(
+        ["alerting", "inverter_fault_mode_p1_after_seconds"],
+        "Fault-mode delay",
+        "How long Fault mode must be read continuously before paging: a later reading must still say Fault mode. The mode is read once a minute, and at once when the battery goes idle (which restarts its minute), so at 60 s the page comes about 1.5 minutes after the fault, at most ~2.5.",
+        { unit: "s", min: 0 }
+      ),
+      f(
+        ["alerting", "inverter_fault_code_p2"],
+        "New fault code alert",
+        "P2 when the inverter records a new fault code that the fault-mode P1 isn't already reporting — e.g. one it recovered from by itself."
+      ),
+      f(
+        ["alerting", "inverter_bypass_p2"],
+        "Bypass alert",
+        "P2 when the inverter sits in Bypass mode with the grid present: the house runs straight off the grid with no backup. So far this has only happened with the battery disconnected. Quiet P3 when it ends."
+      ),
+      f(
+        ["alerting", "inverter_bypass_p2_after_seconds"],
+        "Bypass delay",
+        "How long Bypass mode must last before alerting.",
+        { unit: "s", min: 0 }
       ),
       f(["alerting", "error_log_p2"], "Forward error logs", "Send every backend errorLog() as a deduplicated P2.", {
         heading: "Delivery",

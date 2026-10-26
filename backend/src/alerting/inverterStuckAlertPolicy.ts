@@ -1,4 +1,5 @@
 import type { AlertingConfig } from "../config/config.types.ts";
+import { INVERTER_POWER_CYCLE_PROCEDURE } from "./alertingLogic.ts";
 import type { InverterStuckRuleId, RuleEvaluation } from "./inverterStuckDetection.ts";
 import { inverterStuckRuleIds } from "./inverterStuckDetection.ts";
 import {
@@ -86,6 +87,11 @@ export type PersistedInverterStuckEpisode = {
   escalated: boolean;
   /** Onset per signature that was active */
   active_rule_onsets: Partial<Record<InverterStuckRuleId, number>>;
+  /**
+   * The escalation went out as P2 because the fault-mode P1 had already paged (the wiring tracks
+   * it; absent in files from before it existed, read as false)
+   */
+  escalation_sent_as_p2?: boolean;
 };
 
 export function persistableEpisode(state: InverterStuckAlertState): PersistedInverterStuckEpisode | undefined {
@@ -147,22 +153,28 @@ export const INVERTER_STUCK_RULE_LABELS: Record<InverterStuckRuleId, string> = {
   buy_window_not_charging: "buy window not charging",
 };
 
-// PI17 has no reset command and LON0 would cut the pi's own power, so a human has to do this
-const POWER_CYCLE_ADVICE = "Check the LCD fault code, then power-cycle the inverter (off, wait ~1 min, on).";
-
-/** Title + message for a P2/P1, leading with the earliest signature that is failing right now. */
+/**
+ * Title + message for a P2/P1, leading with the earliest signature that is failing right now.
+ * `activeFaultSentence` is what the inverter itself reports while in Fault mode (fault code
+ * included, see inverterFaultAlertPolicy.ts) — the stronger evidence, so it follows the lead.
+ */
 export function describeInverterStuckAlert(
   state: InverterStuckAlertState,
   evaluations: Record<InverterStuckRuleId, RuleEvaluation>,
   nowMs: number,
-  severity: "P2" | "P1"
+  severity: "P2" | "P1",
+  activeFaultSentence?: string
 ): { title: string; message: string } {
   const activeRuleIds = inverterStuckRuleIds
     .filter(ruleId => state.rules[ruleId].active)
     .sort((first, second) => leadOrder(state, first, nowMs) - leadOrder(state, second, nowMs));
   const [leadRuleId, ...otherRuleIds] = activeRuleIds;
+  const faultSentence = activeFaultSentence ? ` ${activeFaultSentence}` : "";
   if (!leadRuleId) {
-    return { title: "Inverter stuck", message: `Inverter looked stuck. ${POWER_CYCLE_ADVICE}` };
+    return {
+      title: "Inverter stuck",
+      message: `Inverter looked stuck.${faultSentence} ${INVERTER_POWER_CYCLE_PROCEDURE}`,
+    };
   }
   const since = formatStockholmTime(state.rules[leadRuleId].onsetMs ?? nowMs, nowMs);
   const alsoSeen = otherRuleIds.map(
@@ -177,7 +189,7 @@ export function describeInverterStuckAlert(
     title: `Inverter ${severity === "P1" ? "STILL " : ""}stuck: ${INVERTER_STUCK_RULE_LABELS[leadRuleId]}`,
     message:
       stillStuckPrefix +
-      `${leadSentence(leadRuleId, since)} ${POWER_CYCLE_ADVICE}` +
+      `${leadSentence(leadRuleId, since)}${faultSentence} ${INVERTER_POWER_CYCLE_PROCEDURE}` +
       (alsoSeen.length ? ` Also: ${alsoSeen.join("; ")}.` : "") +
       ` Now: ${evaluations[leadRuleId].detail}.`,
   };

@@ -19,6 +19,7 @@
  *    came on the retry marks the line too: it may be the FIRST attempt's late answer, with the
  *    retry's own answer still to come — which must not land on the next command (setters all
  *    share the 5-byte ACK/NAK shape, so only time separates them).
+ *    So does a query answered by a NAK (an empty fault-record slot): it has every setter's shape.
  * 6. close() settles the exchange in flight at once as "closed" — no retry, no failure — so a
  *    session torn down by a main() crash restart goes quietly instead of errorLogging (= a P2).
  *
@@ -183,6 +184,10 @@ async function exchangeWithRetry(
     if ("closed" in outcome) return { closed: true };
     if ("answered" in outcome) {
       if (attempt > 0) markLineNeedsQuiet(state); // the retry's own answer may still be on its way
+      // A query declined with a NAK (only an HFS slot may be) answered in the shape every setter
+      // answers with: if anything else trails it, the next frame out — possibly a setter — must
+      // not be the one to receive it. 300 ms per declined slot, ≤ 2.4 s per batch of reads.
+      if (expectation.kind === "query" && outcome.answered.kind === "nak") markLineNeedsQuiet(state);
       return { frame: outcome.answered, answeredAfterWriteMs: outcome.answeredAfterWriteMs, attempts: attempt + 1 };
     }
     rejectedAcrossAttempts.push(...outcome.rejectedFrameReasons);

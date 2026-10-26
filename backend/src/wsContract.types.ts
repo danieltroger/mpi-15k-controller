@@ -3,6 +3,7 @@ import type { LedgerAnchor } from "./battery/ahLedger.types.ts";
 import type { AutoTraderStatus } from "./autoTrading/autoTraderState.types.ts";
 import type { FetchedPrices } from "./autoTrading/priceService.types.ts";
 import type { AlertRecord } from "./alerting/alerting.types.ts";
+import type { InverterOperatingStatus } from "./inverterComms/inverterStatus.types.ts";
 import type {
   CurrentBatteryPowerBroadcast,
   ElpatronDisplayState,
@@ -26,6 +27,8 @@ export type WsExposedSignals = {
   autoTraderStatus: AutoTraderStatus;
   spotPrices: FetchedPrices;
   recentAlerts: AlertRecord[];
+  /** The inverter's own working mode, latest fault code, warning flags and fault records */
+  inverterStatus: InverterOperatingStatus;
   elpatronState: ElpatronDisplayState;
   currentBatteryPower: CurrentBatteryPowerBroadcast;
   /** THE SOC everything runs on: the Ah ledger clamped to [0,100] */

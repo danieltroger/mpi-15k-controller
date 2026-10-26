@@ -9,6 +9,14 @@
  */
 import process from "process";
 import { ACK_FRAME, NAK_FRAME, classifyFrame, concatenateBuffers, createFrameAccumulator } from "./pi17Frames.ts";
+import {
+  CFS_FAULT_14_PAYLOAD,
+  dataFrameAsTheInverterSendsIt,
+  HFS00_PAYLOAD,
+  MOD_FAULT_PAYLOAD,
+  WS_DAY_PAYLOAD,
+  WS_NIGHT_PAYLOAD,
+} from "./pi17StatusFixtures.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
 import { influxFieldName, PI17_QUERY_RESPONSE_FIELDS } from "./pi17FieldTables.ts";
 import {
@@ -59,6 +67,14 @@ const PS_REFERENCE = latin1(
 const GPMP_REFERENCE = latin1("^D00815000\xe1\xa1\r");
 const HECS_REFERENCE = latin1("^D01900,0,0,0,0,0,0,0,0\x35\xfc\r");
 const MOD_REFERENCE = latin1("^D00505\xd9\x9f\r");
+// The status answers this inverter gave the WiFi datalogger (CRCs rebuilt, see pi17StatusFixtures.ts);
+// mpp-solar's WS fixture is a complete frame of its own
+const MOD_FAULT_DATALOGGER = dataFrameAsTheInverterSendsIt(MOD_FAULT_PAYLOAD);
+const CFS_DATALOGGER = dataFrameAsTheInverterSendsIt(CFS_FAULT_14_PAYLOAD);
+const WS_NIGHT_DATALOGGER = dataFrameAsTheInverterSendsIt(WS_NIGHT_PAYLOAD);
+const WS_DAY_DATALOGGER = dataFrameAsTheInverterSendsIt(WS_DAY_PAYLOAD);
+const WS_MPPSOLAR_REFERENCE = latin1("^D0471,1,0,0,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,\x14\x9c\r");
+const HFS00_DATALOGGER = dataFrameAsTheInverterSendsIt(HFS00_PAYLOAD);
 
 const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer[]>> = {
   GS: [GS_LIVE_1, GS_LIVE_2, GS_LIVE_3, GS_REFERENCE],
@@ -66,9 +82,12 @@ const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer
   BATS: [BATS_LIVE],
   HECS: [HECS_REFERENCE],
   GPMP: [GPMP_REFERENCE],
-  MOD: [MOD_REFERENCE],
+  MOD: [MOD_REFERENCE, MOD_FAULT_DATALOGGER],
+  CFS: [CFS_DATALOGGER],
+  WS: [WS_NIGHT_DATALOGGER, WS_DAY_DATALOGGER, WS_MPPSOLAR_REFERENCE],
+  HFS: [HFS00_DATALOGGER],
 };
-const ALL_COMMANDS: readonly Pi17QueryCommandName[] = ["GS", "PS", "BATS", "HECS", "GPMP", "MOD"];
+const ALL_COMMANDS: readonly Pi17QueryCommandName[] = ["GS", "PS", "BATS", "HECS", "GPMP", "MOD", "CFS", "WS", "HFS"];
 
 function payloadOf(fixture: Buffer): string {
   const classified = classifyFrame(fixture);
@@ -98,6 +117,7 @@ for (const [name, fixture] of [
 ] as const) {
   check(`live 2026-10-25 fixture CRC validates: ${name}`, classifyFrame(fixture).kind === "data");
 }
+check("mpp-solar's WS reference frame CRC validates", classifyFrame(WS_MPPSOLAR_REFERENCE).kind === "data");
 
 // ---------- shapes: every fixture fits its own command and no other ----------
 for (const command of ALL_COMMANDS) {
@@ -164,6 +184,26 @@ check(
   "PS query accepts a live PS frame",
   frameMismatchForExpectation(expectPs, acceptedFrame(PS_LIVE_1)) === undefined
 );
+// An empty fault-record slot may be declined; nothing else a query can be answered with changes
+const expectHfs: ExchangeExpectation = { kind: "query", command: "HFS" };
+check(
+  "HFS query accepts a NAK (an empty slot)",
+  frameMismatchForExpectation(expectHfs, acceptedFrame(NAK_FRAME)) === undefined
+);
+check(
+  "HFS query still rejects a late ACK",
+  frameMismatchForExpectation(expectHfs, acceptedFrame(ACK_FRAME)) !== undefined
+);
+check(
+  "HFS query rejects a GS frame (same 25 tokens, but GS stays below HFS's 128-byte floor)",
+  frameMismatchForExpectation(expectHfs, acceptedFrame(GS_LIVE_1)) !== undefined
+);
+for (const command of ALL_COMMANDS.filter(command => command !== "HFS")) {
+  check(
+    `${command} query still rejects a NAK`,
+    frameMismatchForExpectation({ kind: "query", command }, acceptedFrame(NAK_FRAME)) !== undefined
+  );
+}
 
 // ---------- regression: the observed failure sequence (2026-10-25 14:03:56 UTC) ----------
 // A delayed GS retry and the next PS hit the wire 1 ms apart, so a PS frame arrived while GS was
@@ -317,6 +357,34 @@ check(
   implausibleFieldsIn({ maximum_feeding_grid_power: 15_001 }).length === 1 &&
     implausibleFieldsIn({ "battery_constant_charge_voltage(c.v.)": 70 }).length === 1
 );
+// Status answers: a wrong code would page "new fault" or name the wrong fault in the P1
+check(
+  "status gated: CFS code 100 / slot 9 dropped, an HFS slot 9 dropped",
+  implausibleFieldsIn(decodeQueryPayload("CFS", "100,00").fields).length === 1 &&
+    implausibleFieldsIn(decodeQueryPayload("CFS", "14,09").fields).length === 1 &&
+    implausibleFieldsIn({ ...decodeQueryPayload("HFS", HFS00_PAYLOAD).fields, fault_record_id: 9 }).length === 1
+);
+check(
+  "status gated: an unknown working mode and a WS flag that is neither 0 nor 1 are dropped",
+  implausibleFieldsIn(decodeQueryPayload("MOD", "07").fields).length === 1 &&
+    implausibleFieldsIn(decodeQueryPayload("WS", WS_DAY_PAYLOAD.replace(/^0/, "2")).fields).length === 1
+);
+{
+  const faultMode = decodeQueryPayload("MOD", MOD_FAULT_PAYLOAD);
+  const latestFault = decodeQueryPayload("CFS", CFS_FAULT_14_PAYLOAD);
+  const nightWarnings = decodeQueryPayload("WS", WS_NIGHT_PAYLOAD);
+  check(
+    "the datalogger's MOD/CFS/WS answers decode as the vendor cloud showed them (Fault mode, fault 14 in slot 0)",
+    faultMode.fields.working_mode === "Fault mode" &&
+      latestFault.fields.latest_fault_code === 14 &&
+      latestFault.fields.latest_fault_record_id === 0 &&
+      nightWarnings.fields.solar_input_1_loss === "active" &&
+      nightWarnings.fields.equalization_state === "active" &&
+      nightWarnings.fields.battery_disconnected === "inactive" &&
+      !("rapid_shutdown_active" in nightWarnings.fields) &&
+      [faultMode, latestFault, nightWarnings].every(decoded => decoded.problems.length === 0)
+  );
+}
 
 // Coverage: every numeric GS/PS field, and every numeric settings readback a control loop reads,
 // must have a range — a new table entry can't silently bypass the gate.
@@ -338,6 +406,22 @@ const numericSettingsFieldNames = new Set(
 for (const key of [...USB_VALUE_KEYS, "max._ac_charging_current"]) {
   if (!numericSettingsFieldNames.has(key)) continue; // option-valued readbacks are covered by the option check
   check(`gate has a range for consumed settings readback ${key}`, key in PLAUSIBLE_NUMERIC_RANGES);
+}
+const numericStatusFields = [...PI17_QUERY_RESPONSE_FIELDS.CFS, ...PI17_QUERY_RESPONSE_FIELDS.HFS]
+  .filter(spec => spec.reading.kind === "int")
+  .map(spec => influxFieldName(spec.name));
+for (const name of numericStatusFields) {
+  check(`gate has a range for status field ${name}`, name in PLAUSIBLE_NUMERIC_RANGES);
+}
+// The gate looks ranges and option checks up by field name alone, whatever the command: two
+// commands decoding into the same key would gate one by the other's rules (WS's "Battery under
+// voltage" flag would have taken BATS's key, HFS's snapshot GS's ranges).
+{
+  const decodedKeys = Object.values(PI17_QUERY_RESPONSE_FIELDS).flatMap(specs =>
+    specs.filter(spec => spec.reading.kind !== "exclude").map(spec => influxFieldName(spec.name))
+  );
+  const duplicateKeys = decodedKeys.filter((key, index) => decodedKeys.indexOf(key) !== index);
+  check("decoded field names are unique across all commands", duplicateKeys.length === 0, duplicateKeys.join(", "));
 }
 
 console.log(
