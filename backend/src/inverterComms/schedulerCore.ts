@@ -22,9 +22,9 @@ import {
 } from "./schedulerTiming.ts";
 import { judgeConfirmRun, type ConfirmVerdicts } from "./confirmVerdicts.ts";
 import {
-  chainAfterReadback,
   chainMayLeave,
-  chainWithWrite,
+  chainsAfterReadback,
+  chainsWithWrite,
   readbackFieldKey,
   type FieldWriteChains,
 } from "./fieldWriteChains.ts";
@@ -67,8 +67,10 @@ export type SchedulerState = {
    * is trusted per field (each EDx sets one HECS flag; another flag's write says nothing about it)
    */
   lastWriteAtByReadbackField: Readonly<Record<string, number>>;
-  /** Per field, the writes no readback has proven committed yet (fieldWriteChains.ts) */
+  /** Per field, the writes no readback has proven committed yet (fieldWriteChains.ts), for the confirm */
   fieldWriteChains: FieldWriteChains;
+  /** The same writes credited with the longer drop-trust window: what the satisfied drop reads */
+  dropTrustChains: FieldWriteChains;
   lastPollRoundEndedAt: number | undefined;
   lastPollRoundHadFailures: boolean;
   /** Start of the last round that included the settings queries */
@@ -98,6 +100,7 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     lastSentAtByCommand: {},
     lastWriteAtByReadbackField: {},
     fieldWriteChains: {},
+    dropTrustChains: {},
     lastPollRoundEndedAt: undefined,
     lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
@@ -210,21 +213,21 @@ export function afterSetterSent(
   // Every send may have changed its fields — ACKed, NAKed or unanswered alike (a NAK'd or lost
   // write can still have committed), so readbacks older than this can't vouch for them any more
   const lastWriteAtByReadbackField = { ...state.lastWriteAtByReadbackField };
-  const fieldWriteChains = { ...state.fieldWriteChains };
+  let { fieldWriteChains, dropTrustChains } = state;
   for (const check of fieldsThisCommandWrites) {
     const fieldKey = readbackFieldKey(check.query, check.field);
+    const write = { value: check.expectedValue, sentAtMs: nowMs };
+    const latestReadbackValue = state.latestSettingsReadbacks[check.query]?.fields[check.field];
     lastWriteAtByReadbackField[fieldKey] = nowMs;
-    fieldWriteChains[fieldKey] = chainWithWrite(
-      fieldWriteChains[fieldKey],
-      { value: check.expectedValue, sentAtMs: nowMs },
-      state.latestSettingsReadbacks[check.query]?.fields[check.field]
-    );
+    fieldWriteChains = chainsWithWrite(fieldWriteChains, fieldKey, write, latestReadbackValue);
+    dropTrustChains = chainsWithWrite(dropTrustChains, fieldKey, write, latestReadbackValue);
   }
   return {
     ...state,
     lastSentAtByCommand: { ...state.lastSentAtByCommand, [command]: nowMs },
     lastWriteAtByReadbackField,
     fieldWriteChains,
+    dropTrustChains,
     // A copy queued while this one was on the wire got its gate from the PREVIOUS send; re-gate it
     // from this one, or it would go out straight after the ACK — a back-to-back duplicate write
     queuedSetters: state.queuedSetters.map(setter =>
@@ -340,17 +343,12 @@ export function withSettingsReadback(
   fields: DecodedFields,
   nowMs: number
 ): SchedulerState {
-  const fieldWriteChains = { ...state.fieldWriteChains };
-  for (const [field, value] of Object.entries(fields)) {
-    const fieldKey = readbackFieldKey(query, field);
-    const chain = chainAfterReadback(fieldWriteChains[fieldKey], value, nowMs, state.timing.writeCommitWindowMs);
-    if (chain) fieldWriteChains[fieldKey] = chain;
-    else delete fieldWriteChains[fieldKey];
-  }
+  const { writeCommitWindowMs, dropTrustCommitWindowMs } = state.timing;
   return {
     ...state,
     latestSettingsReadbacks: { ...state.latestSettingsReadbacks, [query]: { fields, decodedAtMs: nowMs } },
-    fieldWriteChains,
+    fieldWriteChains: chainsAfterReadback(state.fieldWriteChains, query, fields, nowMs, writeCommitWindowMs),
+    dropTrustChains: chainsAfterReadback(state.dropTrustChains, query, fields, nowMs, dropTrustCommitWindowMs),
   };
 }
 
@@ -359,8 +357,9 @@ export function withSettingsReadback(
  * that can stand in for the inverter's state counts, field by field: decoded after the last write to
  * that field, with no pending confirm on it (an ACKed write may still commit and change it), and no
  * unproven write of another value still able to land (after 10 A → 261 A, a 10 A readback can be
- * the first write landing before the second). A setter with no readback mapping is never considered
- * satisfied.
+ * the first write landing before the second). "Unproven" here uses the drop-trust window, longer
+ * than the confirm's: withholding a drop only costs a redundant write. A setter with no readback
+ * mapping is never considered satisfied.
  */
 export function readbackAlreadySatisfies(state: SchedulerState, command: string): boolean {
   const checks = expectedReadbackChecksForSetter(command);
@@ -370,7 +369,7 @@ export function readbackAlreadySatisfies(state: SchedulerState, command: string)
     const fieldKey = readbackFieldKey(check.query, check.field);
     const lastWriteToField = state.lastWriteAtByReadbackField[fieldKey] ?? -Infinity;
     if (!readback || readback.decodedAtMs <= lastWriteToField) return false;
-    if (chainMayLeave(state.fieldWriteChains[fieldKey], check.expectedValue)) return false;
+    if (chainMayLeave(state.dropTrustChains[fieldKey], check.expectedValue)) return false;
     const confirmStillPending = state.confirm?.checks.some(
       pending => pending.query === check.query && pending.field === check.field
     );

@@ -7,6 +7,8 @@
  * settings poll's 10 A (MUCHGC0100 landing) then dropped the queued MUCHGC0100 as satisfied, and
  * MUCHGC2610 committed afterwards. Swept across the settings-poll cycle (180 s, the live
  * poll_values_interval_seconds) at 12, 14 and 18 s commits, for the default gap and for gap 0.
+ * Past the 30 s commit window (the July 2026 commit landed 42 s into the quiet period) verdicts
+ * may be wrong either way, but the cap must still hold: the satisfied drop trusts a longer horizon.
  * Run from backend/ with:
  *   yarn node src/inverterComms/commitAttribution.selftest.ts
  */
@@ -21,7 +23,13 @@ import {
   sendsIn,
   simulatePump,
 } from "./schedulerSimulation.ts";
-import { QUIET_GAP_AFTER_WRITE_MS, WRITE_COMMIT_WINDOW_MS } from "./schedulerTiming.ts";
+import { DROP_TRUST_COMMIT_WINDOW_MS, QUIET_GAP_AFTER_WRITE_MS, WRITE_COMMIT_WINDOW_MS } from "./schedulerTiming.ts";
+import {
+  afterSetterSent,
+  initialSchedulerState,
+  readbackAlreadySatisfies,
+  withSettingsReadback,
+} from "./schedulerCore.ts";
 import { chainAfterReadback, chainMayLeave, chainWithWrite, readbackProvesWrite } from "./fieldWriteChains.ts";
 
 const fails: string[] = [];
@@ -66,6 +74,32 @@ for (const quietGapAfterWriteMs of [QUIET_GAP_AFTER_WRITE_MS, 0]) {
       `${falseGiveUpsAt.length}/180 false give-ups${falseGiveUpsAt.length ? ": " + falseGiveUpsAt.slice(0, 4).join(", ") : ""}`
     );
   }
+}
+
+// ---------- commits slower than the 30 s window: verdicts may be wrong, the cap must hold ----------
+for (const commitLatencyMs of [seconds(45), seconds(48)]) {
+  const capLostAt = sweepCapLost(QUIET_GAP_AFTER_WRITE_MS, commitLatencyMs, 1);
+  check(
+    `gap ${QUIET_GAP_AFTER_WRITE_MS}, ${commitLatencyMs / 1000} s commits (past the window): every extend-then-re-end still ends at the ${CAP_AMPS} A cap`,
+    capLostAt.length === 0,
+    `${capLostAt.length}/180 lost the cap${capLostAt.length ? ": " + capLostAt.slice(0, 4).join(", ") : ""}`
+  );
+}
+{
+  // Every 2nd offset keeps it cheap (~3 s); the dedicated sweeps above cover each offset
+  const slowestLossesByConfig: string[] = [];
+  for (const quietGapAfterWriteMs of [QUIET_GAP_AFTER_WRITE_MS, 0]) {
+    for (let commitLatencySeconds = 12; commitLatencySeconds <= 60; commitLatencySeconds += 3) {
+      const capLostAt = sweepCapLost(quietGapAfterWriteMs, seconds(commitLatencySeconds), 2);
+      if (capLostAt.length)
+        slowestLossesByConfig.push(`gap ${quietGapAfterWriteMs} @ ${commitLatencySeconds} s: ${capLostAt.length}/90`);
+    }
+  }
+  check(
+    "12–60 s commits (3 s steps), both gaps: the cap holds at every offset",
+    slowestLossesByConfig.length === 0,
+    slowestLossesByConfig.join("; ")
+  );
 }
 
 // ---------- the chain itself ----------
@@ -116,10 +150,49 @@ for (const quietGapAfterWriteMs of [QUIET_GAP_AFTER_WRITE_MS, 0]) {
   );
 }
 
+// ---------- the drop trusts a longer horizon than the confirm ----------
+{
+  // The review's 45 s band: MUCHGC0100 lands at ~45 s, MUCHGC2610 only at ~50 s
+  let state = withSettingsReadback(initialSchedulerState(), "BATS", { [LIMIT_FIELD]: CHARGING_AMPS }, 0);
+  state = afterSetterSent(state, "MUCHGC0100", [], seconds(0.1), true);
+  state = afterSetterSent(state, "MUCHGC2610", [], seconds(5), true);
+  const tenAt47 = withSettingsReadback(state, "BATS", { [LIMIT_FIELD]: CAP_AMPS }, seconds(47.4));
+  check(
+    `a 10 A readback 47 s in: past the confirm's ${WRITE_COMMIT_WINDOW_MS / 1000} s window, but the drop still sees MUCHGC2610 able to land`,
+    tenAt47.fieldWriteChains["BATS:max._ac_charging_current"] === undefined &&
+      tenAt47.dropTrustChains["BATS:max._ac_charging_current"]?.writes.length === 1 &&
+      !readbackAlreadySatisfies(tenAt47, "MUCHGC0100")
+  );
+  const tenPastHorizon = withSettingsReadback(
+    state,
+    "BATS",
+    { [LIMIT_FIELD]: CAP_AMPS },
+    seconds(5) + DROP_TRUST_COMMIT_WINDOW_MS
+  );
+  check(
+    `…until ${DROP_TRUST_COMMIT_WINDOW_MS / 1000} s after the last write (the documented residual risk past that)`,
+    !chainMayLeave(tenPastHorizon.dropTrustChains["BATS:max._ac_charging_current"], CAP_AMPS)
+  );
+}
+
 console.log(
   `\n${fails.length ? `${fails.length} FAILED: ${fails.join(", ")}` : "all commitAttribution selftests passed"}`
 );
 process.exit(fails.length ? 1 : 0);
+
+/** The offsets (every `offsetStepSeconds` across the settings-poll cycle) at which the cap was lost */
+function sweepCapLost(quietGapAfterWriteMs: number, commitLatencyMs: number, offsetStepSeconds: number): string[] {
+  const capLostAt: string[] = [];
+  for (
+    let offsetSeconds = 0;
+    offsetSeconds < LIVE_SETTINGS_POLL_INTERVAL_MS / 1000;
+    offsetSeconds += offsetStepSeconds
+  ) {
+    const outcome = runWindowEnd(quietGapAfterWriteMs, commitLatencyMs, seconds(100 + offsetSeconds));
+    if (outcome.finalLimitAmps !== CAP_AMPS) capLostAt.push(`+${offsetSeconds} s (${outcome.finalLimitAmps} A)`);
+  }
+  return capLostAt;
+}
 
 /**
  * A buy window ends at `windowEndAtMs` (cap MUCHGC0100), is extended 5 s later (MUCHGC2610) and ends

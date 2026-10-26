@@ -63,14 +63,25 @@ export const INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
  */
 export const STARVATION_FALLBACK_QUIET_GAP_MS = QUIET_GAP_AFTER_WRITE_MS;
 /**
- * A write no readback has proven yet counts as landed (or as never landing) this long after it was
- * sent. Only an ambiguous readback needs it: after A→B→A with B never seen, "A" could mean "nothing
- * committed yet" forever (fieldWriteChains.ts). As long as the silent backoff, so the silent
- * re-check always resolves it, and below the interleaved give-up minus one re-check. Covers commits
- * up to 30 s: ~6 s under light traffic, the 12–18 s the ambiguity was found at; a commit starved
- * longer than that is the give-up's business.
+ * For the confirm verdict, a write no readback has proven yet counts as landed (or as never
+ * landing) this long after it was sent. Only an ambiguous readback needs it: after A→B→A with B
+ * never seen, "A" could mean "nothing committed yet" forever (fieldWriteChains.ts). As long as the
+ * silent backoff, so the silent re-check always resolves it, and below the interleaved give-up minus
+ * one re-check. Commits up to 30 s are attributed right: ~6 s under light traffic, the 12–18 s the
+ * ambiguity was found at. Slower ones (July 2026: one landed 42 s into a quiet period) can make a
+ * burst's verdict wrong either way: a false "confirmed" when the window takes both writes as landed,
+ * or a false give-up. So nothing that can lose a write relies on this window: the satisfied drop
+ * uses DROP_TRUST_COMMIT_WINDOW_MS.
  */
 export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
+/**
+ * The satisfied drop's horizon for the same question. The two mistakes cost differently: a drop
+ * withheld too long costs one redundant write of what the readback already shows, while a drop let
+ * through while a write is still landing can lose that write for good (#63: a buy window's 10 A cap,
+ * with 42–48 s commits at the default). Three windows covers the slowest commit seen with margin.
+ * Residual risk: an A→B→A whose commits take longer than this.
+ */
+export const DROP_TRUST_COMMIT_WINDOW_MS = 3 * WRITE_COMMIT_WINDOW_MS;
 
 /**
  * Gap between the END of one background GS+PS round and the start of the next: rounds run
@@ -92,8 +103,10 @@ export type SchedulerTiming = {
   interleavedConfirmGiveUpAfterWriteMs: number;
   /** The gap new phases use after an interleaved give-up, until the knob next changes */
   starvationFallbackQuietGapMs: number;
-  /** An unproven write counts as landed this long after its send (WRITE_COMMIT_WINDOW_MS) */
+  /** For the confirm, an unproven write counts as landed this long after its send (WRITE_COMMIT_WINDOW_MS) */
   writeCommitWindowMs: number;
+  /** The same for the satisfied drop (DROP_TRUST_COMMIT_WINDOW_MS) */
+  dropTrustCommitWindowMs: number;
   pollRoundGapMs: number;
   pollRoundGapAfterFailureMs: number;
 };
@@ -106,6 +119,7 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
   interleavedConfirmGiveUpAfterWriteMs: INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS,
   starvationFallbackQuietGapMs: STARVATION_FALLBACK_QUIET_GAP_MS,
   writeCommitWindowMs: WRITE_COMMIT_WINDOW_MS,
+  dropTrustCommitWindowMs: DROP_TRUST_COMMIT_WINDOW_MS,
   pollRoundGapMs: POLL_ROUND_GAP_MS,
   pollRoundGapAfterFailureMs: POLL_ROUND_GAP_AFTER_FAILURE_MS,
 };

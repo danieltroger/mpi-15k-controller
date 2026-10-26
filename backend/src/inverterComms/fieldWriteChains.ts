@@ -7,6 +7,8 @@
  * yet" as well as "the second A committed", so it proves the second A only once B is known to have
  * landed — seen in a readback, or past its commit window. And while B may still land, a readback
  * showing A (or anything but B) can't vouch for the field: a queued A must not be dropped against it.
+ * The scheduler keeps two sets of chains over the same writes, one per commit window: the confirm's
+ * and the satisfied drop's longer one (schedulerTiming.ts).
  */
 import type { DecodedFieldValue, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 
@@ -24,6 +26,34 @@ export type FieldWriteChains = Readonly<Record<string, FieldWriteChain>>;
 
 export function readbackFieldKey(query: SettingsQueryCommandName, field: string): string {
   return `${query}:${field}`;
+}
+
+/** Record one field's write in a set of chains (a copy) */
+export function chainsWithWrite(
+  chains: FieldWriteChains,
+  fieldKey: string,
+  write: FieldWrite,
+  latestReadbackValue: DecodedFieldValue | undefined
+): FieldWriteChains {
+  return { ...chains, [fieldKey]: chainWithWrite(chains[fieldKey], write, latestReadbackValue) };
+}
+
+/** Credit one query's readback to a set of chains (a copy), every field with `commitWindowMs` */
+export function chainsAfterReadback(
+  chains: FieldWriteChains,
+  query: SettingsQueryCommandName,
+  fields: Readonly<Record<string, DecodedFieldValue>>,
+  decodedAtMs: number,
+  commitWindowMs: number
+): FieldWriteChains {
+  const credited = { ...chains };
+  for (const [field, value] of Object.entries(fields)) {
+    const fieldKey = readbackFieldKey(query, field);
+    const chain = chainAfterReadback(credited[fieldKey], value, decodedAtMs, commitWindowMs);
+    if (chain) credited[fieldKey] = chain;
+    else delete credited[fieldKey];
+  }
+  return credited;
 }
 
 /** Every send counts — ACKed, NAKed or unanswered alike: a NAK'd or lost write can still have committed */
@@ -55,7 +85,8 @@ export function chainAfterReadback(
   const fewestCommitsShowingIt = valueAfterCommits.findIndex(
     (value, committedCount) => committedCount >= pastWindow && value === readValue
   );
-  // No write explains the value (an unknown start, or another hand on the inverter): take it as settled
+  // Nothing from the window's floor on explains the value: fewer writes landed than the window
+  // assumes, the start was never read, or another hand changed it. The readback is what's settled.
   const settledCount = fewestCommitsShowingIt === -1 ? pastWindow : fewestCommitsShowingIt;
   const writes = chain.writes.slice(settledCount);
   if (!writes.length) return undefined;
