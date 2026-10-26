@@ -121,6 +121,7 @@ export function hallSample(harness: WiringHarness, amps: number): void {
 export function decodeBats(harness: WiringHarness, limitAmps: number | string): void {
   harness.setLastDecodedRound({
     command: "BATS",
+    wireCommand: "BATS",
     fields: { "max._ac_charging_current": limitAmps },
     decodedAt: wallClockMs(harness.clock),
   });
@@ -132,6 +133,7 @@ export function decodeHecs(harness: WiringHarness, state: "enabled" | "disabled"
     harness.setAcChargeBatteryState(state);
     harness.setLastDecodedRound({
       command: "HECS",
+      wireCommand: "HECS",
       fields: { ac_charge_battery: state },
       decodedAt: wallClockMs(harness.clock),
     });

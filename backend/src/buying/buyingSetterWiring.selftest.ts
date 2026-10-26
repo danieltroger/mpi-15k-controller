@@ -164,19 +164,39 @@ const failedChecks: string[] = [];
       withSessionTime.acChargingReading()?.observedAtMs === -5_000
     );
     nowMs = 1_000;
-    setLastDecodedRound({ command: "BATS", fields: { "max._ac_charging_current": 261 }, decodedAt: 0 });
+    setLastDecodedRound({
+      command: "BATS",
+      wireCommand: "BATS",
+      fields: { "max._ac_charging_current": 261 },
+      decodedAt: 0,
+    });
     const first = acChargingLimitReadback();
     check("BATS memo: amps + the monotonic time it was observed", first?.amps === 261 && first.observedAtMs === 1_000);
     nowMs = 2_000;
-    setLastDecodedRound({ command: "GS", fields: { battery_voltage: 55 }, decodedAt: 0 });
+    setLastDecodedRound({ command: "GS", wireCommand: "GS", fields: { battery_voltage: 55 }, decodedAt: 0 });
     check("BATS memo: a GS round keeps the very same readback", acChargingLimitReadback() === first);
-    setLastDecodedRound({ command: "BATS", fields: { "max._ac_charging_current": "garbled" }, decodedAt: 0 });
+    setLastDecodedRound({
+      command: "BATS",
+      wireCommand: "BATS",
+      fields: { "max._ac_charging_current": "garbled" },
+      decodedAt: 0,
+    });
     check("BATS memo: a non-numeric limit keeps the previous one (and warns)", acChargingLimitReadback() === first);
     nowMs = 3_000;
-    setLastDecodedRound({ command: "HECS", fields: { ac_charge_battery: "enabled" }, decodedAt: 0 });
+    setLastDecodedRound({
+      command: "HECS",
+      wireCommand: "HECS",
+      fields: { ac_charge_battery: "enabled" },
+      decodedAt: 0,
+    });
     check("HECS reading: stamped by a HECS round", acChargingReading()?.observedAtMs === 3_000);
     nowMs = 4_000;
-    setLastDecodedRound({ command: "HECS", fields: { feed_power_to_utility: "enabled" }, decodedAt: 0 });
+    setLastDecodedRound({
+      command: "HECS",
+      wireCommand: "HECS",
+      fields: { feed_power_to_utility: "enabled" },
+      decodedAt: 0,
+    });
     check(
       "HECS reading: a HECS round without the flag doesn't restamp it",
       acChargingReading()?.observedAtMs === 3_000
