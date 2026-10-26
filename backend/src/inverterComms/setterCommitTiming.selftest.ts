@@ -6,6 +6,7 @@
  */
 import process from "process";
 import { afterConfirmRun, afterSetterSent, initialSchedulerState, type SchedulerState } from "./schedulerCore.ts";
+import { setOnErrorLog } from "../utilities/logging.ts";
 import {
   reportAckedSetter,
   reportConfirmOutcome,
@@ -14,6 +15,8 @@ import {
   type SetterCommitTracker,
 } from "./setterCommitTiming.ts";
 
+const errorLogsCaptured: string[] = [];
+setOnErrorLog(args => errorLogsCaptured.push(args.map(argument => String(argument)).join(" ")));
 const fails: string[] = [];
 function check(name: string, cond: boolean, detail = "") {
   console.log(`${cond ? "PASS" : "FAIL"}: ${name} ${detail}`);
@@ -171,6 +174,43 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
     traffic(0, 0)
   );
   check("a setter without a readback check is not tracked (it can never reach a verdict)", tracker.size === 0);
+}
+
+// ---------- a write too young to judge is not counted as still old ----------
+{
+  const tracker: SetterCommitTracker = new Map();
+  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
+  state = ackedWrite(state, tracker, "MUCHGC0100", seconds(4.5), 0);
+  const stillOldEverywhere = { ...gpmp(350), BATS: { "max._ac_charging_current": 6 } };
+  const confirmRun = afterConfirmRun(state, stillOldEverywhere, seconds(6));
+  reportConfirmOutcome(tracker, confirmRun.result, "interleaved", seconds(6), traffic(5, 12));
+  check(
+    "gap 0: at 6 s GPMP (6 s old) counts a still-old readback, MUCHGC (1.5 s old) waits uncounted",
+    tracker.get("GPMP000550")?.readbacksStillOld === 1 && tracker.get("MUCHGC0100")?.readbacksStillOld === 0,
+    `GPMP ${tracker.get("GPMP000550")?.readbacksStillOld}, MUCHGC ${tracker.get("MUCHGC0100")?.readbacksStillOld}`
+  );
+}
+
+// ---------- the starvation fallback is its own errorLog (P2) ----------
+{
+  const tracker: SetterCommitTracker = new Map();
+  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
+  for (let confirmAtSeconds = 6; confirmAtSeconds < 55; confirmAtSeconds += 4) {
+    state = afterConfirmRun(state, gpmp(350), seconds(confirmAtSeconds)).state;
+  }
+  const errorLogsBefore = errorLogsCaptured.length;
+  const giveUp = afterConfirmRun(state, gpmp(350), seconds(55));
+  reportConfirmOutcome(tracker, giveUp.result, "interleaved", seconds(55), traffic(44, 99));
+  const logged = errorLogsCaptured.slice(errorLogsBefore);
+  check(
+    "gap 0 give-up: one never-applied errorLog and one auto-revert errorLog recommending 12000",
+    logged.length === 2 &&
+      logged[0]!.startsWith("Inverter ACKed but never applied within the interleaved confirm window:") &&
+      logged[1]!.startsWith("Inverter quiet gap 0 auto-reverted: GPMP000550 starved") &&
+      logged[1]!.includes("later writes use the 12000 ms quiet gap") &&
+      logged[1]!.includes("Set it back to 12000"),
+    logged.join(" | ")
+  );
 }
 
 console.log(

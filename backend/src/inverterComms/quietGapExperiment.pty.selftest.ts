@@ -7,7 +7,8 @@
  *     value first and then converge, and the commit timing line must say so.
  *  B. Starved commit: a write commits only once no command has arrived for 2 s. With a 3 s gap (the
  *     silent strategy) the write converges. Switched live to 0, the next write never commits while
- *     polling continues, and the session must give up loudly with the errorLog behind the P2.
+ *     polling continues, and the session must give up loudly with the errorLog behind the P2 — and
+ *     fall back to the silent gap (another P2), under which the following write commits again.
  *
  * The windows are scaled down for the harness (first confirm 1 s after the write, then every 1 s,
  * give-up after 6 s). The production numbers are in schedulerTiming.ts. The commit timing lines
@@ -36,6 +37,7 @@ const HARNESS_TIMING: Partial<Omit<SchedulerTiming, "quietGapAfterWriteMs">> = {
   firstInterleavedConfirmAfterWriteMs: 1_000,
   interleavedConfirmIntervalMs: 1_000,
   interleavedConfirmGiveUpAfterWriteMs: 6_000,
+  starvationFallbackQuietGapMs: SILENT_QUIET_GAP_MS,
   confirmBackoffMs: 3_000,
 };
 /** Polling "continues" if no two GS rounds are further apart than a round plus a confirm and slack */
@@ -110,7 +112,9 @@ async function checkSlowCommitWithPollingContinuing(): Promise<void> {
     record !== undefined &&
       record.readbacksStillOld >= 1 &&
       record.lastStillOldAfterAckMs !== null &&
-      record.lastStillOldAfterAckMs < SLOW_COMMIT_DELAY_S * 1000,
+      // The fake's commit time counts from the setter's arrival, the engine's from the ACK and
+      // the readback's decode — 300 ms of headroom for a slow runner
+      record.lastStillOldAfterAckMs < SLOW_COMMIT_DELAY_S * 1000 + 300,
     `${record?.readbacksStillOld} still-old readback(s), the last at ${record?.lastStillOldAfterAckMs} ms`
   );
   check(
@@ -179,11 +183,17 @@ async function checkStarvedCommitGivesUpLoudly(): Promise<void> {
   const starvedRecord = await waitForTimingRecord(interleavedWrite, "GPMP000350", 12_000);
   const gaveUpAt = Date.now();
   await sleep(2_500);
-  const counters = engine.session.exchangeCounters();
   const gsAfterGiveUp = roundsOf(engine.decodedRounds, "GS").filter(round => round.decodedAt > gaveUpAt);
   const gsDuringPhase = roundsOf(engine.decodedRounds, "GS")
     .map(round => round.decodedAt)
     .filter(decodedAt => interleavedAckedAt !== undefined && decodedAt >= interleavedAckedAt && decodedAt <= gaveUpAt);
+  const starvedStillPendingBeforeFallbackWrite = !fake.events.some(
+    event => event.event === "committed" && event.setter === "GPMP000350"
+  );
+  // The knob is still 0, but the give-up started the fallback: this write gets the silent gap
+  const fallbackWrite = await writeAndAwaitAck(engine.session, "GPMP000450");
+  const fallbackRecord = await waitForTimingRecord(fallbackWrite, "GPMP000450", 10_000);
+  const counters = engine.session.exchangeCounters();
   engine.dispose();
   const fakeEvents = await fake.stop();
   const summary = fakeEvents.find(event => event.event === "summary");
@@ -200,27 +210,43 @@ async function checkStarvedCommitGivesUpLoudly(): Promise<void> {
   const neverAppliedErrorLogs = errorLogsCaptured
     .slice(errorLogsBefore)
     .filter(text => text.includes("never applied") && text.includes("GPMP000350"));
+  const fallbackErrorLogs = errorLogsCaptured
+    .slice(errorLogsBefore)
+    .filter(
+      text => text.includes("auto-reverted") && text.includes("GPMP000350") && text.includes("Set it back to 12000")
+    );
   check(
-    "B: the give-up errorLogged (the P2 path) exactly once, and nothing else was errorLogged",
-    neverAppliedErrorLogs.length === 1 && errorLogsCaptured.length - errorLogsBefore === 1,
+    "B: the give-up errorLogged (P2) once, the auto-revert to the silent gap once, and nothing else",
+    neverAppliedErrorLogs.length === 1 &&
+      fallbackErrorLogs.length === 1 &&
+      errorLogsCaptured.length - errorLogsBefore === 2,
     errorLogsCaptured.slice(errorLogsBefore).join(" | ")
+  );
+  check(
+    `B: with the knob still 0, the next write runs on the ${SILENT_QUIET_GAP_MS} ms fallback silence and is confirmed`,
+    fallbackRecord?.verdict === "confirmed" &&
+      fallbackRecord.quietGapAfterWriteMs === SILENT_QUIET_GAP_MS &&
+      fallbackRecord.pollRoundsBetween === 0,
+    JSON.stringify(fallbackRecord)
   );
   check(
     "B: polling continued through the starved write's confirm phase and after the give-up",
     gsDuringPhase.length >= 4 && longestGap(gsDuringPhase) <= MAX_GS_GAP_WHILE_POLLING_MS && gsAfterGiveUp.length >= 1,
     `${gsDuringPhase.length} GS rounds in the phase (longest gap ${longestGap(gsDuringPhase)} ms), ${gsAfterGiveUp.length} after`
   );
+  const committedSetters = fakeEvents.flatMap(event => (event.event === "committed" ? [event.setter] : []));
   check(
-    "B: the fake committed the first write only, the starved one is still pending",
-    summary?.event === "summary" &&
-      summary.pending_commits.join() === "GPMP000350" &&
+    "B: the starved write stayed pending while polling ran, then landed in the fallback's silence",
+    starvedStillPendingBeforeFallbackWrite &&
+      summary?.event === "summary" &&
+      summary.pending_commits.length === 0 &&
       summary.commits_deferred_by_traffic >= 3 &&
-      fakeEvents.filter(event => event.event === "committed").length === 1,
-    JSON.stringify(summary)
+      committedSetters.join() === "GPMP000550,GPMP000350,GPMP000450",
+    `committed ${committedSetters.join(", ")}; ${JSON.stringify(summary)}`
   );
   check(
-    "B: counted as one confirmed and one never-applied write",
-    counters.writesConfirmed === 1 && counters.writesNeverApplied === 1,
+    "B: counted as two confirmed writes and one never-applied",
+    counters.writesConfirmed === 2 && counters.writesNeverApplied === 1,
     `confirmed ${counters.writesConfirmed}, never applied ${counters.writesNeverApplied}`
   );
 }
@@ -249,7 +275,7 @@ function startEngine(device: string, quietGapAfterWriteMs: Accessor<number>) {
  */
 async function writeAndAwaitAck(
   session: ReturnType<typeof createInverterSession>,
-  command: "GPMP000550" | "GPMP000350"
+  command: "GPMP000550" | "GPMP000350" | "GPMP000450"
 ): Promise<{ ackedAt: number | undefined; recordsBefore: number }> {
   const recordsBefore = commitTimingRecords.length;
   let ackedAt: number | undefined;
@@ -308,9 +334,12 @@ function captureCommitTimingLines(into: CommitTimingRecord[]): void {
   };
 }
 
-async function startFakeInverter(
-  fakeArguments: readonly string[]
-): Promise<{ device: string; stop: () => Promise<readonly FakeInverterEvent[]> }> {
+async function startFakeInverter(fakeArguments: readonly string[]): Promise<{
+  device: string;
+  /** Live: grows as the fake reports */
+  events: readonly FakeInverterEvent[];
+  stop: () => Promise<readonly FakeInverterEvent[]>;
+}> {
   const child: ChildProcessWithoutNullStreams = spawn("python3", ["-I", FAKE_INVERTER_SCRIPT, ...fakeArguments], {
     stdio: "pipe",
   });
@@ -327,6 +356,7 @@ async function startFakeInverter(
   );
   return {
     device,
+    events,
     stop: async () => {
       child.stdin.end(); // EOF on its stdin makes it print the summary and exit
       await exited;

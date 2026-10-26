@@ -7,7 +7,10 @@ import { logLog, warnLog } from "../utilities/logging.ts";
 import { withQuietGapAfterWrite, type SchedulerState } from "./schedulerCore.ts";
 import { effectiveQuietGapMs } from "./schedulerTiming.ts";
 
-/** Called on every change of the configured value; a running confirm phase keeps its strategy */
+/**
+ * Called on every change of the configured value. A running confirm phase keeps its gap and
+ * strategy, so the new value applies from the first write after it.
+ */
 export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configuredMs: number): SchedulerState {
   const quietGapMs = quietGapFromConfig(configuredMs);
   const previousMs = scheduler.timing.quietGapAfterWriteMs;
@@ -19,7 +22,8 @@ export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configur
     quietGapMs,
     "ms —",
     quietGapMs > 0 ? "radio silence after each write" : "GS/PS polling continues through writes",
-    "(applies from the next write)"
+    "(applies from the first write after any running confirm phase)",
+    ...(scheduler.starvationFallback ? ["— ends the starvation fallback"] : [])
   );
   return withQuietGapAfterWrite(scheduler, quietGapMs);
 }

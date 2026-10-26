@@ -55,6 +55,13 @@ export const INTERLEAVED_CONFIRM_INTERVAL_MS = 4_000;
  * needed once the line went quiet.
  */
 export const INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
+/**
+ * If the hypothesis gap 0 tests is true (any traffic starves the commit), every interleaved write
+ * gives up and every re-send starves again: inverter control would be off until someone reverts
+ * the knob, with the P2 deduped to one push per cooldown. So one interleaved give-up puts every
+ * later phase back on this measured silent gap until the knob next changes.
+ */
+export const STARVATION_FALLBACK_QUIET_GAP_MS = QUIET_GAP_AFTER_WRITE_MS;
 
 /**
  * Gap between the END of one background GS+PS round and the start of the next: rounds run
@@ -74,6 +81,8 @@ export type SchedulerTiming = {
   firstInterleavedConfirmAfterWriteMs: number;
   interleavedConfirmIntervalMs: number;
   interleavedConfirmGiveUpAfterWriteMs: number;
+  /** The gap new phases use after an interleaved give-up, until the knob next changes */
+  starvationFallbackQuietGapMs: number;
   pollRoundGapMs: number;
   pollRoundGapAfterFailureMs: number;
 };
@@ -84,6 +93,7 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
   firstInterleavedConfirmAfterWriteMs: FIRST_INTERLEAVED_CONFIRM_AFTER_WRITE_MS,
   interleavedConfirmIntervalMs: INTERLEAVED_CONFIRM_INTERVAL_MS,
   interleavedConfirmGiveUpAfterWriteMs: INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS,
+  starvationFallbackQuietGapMs: STARVATION_FALLBACK_QUIET_GAP_MS,
   pollRoundGapMs: POLL_ROUND_GAP_MS,
   pollRoundGapAfterFailureMs: POLL_ROUND_GAP_AFTER_FAILURE_MS,
 };
@@ -92,15 +102,16 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
  * How a confirm phase treats the line until every check has its verdict:
  * - "silent": no traffic at all before each confirm (quiet gap, then the backoff), then give up
  *   after MAX_CONFIRM_ATTEMPTS
- * - "interleaved": background polling continues; confirms run between rounds, each check giving
- *   up at its own write + interleavedConfirmGiveUpAfterWriteMs
- * Fixed when a write arms the phase, so a live knob change applies from the next write and never
- * flips a running phase halfway.
+ * - "interleaved": background polling continues; confirms run between rounds, each check judged
+ *   no earlier than its own write + firstInterleavedConfirmAfterWriteMs and giving up at its own
+ *   write + interleavedConfirmGiveUpAfterWriteMs
+ * Fixed, with its quiet gap, when a write arms a phase: writes merging into a running phase keep
+ * both, so a live knob change applies from the first write after that phase ends.
  */
 export type ConfirmStrategy = "silent" | "interleaved";
 
-export function confirmStrategyFor(timing: Readonly<SchedulerTiming>): ConfirmStrategy {
-  return timing.quietGapAfterWriteMs > 0 ? "silent" : "interleaved";
+export function confirmStrategyFor(quietGapAfterWriteMs: number): ConfirmStrategy {
+  return quietGapAfterWriteMs > 0 ? "silent" : "interleaved";
 }
 
 /** The configured quiet gap as the scheduler uses it, and why it differs when it had to be corrected */

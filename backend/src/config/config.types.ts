@@ -205,7 +205,9 @@ export type Config = {
      * Radio silence after every setter before the confirm readback (the inverter ACKs at once but
      * commits seconds later, and continuous traffic seemed to starve that in July 2026). Default
      * 12000. 0 = GS/PS polling continues through writes and the confirm readbacks interleave with
-     * it (#52). Live: a change applies from the next write. See inverterComms/schedulerTiming.ts.
+     * it (#52); one write that never applies at 0 falls back to 12000 until this value changes.
+     * Live: a change applies from the first write after any running confirm phase. See
+     * inverterComms/schedulerTiming.ts.
      */
     quiet_gap_after_write_ms: number;
   };

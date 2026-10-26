@@ -1,24 +1,21 @@
 /**
  * Pure self-test of the two confirm strategies the quiet gap selects (#52): the default silent one
  * (no traffic until each confirm) and gap 0 (GS/PS polling continues, confirms interleave). The
- * scheduler is driven through a simulated pump with 2400-baud action durations, against a fake
- * GPMP register that commits at a chosen time — or never. Also the invariants that keep the
+ * scheduler is driven through the simulated pump of schedulerSimulation.ts against a fake GPMP
+ * register that commits at a chosen time — or never. Also the invariants that keep the
  * identical-setter gate, the satisfied-setter drop and per-field trust right while polling
- * continues, and the live knob. Run from backend/ with:
+ * continues, and the live knob. The review scenarios of PR #62 are in
+ * confirmPhaseScenarios.selftest.ts. Run from backend/ with:
  *   yarn node src/inverterComms/quietGapStrategies.selftest.ts
  */
 import process from "process";
 import {
   afterConfirmRun,
-  afterPollRound,
   afterSetterSent,
   decideNextAction,
-  initialSchedulerState,
   readbackAlreadySatisfies,
   withQuietGapAfterWrite,
   withSettingsReadback,
-  withSetterDequeued,
-  withSetterQueued,
   type ConfirmOutcome,
   type SchedulerState,
 } from "./schedulerCore.ts";
@@ -35,6 +32,18 @@ import {
   QUIET_GAP_AFTER_WRITE_MS,
 } from "./schedulerTiming.ts";
 import { LINE_QUIET_BEFORE_SEND_MS, RESPONSE_RETRIES, RESPONSE_TIMEOUT_MS } from "./serialExchange.ts";
+import {
+  bootedScheduler,
+  CONFIRM_QUERY_DURATION_MS,
+  confirmRunsIn,
+  POLL_ROUND_DURATION_MS,
+  queueSetterAt,
+  registersFor,
+  SETTER_DURATION_MS,
+  SETTINGS_POLL_INTERVAL_MS,
+  simulatePump,
+  type SimulatedStep,
+} from "./schedulerSimulation.ts";
 
 const fails: string[] = [];
 function check(name: string, cond: boolean, detail = "") {
@@ -43,18 +52,13 @@ function check(name: string, cond: boolean, detail = "") {
 }
 
 const seconds = (value: number) => value * 1000;
-const SETTINGS_POLL_INTERVAL_MS = seconds(300);
-/** What the simulated pump charges per action: GS+PS ≈ 1.1 s of wire time, a GPMP answer ~0.15 s */
-const POLL_ROUND_DURATION_MS = 1_100;
-const CONFIRM_QUERY_DURATION_MS = 150;
-const SETTER_DURATION_MS = 100;
 const OLD_WATTS = 350;
 const NEW_WATTS = 550;
 const NEW_TARGET = "GPMP000550";
 /** A confirm query that times out on every attempt: the slowest a confirm run gets */
 const SLOWEST_CONFIRM_QUERY_MS = (RESPONSE_RETRIES + 1) * RESPONSE_TIMEOUT_MS + LINE_QUIET_BEFORE_SEND_MS;
 
-type SimulatedAction = { action: "poll_round" | "run_confirms" | "send_setter" | "drop_setter"; startedAtMs: number };
+type SimulatedAction = { action: SimulatedStep["action"]; startedAtMs: number };
 type SimulatedConfirm = { endedAtMs: number; result: ConfirmOutcome };
 type SimulationResult = {
   state: SchedulerState;
@@ -67,8 +71,8 @@ check(
   "default: a 12 s quiet gap, i.e. the silent strategy (no behaviour change on deploy)",
   DEFAULT_SCHEDULER_TIMING.quietGapAfterWriteMs === 12_000 &&
     QUIET_GAP_AFTER_WRITE_MS === 12_000 &&
-    confirmStrategyFor(DEFAULT_SCHEDULER_TIMING) === "silent" &&
-    confirmStrategyFor({ ...DEFAULT_SCHEDULER_TIMING, quietGapAfterWriteMs: 0 }) === "interleaved"
+    confirmStrategyFor(DEFAULT_SCHEDULER_TIMING.quietGapAfterWriteMs) === "silent" &&
+    confirmStrategyFor(0) === "interleaved"
 );
 check(
   "interleaved: first confirm at ~6 s, then every 3–5 s",
@@ -279,7 +283,16 @@ check(
       battery_discharge_to_feed_grid_when_solar_input_loss: "disabled",
     },
   };
-  for (let confirmAtSeconds = 6; confirmAtSeconds < 55; confirmAtSeconds += 4) {
+  const firstRun = afterConfirmRun(state, neitherApplied, seconds(6));
+  check(
+    "gap 0: the 6 s run judges EDF1 only — EDG1 (written at 5 s) is not judged before its own 6 s",
+    firstRun.result.notYetJudgedChecks.map(youngCheck => youngCheck.forCommand).join() === "EDG1" &&
+      firstRun.result.retry?.pendingChecks.length === 2 &&
+      firstRun.result.retry.retryAt === seconds(10),
+    JSON.stringify(firstRun.result.retry?.retryAt)
+  );
+  state = firstRun.state;
+  for (let confirmAtSeconds = 10; confirmAtSeconds < 55; confirmAtSeconds += 4) {
     state = afterConfirmRun(state, neitherApplied, seconds(confirmAtSeconds)).state;
   }
   const atFirstDeadline = afterConfirmRun(state, neitherApplied, seconds(55));
@@ -292,7 +305,38 @@ check(
   );
 }
 
-// ---------- the live knob: applies from the next write, never mid-phase ----------
+// ---------- gap 0: re-checks narrow to the pending checks' queries; silent keeps its union ----------
+{
+  const bothQueries = { GPMP: { maximum_feeding_grid_power: NEW_WATTS }, BATS: { "max._ac_charging_current": 6 } };
+  const interleaved = afterSetterSent(
+    afterSetterSent(stateWithQuietGap(0), NEW_TARGET, ["GPMP"], seconds(0), true),
+    "MUCHGC0100",
+    ["BATS"],
+    seconds(1),
+    true
+  );
+  const afterInterleavedRun = afterConfirmRun(interleaved, bothQueries, seconds(7)).state;
+  check(
+    "gap 0: GPMP confirmed, MUCHGC still old → the re-check queries BATS only",
+    afterInterleavedRun.confirm?.queries.join() === "BATS",
+    JSON.stringify(afterInterleavedRun.confirm?.queries)
+  );
+  const silent = afterSetterSent(
+    afterSetterSent(stateWithQuietGap(QUIET_GAP_AFTER_WRITE_MS), NEW_TARGET, ["GPMP"], seconds(0), true),
+    "MUCHGC0100",
+    ["BATS"],
+    seconds(1),
+    true
+  );
+  const afterSilentRun = afterConfirmRun(silent, bothQueries, seconds(13)).state;
+  check(
+    "default: the silent backoff re-check keeps the phase's full query union (wire unchanged)",
+    afterSilentRun.confirm?.queries.join() === "GPMP,BATS",
+    JSON.stringify(afterSilentRun.confirm?.queries)
+  );
+}
+
+// ---------- the live knob: a running phase keeps its gap and strategy ----------
 {
   let state = stateWithQuietGap(QUIET_GAP_AFTER_WRITE_MS);
   state = afterSetterSent(state, NEW_TARGET, ["GPMP"], seconds(10), true);
@@ -304,14 +348,28 @@ check(
   );
   state = afterSetterSent(state, "EDF1", ["HECS"], seconds(12), true);
   check(
-    "knob → 0: the next write arms the interleaved strategy",
-    state.confirm?.strategy === "interleaved" && state.confirm.dueAt === seconds(18)
+    "knob → 0: a write merging into the silent phase keeps its 12 s silence (not cut short)",
+    state.confirm?.strategy === "silent" &&
+      state.confirm.quietGapAfterWriteMs === QUIET_GAP_AFTER_WRITE_MS &&
+      state.confirm.dueAt === seconds(24)
+  );
+  const applied = {
+    GPMP: { maximum_feeding_grid_power: NEW_WATTS },
+    HECS: { battery_discharge_to_feed_grid_when_solar_input_normal: "enabled" },
+  };
+  state = afterConfirmRun(state, applied, seconds(24)).state;
+  state = afterSetterSent(state, "EDG1", ["HECS"], seconds(30), true);
+  check(
+    "knob → 0: the first write after that phase arms the interleaved strategy",
+    state.confirm?.strategy === "interleaved" &&
+      state.confirm.quietGapAfterWriteMs === 0 &&
+      state.confirm.dueAt === seconds(36)
   );
   state = withQuietGapAfterWrite(state, 3_000);
-  state = afterSetterSent(state, "EDG1", ["HECS"], seconds(13), true);
+  state = afterSetterSent(state, "EDB1", ["HECS"], seconds(31), true);
   check(
-    "knob → 3000: the next write re-arms silence from that write",
-    state.confirm?.strategy === "silent" && state.confirm.dueAt === seconds(16)
+    "knob → 3000: a write merging into the interleaved phase stays interleaved, on its own 6 s",
+    state.confirm?.strategy === "interleaved" && state.confirm.dueAt === seconds(36)
   );
 }
 
@@ -322,13 +380,7 @@ process.exit(fails.length ? 1 : 0);
 
 /** A scheduler that has finished its boot round (with the settings poll), so only GS+PS rounds follow */
 function stateWithQuietGap(quietGapAfterWriteMs: number): SchedulerState {
-  const booted = afterPollRound(initialSchedulerState({ quietGapAfterWriteMs }), {
-    startedAtMs: seconds(98),
-    endedAtMs: seconds(99),
-    includedSettingsPoll: true,
-    hadFailures: false,
-  });
-  return withSettingsReadback(booted, "GPMP", { maximum_feeding_grid_power: OLD_WATTS }, seconds(99));
+  return bootedScheduler({ quietGapAfterWriteMs }, { GPMP: { maximum_feeding_grid_power: OLD_WATTS } });
 }
 
 /**
@@ -343,49 +395,16 @@ function simulateWrite(
   commitAtMs: number | undefined,
   requeueAtMs?: number
 ): SimulationResult {
-  let state = withSetterQueued(initial, NEW_TARGET, "GPMP0", queuedAtMs);
-  let nowMs = queuedAtMs;
-  let requeuePending = requeueAtMs !== undefined;
-  const actions: SimulatedAction[] = [];
-  const confirms: SimulatedConfirm[] = [];
-  while (nowMs < untilMs) {
-    if (requeuePending && requeueAtMs !== undefined && nowMs >= requeueAtMs) {
-      state = withSetterQueued(state, NEW_TARGET, "GPMP0", nowMs);
-      requeuePending = false;
-    }
-    const decision = decideNextAction(state, nowMs, SETTINGS_POLL_INTERVAL_MS);
-    if (decision.action === "wait") {
-      const wakeAt =
-        requeuePending && requeueAtMs !== undefined ? Math.min(decision.untilMs, requeueAtMs) : decision.untilMs;
-      nowMs = Math.min(Math.max(wakeAt, nowMs + 1), untilMs);
-      continue;
-    }
-    actions.push({ action: decision.action, startedAtMs: nowMs });
-    if (decision.action === "drop_setter") {
-      state = withSetterDequeued(state, decision.command);
-    } else if (decision.action === "send_setter") {
-      state = withSetterDequeued(state, decision.command);
-      nowMs += SETTER_DURATION_MS;
-      state = afterSetterSent(state, decision.command, ["GPMP"], nowMs, true);
-    } else if (decision.action === "run_confirms") {
-      nowMs += CONFIRM_QUERY_DURATION_MS * decision.queries.length;
-      const committed = commitAtMs !== undefined && nowMs >= commitAtMs;
-      const fields = { maximum_feeding_grid_power: committed ? NEW_WATTS : OLD_WATTS };
-      const confirmRun = afterConfirmRun(withSettingsReadback(state, "GPMP", fields, nowMs), { GPMP: fields }, nowMs);
-      state = confirmRun.state;
-      confirms.push({ endedAtMs: nowMs, result: confirmRun.result });
-    } else {
-      const roundStartedAt = nowMs;
-      nowMs += POLL_ROUND_DURATION_MS;
-      state = afterPollRound(state, {
-        startedAtMs: roundStartedAt,
-        endedAtMs: nowMs,
-        includedSettingsPoll: decision.includeSettingsPoll,
-        hadFailures: false,
-      });
-    }
-  }
-  return { state, actions, confirms };
+  const registers = registersFor({ GPMP: { maximum_feeding_grid_power: OLD_WATTS } });
+  if (commitAtMs !== undefined) registers[0]!.commits.push({ atMs: commitAtMs, value: NEW_WATTS });
+  const events = [queueSetterAt(queuedAtMs, NEW_TARGET, "GPMP0")];
+  if (requeueAtMs !== undefined) events.push(queueSetterAt(requeueAtMs, NEW_TARGET, "GPMP0"));
+  const { state, steps } = simulatePump({ initial, registers, events, fromMs: queuedAtMs, untilMs });
+  return {
+    state,
+    actions: steps.map(step => ({ action: step.action, startedAtMs: step.startedAtMs })),
+    confirms: confirmRunsIn(steps).map(run => ({ endedAtMs: run.endedAtMs, result: run.result })),
+  };
 }
 
 function actionStarts(actions: readonly SimulatedAction[], action: SimulatedAction["action"]): number[] {

@@ -10,7 +10,7 @@
  */
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type { ConfirmOutcome, ConfirmPhase, PendingReadbackCheck } from "./schedulerCore.ts";
-import type { ConfirmStrategy } from "./schedulerTiming.ts";
+import { QUIET_GAP_AFTER_WRITE_MS, type ConfirmStrategy } from "./schedulerTiming.ts";
 
 /** Cumulative line traffic, sampled at the ACK and again at the verdict */
 export type LineTraffic = { pollRoundsCompleted: number; framesWritten: number };
@@ -101,9 +101,22 @@ export function reportConfirmOutcome(
       "— leaving any re-send to the owning control loop (rate-limited by the 60 s identical-setter gate)"
     );
   }
+  const neverApplied = commandsOf(gaveUpChecks);
+  if (outcome.starvationFallback) {
+    errorLog(
+      "Inverter quiet gap 0 auto-reverted:",
+      `${[...neverApplied].join(", ")} starved while GS/PS polling continued`,
+      `— later writes use the ${outcome.starvationFallback.quietGapAfterWriteMs} ms quiet gap until`,
+      `usb_parameter_setting.quiet_gap_after_write_ms changes. Set it back to ${QUIET_GAP_AFTER_WRITE_MS} (#52).`
+    );
+  }
   const stillPending = commandsOf(retry?.pendingChecks ?? []);
-  if (retry) {
-    const stillOldCommands = [...stillPending].join(", ");
+  // A check written too recently to judge was not seen "still old" — it only waits
+  const seenStillOld = commandsOf(
+    (retry?.pendingChecks ?? []).filter(check => !outcome.notYetJudgedChecks.includes(check))
+  );
+  if (retry && seenStillOld.size) {
+    const stillOldCommands = [...seenStillOld].join(", ");
     if (strategy === "silent") {
       warnLog("Inverter write(s) not visible in readback yet — re-checking after quiet backoff:", stillOldCommands);
     } else {
@@ -116,7 +129,6 @@ export function reportConfirmOutcome(
     }
   }
 
-  const neverApplied = commandsOf(gaveUpChecks);
   const confirmed = [...commandsOf(confirmedChecks)].filter(
     command => !neverApplied.has(command) && !stillPending.has(command)
   );
@@ -127,7 +139,7 @@ export function reportConfirmOutcome(
   const records = verdicts.flatMap(({ command, verdict }) =>
     reportTrackedVerdict(tracker, command, verdict, nowMs, traffic)
   );
-  for (const command of stillPending) {
+  for (const command of seenStillOld) {
     const tracked = tracker.get(command);
     if (tracked) {
       tracker.set(command, { ...tracked, readbacksStillOld: tracked.readbacksStillOld + 1, lastStillOldAtMs: nowMs });
