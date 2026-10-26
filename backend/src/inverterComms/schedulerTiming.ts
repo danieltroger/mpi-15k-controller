@@ -78,7 +78,7 @@ export const STALE_HOLD_LAPSE_MARGIN_MS = 10_000;
  * ambiguity was found at. Slower ones (July 2026: one landed 42 s into a quiet period) can make a
  * burst's verdict wrong either way: a false "confirmed" when the window takes both writes as landed,
  * or a false give-up. So nothing that can lose a write relies on this window: the satisfied drop
- * uses DROP_TRUST_COMMIT_WINDOW_MS.
+ * uses DROP_TRUST_COMMIT_WINDOW_MS, and so does the buy-window step-down's proof of its cap (#65).
  */
 export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
 /**
@@ -89,6 +89,14 @@ export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
  * Residual risk: an A→B→A whose commits take longer than this.
  */
 export const DROP_TRUST_COMMIT_WINDOW_MS = 3 * WRITE_COMMIT_WINDOW_MS;
+
+/**
+ * A consumer's settings readback request (settingsReadbackRequests.ts) makes every poll round a settings
+ * round until its query decodes, for at most this long: past the longest stretch a silent confirm phase
+ * holds polling off (a 15 s gap, its confirm, the 30 s backoff and the re-check), so silence can't use it
+ * up, yet bounded, so a query that keeps failing doesn't slow GS/PS for good.
+ */
+export const SETTINGS_READBACK_REQUEST_LIFETIME_MS = 60_000;
 
 /**
  * Gap between the END of one background GS+PS round and the start of the next: rounds run

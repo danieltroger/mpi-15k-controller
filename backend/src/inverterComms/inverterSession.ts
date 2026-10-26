@@ -42,12 +42,14 @@ import {
   decideNextAction,
   hasEligibleSetter,
   initialSchedulerState,
+  withSettingsReadbackRequested,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
   type SchedulerState,
 } from "./schedulerCore.ts";
 import type { SchedulerTiming } from "./schedulerTiming.ts";
+import { type FieldWrite, unprovenWritesIn } from "./fieldWriteChains.ts";
 import { quietGapFromConfig, schedulerWithQuietGapSetting } from "./quietGapSetting.ts";
 import {
   reportAckedSetter,
@@ -163,13 +165,24 @@ export function createInverterSession({
     requestStatusQueries: (queries: readonly InverterStatusQuery[]) => {
       state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
     },
+    /**
+     * Read GPMP + HECS + BATS on the next poll rounds (after any silent confirm phase) until `query` has
+     * decoded, ahead of poll_values_interval_seconds, for at most SETTINGS_READBACK_REQUEST_LIFETIME_MS —
+     * for a consumer whose proof waits on a readback nothing else will take. Nothing here bounds how often
+     * it is called: each call slows GS/PS by a settings round or more, so callers must bound their asking.
+     */
+    requestSettingsReadback: (query: SettingsQueryCommandName) => {
+      state.scheduler = withSettingsReadbackRequested(state.scheduler, query, performance.now());
+    },
     /** When the last control write went out — the signal behind the quiet-gap poll suppression */
     lastWriteAt,
     /**
-     * Read-only, not reactive: when each command string last went out (exchange done), on the monotonic
-     * clock — for a consumer that must know whether one of its writes could still be committing
+     * Read-only, not reactive: the writes to one readback field that no readback has proven landed yet,
+     * oldest first, sent on the monotonic clock. The satisfied drop's chains (DROP_TRUST_COMMIT_WINDOW_MS),
+     * not the confirm's: they are for a consumer that must not act on a readback one of them can overturn.
      */
-    lastSentAtMsByCommand: (): Readonly<Record<string, number>> => state.scheduler.lastSentAtByCommand,
+    unprovenWrites: (query: SettingsQueryCommandName, field: string): readonly FieldWrite[] =>
+      unprovenWritesIn(state.scheduler.dropTrustChains, query, field),
     /** Read-only, not reactive: when that settings query was last decoded (same clock), undefined if never */
     settingsReadbackAtMs: (query: SettingsQueryCommandName): number | undefined =>
       state.scheduler.latestSettingsReadbacks[query]?.decodedAtMs,

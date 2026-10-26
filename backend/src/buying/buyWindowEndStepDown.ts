@@ -1,8 +1,9 @@
 /**
  * Pure state machine for ending a buy window in two steps instead of one: first cap AC charging at
  * the idle limit (MUCHGC0100), and only once that has taken effect allow EDB0. No I/O, no timers, no
- * solid-js — the reactive graph around it is buyingSetterWiring.ts; the released phase (EDB0 retries)
- * is buyWindowEndRelease.ts.
+ * solid-js — the reactive graph around it is buyingSetterWiring.ts. What counts as proof (the hall,
+ * BATS and #62's write chains) is buyWindowEndEvidence.ts, what it asks the session for while it waits
+ * is buyWindowEndAsks.ts, the released phase (EDB0 retries) is buyWindowEndRelease.ts.
  *
  * Why: the inverter latched fault 14 ("Inverter DC current exceed permit range when feed power") at
  * 3 of 211 one-step ends of a heavy grid charge, all three at night (2025-01-08, 2025-10-30, 2026-10-21,
@@ -13,13 +14,19 @@
  * Every time here is one monotonic clock (performance.now() ms in production, the same clock the
  * inverter session records its sends on).
  */
+import { nextAlternateCapRequests, nextLimitReassertions, nextReadbackRequests } from "./buyWindowEndAsks.ts";
+import {
+  allowedHallAmps,
+  enableMayLand,
+  higherLimitMayLand,
+  IDLE_AC_CHARGING_LIMIT_AMPS,
+  limitEvidenceOf,
+  SETTLED_FOR_MS,
+} from "./buyWindowEndEvidence.ts";
 import { releasedAt, whileReleased } from "./buyWindowEndRelease.ts";
 import type {
-  AcChargingLimitReadback,
-  AcChargingReading,
   BuyWindowEndInputs,
   BuyWindowEndStepDownState,
-  LimitEvidence,
   StepDownEvent,
   StepDownProgress,
   SteppingDown,
@@ -37,40 +44,10 @@ export type {
 } from "./buyWindowEndStepDown.types.ts";
 
 /**
- * The AC charging limit the inverter holds whenever it isn't buying (MUCHGC0100), in case it glitches
- * and charges from the grid although AC charging is disabled — and the first step of every window end.
- */
-export const IDLE_AC_CHARGING_LIMIT_AMPS = 10;
-/**
- * How far above the idle limit (plus whatever PV can add) the hall current may sit and still count as
- * "the cap is in effect". Measured at small AC charging limits (Influx, 2025-11 → 2026-04, the hall
- * sensor 2 at 4 Hz): hall − (limit + PV watts / battery volts) has a night median of +0.5 A (p95 +2.7 A)
- * and a daytime p95 of +8.4 A, with excursions to ~+15 A while PV ramps (the GS PV reading lags the
- * hall). With 20 A the condition held for 3 s within ≤ 8.8 s from every start point of every such
- * stretch; 0 A left 3 657 start points never satisfied. 30 A at night is still an ~8× smaller step
- * than the 240–284 A of the three F14 window ends.
- */
-export const HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS = 20;
-/**
- * The hall current must stay within the allowance this long. Across 130 committed in-window MUCHGC
- * step-downs (AC charging staying on) the current fell in one go — 10–90 % in a median 0.5 s, p90
- * 0.75 s — and was within max(5 A, 5 %) of its new level after a median 0.5 s, p90 1.25 s, with brief
- * ringing (e.g. 287 → 6 → 39 → 22 A over ~1.5 s with 1.6 kW PV, 2026-04-03).
- */
-export const SETTLED_FOR_MS = 3_000;
-/**
- * A write can still commit up to this long after it went out: setters apply on the inverter's
- * housekeeping cycle, ~6 s after the write under light traffic (schedulerCore.ts) — 12 s is #48's own
- * point for trusting a confirm, and #62's keep threshold for gap 0. Measured from the session's record
- * of the send, so it holds whatever the quiet-gap mode: a readback inside it may predate the write's
- * commit, so the step-down only lets the hall vouch for the cap once this has passed.
- */
-export const READBACK_COMMIT_MARGIN_MS = 12_000;
-/**
- * Give up waiting and send EDB0 anyway. Normal step-downs take ~12.5 s (#48: the confirm after the
- * 12 s quiet gap; #62's gap 0: the last higher-limit send + 12 s + the 3 s settle at most). 120 s also
- * covers a confirm that gave up: the one re-asserted MUCHGC0100 goes out 60 s after the first send (the
- * identical-setter gate) and confirms ~12 s later.
+ * Give up waiting and send EDB0 anyway. Normal step-downs take ~12.5 s (the confirm after the 12 s
+ * quiet gap; at gap 0 the first interleaved re-check showing the cap, ~6.5 s, plus the 3 s settle).
+ * 120 s also covers a confirm that gave up: the one re-asserted MUCHGC0100 goes out 60 s after the first
+ * send (the identical-setter gate) and confirms ~12 s later.
  */
 export const STEP_DOWN_TIMEOUT_MS = 120_000;
 /**
@@ -83,20 +60,6 @@ export const STEP_DOWN_TIMEOUT_MS = 120_000;
  * per hard stop of a latched inverter.
  */
 export const STEP_DOWN_EXTENSION_MS = 60_000;
-/**
- * The extension re-asserts the cap one step lower, as MUCHGC0090: a stale 10 A readback can't satisfy
- * it, so the session sends it at once instead of dropping it as already applied (the ABA of a readback
- * "confirming" a still-committing write), the identical-setter gate of MUCHGC0100 doesn't hold it, and
- * at or below the idle cap it doesn't move the commit horizon. The inverter then idles at 9 A instead
- * of 10 A until the next window, the same guard.
- */
-export const ALTERNATE_CAP_AMPS = 9;
-/**
- * MUCHGC0100 is re-queued once when a BATS readback during the step-down still shows a higher limit:
- * #48 leaves re-sending a write whose confirm gave up to its owner. Bounded, so that a cap the inverter
- * never applies costs a send or two, never a loop.
- */
-export const MAX_LIMIT_REASSERTIONS = 1;
 
 export function stepBuyWindowEndStepDown(
   state: BuyWindowEndStepDownState,
@@ -127,39 +90,20 @@ export function acChargingLimitReassertions(state: BuyWindowEndStepDownState): n
   return state.progress.phase === "stepping_down" ? state.progress.limitReassertions : 0;
 }
 
-/** 1 once an extended hold wants the alternate cap (ALTERNATE_CAP_AMPS) queued, else 0 */
+/** Grows by one each time the step-down wants the alternate cap (ALTERNATE_CAP_AMPS) queued (at most twice) */
 export function alternateCapRequests(state: BuyWindowEndStepDownState): number {
-  return state.progress.phase === "stepping_down" && state.progress.extended ? 1 : 0;
+  return state.progress.phase === "stepping_down" ? state.progress.alternateCapRequests : 0;
+}
+
+/** Grows by one each time the step-down wants the session to read the settings again (buyWindowEndAsks.ts) */
+export function settingsReadbackRequests(state: BuyWindowEndStepDownState): number {
+  return state.progress.phase === "stepping_down" ? state.progress.readbackRequests : 0;
 }
 
 /** The MUCHGC target: the window's amperage while buying, the idle cap otherwise */
 export function wantedAcChargingLimitAmps(shouldBuy: boolean, chargingAmperageForBuying: number | undefined): number {
   if (!shouldBuy) return IDLE_AC_CHARGING_LIMIT_AMPS;
   return chargingAmperageForBuying ?? IDLE_AC_CHARGING_LIMIT_AMPS;
-}
-
-/**
- * Battery charging can only come from the AC charger and PV, so with the cap in effect the hall can't
- * exceed cap + PV/V (PV/V overstates PV's share: MPPT losses, and PV also feeds the house). Grid import
- * minus house load is deliberately not used: PV feeding the house directly makes it meaningless.
- */
-export function allowedHallAmps(inputs: Pick<BuyWindowEndInputs, "solarWatts" | "batteryVoltage">): number {
-  const solarAmps =
-    inputs.solarWatts && inputs.batteryVoltage ? Math.max(0, inputs.solarWatts) / inputs.batteryVoltage : 0;
-  return IDLE_AC_CHARGING_LIMIT_AMPS + HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS + solarAmps;
-}
-
-/** When the session last sent a MUCHGC above the idle cap (undefined: never) — a scan, so only while stepping down */
-export function lastAboveIdleLimitSentAtMs(sentAtMsByCommand: Readonly<Record<string, number>>): number | undefined {
-  let latestSentAtMs: number | undefined;
-  for (const command in sentAtMsByCommand) {
-    if (!command.startsWith("MUCHGC")) continue;
-    const sentAtMs = sentAtMsByCommand[command];
-    const limitAmps = Number(command.slice("MUCHGC".length)) / 10;
-    if (sentAtMs === undefined || !(limitAmps > IDLE_AC_CHARGING_LIMIT_AMPS)) continue;
-    latestSentAtMs = Math.max(latestSentAtMs ?? -Infinity, sentAtMs);
-  }
-  return latestSentAtMs;
 }
 
 function fromIdle(inputs: BuyWindowEndInputs, nowMs: number, events: StepDownEvent[]): StepDownProgress {
@@ -176,6 +120,9 @@ function fromIdle(inputs: BuyWindowEndInputs, nowMs: number, events: StepDownEve
     hallSettledSinceMs: undefined,
     lastLimitReadbackAtMs: inputs.limitReadback?.observedAtMs,
     limitReassertions: 0,
+    alternateCapRequests: 0,
+    readbackRequests: 0,
+    lastReadbackRequestAtMs: undefined,
     deadlineMs: nowMs + STEP_DOWN_TIMEOUT_MS,
     extended: false,
   };
@@ -185,17 +132,12 @@ function fromIdle(inputs: BuyWindowEndInputs, nowMs: number, events: StepDownEve
 
 /**
  * HECS says "enabled" with no window wanting it — a window just ended (or was shrunk/deleted), or the
- * controller restarted mid-step-down or after a window ended while it was down — or its "disabled" may
- * predate an EDB1 still committing: a window that ends a few seconds after it started (the charge
- * reaches 260–290 A ~3 s after EDB1 commits).
+ * controller restarted mid-step-down or after a window ended while it was down — or an EDB1 may still
+ * switch it on whatever HECS shows: a window that ends a few seconds after it started (the charge reaches
+ * 260–290 A ~3 s after EDB1 commits).
  */
 function acChargingMayBeOn(inputs: BuyWindowEndInputs): boolean {
-  const reading = inputs.acChargingReadback;
-  if (reading?.state === "enabled") return true;
-  const lastEnableSentAtMs = inputs.sentAtMsByCommand["EDB1"];
-  // Never switched on through this session: an unknown or "disabled" HECS stands
-  if (lastEnableSentAtMs === undefined) return false;
-  return !observedAfterCommitOf(reading, lastEnableSentAtMs);
+  return inputs.acChargingReadback?.state === "enabled" || enableMayLand(inputs.unprovenAcChargingWrites);
 }
 
 function whileSteppingDown(
@@ -210,16 +152,13 @@ function whileSteppingDown(
     events.push({ kind: "cancelled", afterMs, reason: "grid charging wanted again" });
     return { phase: "idle" };
   }
-  const acCharging = inputs.acChargingReadback;
-  if (acCharging?.state === "disabled" && observedAfterCommitOf(acCharging, inputs.sentAtMsByCommand["EDB1"])) {
+  if (inputs.acChargingReadback?.state === "disabled" && !enableMayLand(inputs.unprovenAcChargingWrites)) {
     events.push({ kind: "cancelled", afterMs, reason: "AC charging already disabled" });
     return { phase: "idle" };
   }
 
-  const lastHigherLimitSentAtMs = lastAboveIdleLimitSentAtMs(inputs.sentAtMsByCommand);
-  const limitReassertions = nextLimitReassertions(progress, inputs.limitReadback, afterMs, events);
-  // Re-judged every step (not latched): only the latest readback says what the inverter holds now
-  const limitEvidence = limitEvidenceOf(inputs.limitReadback, lastHigherLimitSentAtMs);
+  // Re-judged every step (not latched): only the latest readback and chain say what the inverter holds now
+  const limitEvidence = limitEvidenceOf(inputs.limitReadback, inputs.unprovenLimitWrites);
   const capReadback = limitEvidence === "shows_cap" ? inputs.limitReadback : undefined;
   const limitConfirmedAtMs = capReadback ? progress.limitConfirmedAtMs ?? nowMs : undefined;
   const allowedAmps = allowedHallAmps(inputs);
@@ -235,34 +174,25 @@ function whileSteppingDown(
   const hallBatteryAmps = inputs.hallBatteryAmps;
   const hallWithinAllowance = hallBatteryAmps !== undefined && hallBatteryAmps <= allowedAmps;
   const hallSettledSinceMs = hallWithinAllowance ? progress.hallSettledSinceMs ?? nowMs : undefined;
-  // Until then a higher-limit write may still commit, so a low hall (and a 10 A readback) don't prove much
-  const commitHorizonMs = (lastHigherLimitSentAtMs ?? -Infinity) + READBACK_COMMIT_MARGIN_MS;
+  const hallSettledForMs = hallSettledSinceMs === undefined ? undefined : nowMs - hallSettledSinceMs;
 
   if (capReadback && limitConfirmedAtMs !== undefined) {
     const limitConfirmedAfterMs = limitConfirmedAtMs - progress.startedAtMs;
-    // The hall has to stay low for the settle time past the horizon: a write that commits by then shows
-    // up as current within ~1 s — if the pack takes it; if it doesn't, EDB0 stops no current either
-    if (
-      hallBatteryAmps !== undefined &&
-      hallSettledSinceMs !== undefined &&
-      nowMs - Math.max(hallSettledSinceMs, commitHorizonMs) >= SETTLED_FOR_MS
-    ) {
+    // The cap is proven in BATS; the hall has to show it in effect, through the ringing after its commit.
+    // A pack that takes little current anyway passes too: EDB0 then stops little current either.
+    if (hallBatteryAmps !== undefined && hallSettledForMs !== undefined && hallSettledForMs >= SETTLED_FOR_MS) {
       events.push({
         kind: "released",
         afterMs,
         limitConfirmedAfterMs,
         hallBatteryAmps,
         allowedHallAmps: allowedAmps,
-        hallSettledForMs: nowMs - hallSettledSinceMs,
+        hallSettledForMs,
       });
       return releasedAt(progress.startedAtMs, nowMs);
     }
-    // current_measuring disabled or erroring: only a readback beyond the horizon can vouch for the cap
-    if (
-      hallBatteryAmps === undefined &&
-      capReadback.observedAtMs > commitHorizonMs &&
-      nowMs - limitConfirmedAtMs >= SETTLED_FOR_MS
-    ) {
+    // current_measuring disabled or erroring: the proven readback alone vouches for the cap
+    if (hallBatteryAmps === undefined && nowMs - limitConfirmedAtMs >= SETTLED_FOR_MS) {
       events.push({ kind: "released_without_hall", afterMs, limitConfirmedAfterMs });
       return releasedAt(progress.startedAtMs, nowMs);
     }
@@ -272,7 +202,9 @@ function whileSteppingDown(
     limitConfirmedAtMs,
     hallSettledSinceMs,
     lastLimitReadbackAtMs: inputs.limitReadback?.observedAtMs,
-    limitReassertions,
+    limitReassertions: nextLimitReassertions(progress, inputs.limitReadback, nowMs, events),
+    alternateCapRequests: nextAlternateCapRequests(progress, inputs, nowMs, events),
+    ...nextReadbackRequests(progress, inputs, { limitEvidence, hallSettledForMs }, nowMs, events),
   };
   if (nowMs < progress.deadlineMs) return next;
   const hallAboveAllowance = hallBatteryAmps !== undefined && hallBatteryAmps > allowedAmps;
@@ -286,7 +218,12 @@ function whileSteppingDown(
       limitReadback: inputs.limitReadback,
       limitEvidence,
     });
-    return { ...next, deadlineMs: nowMs + STEP_DOWN_EXTENSION_MS, extended: true };
+    return {
+      ...next,
+      deadlineMs: nowMs + STEP_DOWN_EXTENSION_MS,
+      extended: true,
+      alternateCapRequests: next.alternateCapRequests + 1,
+    };
   }
   events.push({
     kind: "timed_out",
@@ -296,44 +233,8 @@ function whileSteppingDown(
     hallBatteryAmps,
     allowedHallAmps: allowedAmps,
     hallAboveAllowance,
+    hallSettledForMs,
+    higherLimitMayLand: higherLimitMayLand(inputs.unprovenLimitWrites),
   });
   return releasedAt(progress.startedAtMs, nowMs);
-}
-
-/** A new BATS readback during the step-down that still shows a higher limit re-asserts the cap (bounded) */
-function nextLimitReassertions(
-  progress: SteppingDown,
-  readback: AcChargingLimitReadback | undefined,
-  afterMs: number,
-  events: StepDownEvent[]
-): number {
-  const isNewReadback = readback !== undefined && readback.observedAtMs !== progress.lastLimitReadbackAtMs;
-  if (!isNewReadback || readback.amps <= IDLE_AC_CHARGING_LIMIT_AMPS) return progress.limitReassertions;
-  // Not during an extension: a queued MUCHGC0100 would replace the alternate cap in the session queue. Nor
-  // on the deadline's own step, which extends (sending the alternate cap) or sends EDB0 — `extended` is
-  // still false there, and both caps would be queued in one tick with MUCHGC0100 last
-  const atOrPastDeadline = progress.startedAtMs + afterMs >= progress.deadlineMs;
-  if (progress.extended || atOrPastDeadline || progress.limitReassertions >= MAX_LIMIT_REASSERTIONS) {
-    return progress.limitReassertions;
-  }
-  events.push({ kind: "limit_reasserted", afterMs, limitReadbackAmps: readback.amps });
-  return progress.limitReassertions + 1;
-}
-
-function limitEvidenceOf(
-  readback: AcChargingLimitReadback | undefined,
-  lastAboveIdleLimitSentAtMs: number | undefined
-): LimitEvidence {
-  if (!readback) return "none";
-  if (readback.amps > IDLE_AC_CHARGING_LIMIT_AMPS) return "shows_higher_limit";
-  if (lastAboveIdleLimitSentAtMs !== undefined && readback.observedAtMs <= lastAboveIdleLimitSentAtMs) {
-    return "predates_last_higher_limit_write";
-  }
-  return "shows_cap";
-}
-
-/** Observed more than READBACK_COMMIT_MARGIN_MS after `sentAtMs` (or there was no such send) */
-function observedAfterCommitOf(reading: { observedAtMs: number } | undefined, sentAtMs: number | undefined): boolean {
-  if (!reading) return false;
-  return sentAtMs === undefined || reading.observedAtMs > sentAtMs + READBACK_COMMIT_MARGIN_MS;
 }

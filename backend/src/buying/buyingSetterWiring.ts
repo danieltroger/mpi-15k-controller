@@ -1,19 +1,24 @@
 import { type Accessor, createEffect, createMemo, untrack } from "solid-js";
 import type { DecodedRound, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem, UsbValues } from "../inverterComms/inverterComms.types.ts";
+import type { FieldWrite } from "../inverterComms/fieldWriteChains.ts";
 import {
   acChargingLimitReassertions,
-  ALTERNATE_CAP_AMPS,
   alternateCapRequests,
   type BuyWindowEndStepDownState,
   holdsAcChargingOn,
-  IDLE_AC_CHARGING_LIMIT_AMPS,
   initialBuyWindowEndStepDownState,
+  settingsReadbackRequests,
   stepBuyWindowEndStepDown,
   wantedAcChargingLimitAmps,
 } from "./buyWindowEndStepDown.ts";
+import { ALTERNATE_CAP_AMPS, IDLE_AC_CHARGING_LIMIT_AMPS } from "./buyWindowEndEvidence.ts";
 import { edb0RetryRequests } from "./buyWindowEndRelease.ts";
-import { createAcChargingReadbacks } from "./acChargingReadbacks.ts";
+import {
+  BATS_AC_CHARGING_LIMIT_FIELD,
+  createAcChargingReadbacks,
+  HECS_AC_CHARGING_FIELD,
+} from "./acChargingReadbacks.ts";
 import { logStepDownEvent } from "./buyWindowEndStepDownLog.ts";
 import { warnLog } from "../utilities/logging.ts";
 
@@ -32,8 +37,10 @@ export type BuyingSetterEnvironment = {
   solarWatts: Accessor<number | undefined>;
   batteryVoltage: Accessor<number | undefined>;
   queueSetter: (item: SetterQueueItem) => void;
-  /** The session's record of when each command string last went out, on the monotonic clock */
-  lastSentAtMsByCommand: () => Readonly<Record<string, number>>;
+  /** The session's writes to a readback field no readback has proven landed yet, sent on the monotonic clock */
+  unprovenWrites: (query: SettingsQueryCommandName, field: string) => readonly FieldWrite[];
+  /** Asks the session to read the settings queries until `query` has decoded (bounded by the caller) */
+  requestSettingsReadback: (query: SettingsQueryCommandName) => void;
   /** When the session last decoded a settings query, on the same clock */
   settingsReadbackAtMs: (query: SettingsQueryCommandName) => number | undefined;
   /** Changes at least every few seconds (useNow), so time-based transitions fire without sensor updates */
@@ -70,8 +77,9 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
       previous,
       {
         gridChargingWanted: !!chargingAmperageForBuying(),
-        // Not reactive, and the session's own object (no copy): read afresh on every evaluation
-        sentAtMsByCommand: environment.lastSentAtMsByCommand(),
+        // Not reactive (a send changes them): read afresh on every evaluation, at least at the hall's 4 Hz
+        unprovenLimitWrites: environment.unprovenWrites("BATS", BATS_AC_CHARGING_LIMIT_FIELD),
+        unprovenAcChargingWrites: environment.unprovenWrites("HECS", HECS_AC_CHARGING_FIELD),
         acChargingReadback: acChargingReading(),
         limitReadback: acChargingLimitReadback(),
         hallBatteryAmps: freshHallAmps(environment.batteryCurrentAmps(), environment.wallClockNowMs()),
@@ -87,6 +95,7 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   const limitReassertions = createMemo(() => acChargingLimitReassertions(stepDownState()));
   const alternateCaps = createMemo(() => alternateCapRequests(stepDownState()));
   const edb0Retries = createMemo(() => edb0RetryRequests(stepDownState()));
+  const readbackRequests = createMemo(() => settingsReadbackRequests(stepDownState()));
 
   createEffect(() => {
     // Desired state, queued even when the readback already matches: replacesPrefix "EDB" drops any
@@ -122,6 +131,11 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
     const retries = edb0Retries();
     if (retries > previousRetries) queueAcChargingSwitch(queueSetter, "EDB0");
     return retries;
+  }, 0);
+  createEffect<number>(previousRequests => {
+    const requests = readbackRequests();
+    if (requests > previousRequests) environment.requestSettingsReadback("BATS");
+    return requests;
   }, 0);
 
   return { currentlyBuying, holdsAcChargingOn: holdsAcCharging, stepDownState };

@@ -6,10 +6,10 @@ import type { AcChargingLimitReadback, AcChargingReading } from "./buyWindowEndS
 
 /**
  * "Max. AC charging current" as decoded from BATS — verbatim mpp-solar naming via influxFieldName, the
- * same key the session's MUCHGC confirm (setterConfirmation.ts) checks.
+ * same key the session's MUCHGC confirm and write chains (setterConfirmation.ts) use.
  */
-const BATS_AC_CHARGING_LIMIT_FIELD = "max._ac_charging_current";
-const HECS_AC_CHARGING_FIELD = "ac_charge_battery";
+export const BATS_AC_CHARGING_LIMIT_FIELD = "max._ac_charging_current";
+export const HECS_AC_CHARGING_FIELD = "ac_charge_battery";
 
 /**
  * The BATS AC charging limit and the HECS "AC charge battery" flag, each stamped with when it was
