@@ -119,7 +119,8 @@ export function prematureFloatBugWorkaround({
   const retryInterval = setInterval(
     () => {
       // The inverter ACKs MCHGV immediately but commits it only seconds later, and the session's
-      // confirm sequence (12 s quiet gap + one 30 s backoff re-check) may still be in flight — a
+      // confirm sequence (by default a 12 s quiet gap + one 30 s backoff re-check; with the quiet
+      // gap at 0, re-checks every 4 s for up to 55 s) may still be in flight — a
       // tick landing in that window would see stale values and re-send a write that already
       // succeeded, so skip while a recent write's confirmation may still be pending.
       if (+new Date() - lastVoltageSetAt < 90_000) return;
@@ -245,7 +246,7 @@ function queueChargeVoltagesCommand(targetVoltage: number, queueSetter: (item: S
     replacesPrefix: "MCHGV",
     // Confirm via BATS readback, which feeds localStateOfConfiguredVoltage*. The session runs it
     // after the post-write quiet gap the inverter's delayed commit requires (ACK ≠ applied — see
-    // inverterComms/schedulerCore.ts for the measured behaviour).
+    // inverterComms/schedulerTiming.ts for the measured behaviour).
     refreshAfterSend: ["BATS"],
     onResult: ({ acknowledged }) => {
       // The session classifies the raw ^1/^0 frame — no CLI stdout parsing anymore. NAKs and

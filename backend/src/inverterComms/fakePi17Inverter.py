@@ -23,10 +23,18 @@ Like the real firmware, every CRC byte that would be 0x0A/0x0D/0x28 is sent as t
 live at the second cutover attempt, 2026-10-25; 0x00 is not bumped), so ~2.3 % of all frames
 exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC theirs.
 
+Commit behaviour for the quiet-gap experiment harness (quietGapExperiment.pty.selftest.ts), the
+two readings of the July 2026 evidence:
+  --commit-delay-s S        every write commits S seconds after it arrives, whatever the traffic
+  --commit-needs-quiet-s Q  a write commits only once no command has arrived for Q seconds, so
+                            continuous polling starves it forever
+  --no-faults               skip the fault plan above
+
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
 JSON lines; the harness closing our stdin ends the run.
 """
+import argparse
 import json
 import os
 import select
@@ -91,8 +99,11 @@ def emit(event, **fields):
 
 
 class FakeInverter:
-    def __init__(self, master_fd):
+    def __init__(self, master_fd, commit_delay_s, commit_needs_quiet_s, with_faults):
         self.master_fd = master_fd
+        self.commit_delay_s = commit_delay_s
+        self.commit_needs_quiet_s = commit_needs_quiet_s
+        self.commits_deferred_by_traffic = 0
         self.serial = 0
         self.counts = {}
         self.setters_seen = 0
@@ -107,7 +118,8 @@ class FakeInverter:
         self.last_tx_byte_at = time.monotonic()
         self.overlaps = 0
         self.next_command_follows_anomaly = False
-        self.faults_remaining = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13", "edf_late"}
+        all_faults = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13", "edf_late"}
+        self.faults_remaining = all_faults if with_faults else set()
 
     # ---------- frames ----------
     def next_serial(self):
@@ -225,6 +237,13 @@ class FakeInverter:
             follows_anomaly=self.next_command_follows_anomaly,
         )
         self.next_command_follows_anomaly = False
+        if self.commit_needs_quiet_s and self.pending_commits:
+            # Any traffic restarts the quiet period a starved commit is waiting for
+            self.commits_deferred_by_traffic += len(self.pending_commits)
+            self.pending_commits = [
+                (max(apply_at, now + self.commit_needs_quiet_s), description, apply_fn)
+                for apply_at, description, apply_fn in self.pending_commits
+            ]
         if text.startswith("^S"):
             self.handle_setter(text[5:])
         elif text.startswith("^P"):
@@ -309,7 +328,7 @@ class FakeInverter:
         self.schedule_commit(command)
 
     def schedule_commit(self, command):
-        apply_at = time.monotonic() + COMMIT_DELAY_S
+        apply_at = time.monotonic() + max(self.commit_delay_s, self.commit_needs_quiet_s)
         if command.startswith("ED") and len(command) == 4:
             token_index = ord(command[2]) - ord("A") + 1
             value = command[3]
@@ -332,11 +351,16 @@ class FakeInverter:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Fake MPI 15K speaking PI17 on a pty")
+    parser.add_argument("--commit-delay-s", type=float, default=COMMIT_DELAY_S)
+    parser.add_argument("--commit-needs-quiet-s", type=float, default=0.0)
+    parser.add_argument("--no-faults", action="store_true")
+    arguments = parser.parse_args()
     master_fd, slave_fd = os.openpty()
     # Raw + no echo on the slave side so nothing we send is reflected back at us; keeping our own
     # slave fd open also stops master reads from failing with EIO before the session opens it.
     tty.setraw(slave_fd)
-    inverter = FakeInverter(master_fd)
+    inverter = FakeInverter(master_fd, arguments.commit_delay_s, arguments.commit_needs_quiet_s, not arguments.no_faults)
     emit("ready", device=os.ttyname(slave_fd))
     received = b""
     while True:
@@ -344,7 +368,14 @@ def main():
         timeout = 0.05 if wakeup is None else max(0.0, min(0.05, wakeup - time.monotonic()))
         readable, _, _ = select.select([master_fd, sys.stdin], [], [], timeout)
         if sys.stdin in readable and not sys.stdin.buffer.read1(1024):
-            emit("summary", overlaps=inverter.overlaps, counts=inverter.counts, faults_remaining=sorted(inverter.faults_remaining))
+            emit(
+                "summary",
+                overlaps=inverter.overlaps,
+                counts=inverter.counts,
+                faults_remaining=sorted(inverter.faults_remaining),
+                pending_commits=[description for _, description, _ in inverter.pending_commits],
+                commits_deferred_by_traffic=inverter.commits_deferred_by_traffic,
+            )
             return
         if master_fd in readable:
             received += os.read(master_fd, 1024)

@@ -945,7 +945,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["usb_parameter_setting", "min_seconds_between_commands"],
         "Command spacing (unused)",
-        "Retired with the mpp-solar CLI queue — the native serial engine paces itself (quiet gap after every write). Kept only so existing config files load.",
+        "Retired with the mpp-solar CLI queue — the native serial engine paces itself (see the quiet gap below). Kept only so existing config files load.",
         { unit: "s" }
       ),
       f(
@@ -953,6 +953,12 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Settings poll interval",
         "How often the inverter's settings are read back outside of writes.",
         { unit: "s" }
+      ),
+      f(
+        ["usb_parameter_setting", "quiet_gap_after_write_ms"],
+        "Quiet gap after write",
+        "How long the controller stops talking to the inverter after each settings write before reading the setting back. The inverter acknowledges a write at once but applies it seconds later, and in July 2026 non-stop traffic seemed to keep it from applying at all, so the default is 12000 ms of silence (live telemetry pauses meanwhile). 0 is an experiment: telemetry keeps flowing and the setting is read back 6 s after the write and every 4 s after that, with an alert if it hasn't applied after 55 s. If that happens, the controller also goes back to 12000 ms on its own (with a second alert) until this value is changed. Applies from the next write once any write being checked has finished; at most 15000.",
+        { unit: "ms", min: 0, max: 15000, step: 1000 }
       ),
       f(
         ["mqtt_host"],
