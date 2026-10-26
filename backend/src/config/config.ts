@@ -3,7 +3,7 @@ import { batch, createEffect, createSignal, type Owner, runWithOwner, type Signa
 import path from "path";
 import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import type { AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
+import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -17,7 +17,6 @@ export const default_config: Config = {
     pushover_recipient_key: "",
     site_name: "",
     battery_temp_p1_celsius: 45,
-    inverter_temp_p1_celsius: 97,
     cooling_outlet_temp_p2_celsius: 36,
     battery_undervoltage_p2_volts: 46,
     battery_overvoltage_p1_volts: 58.8,
@@ -116,6 +115,9 @@ export const default_config: Config = {
     start_selling_again_above_soc: 25,
     only_sell_above_voltage: 49.8,
     start_selling_again_above_voltage: 52.2,
+    // 3 °C short of the 100 °C fault-57 latch (the threshold the old inverter-temperature P1 used)
+    only_sell_below_inverter_temp_celsius: 97,
+    start_selling_again_below_inverter_temp_celsius: 90,
   },
   scheduled_power_buying: {
     schedule: {
@@ -190,23 +192,42 @@ export const default_config: Config = {
 };
 
 /**
- * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model), elpatron_switching and soc_calculations
- * merge one level deeper: knobs get added over time, and a config.json written before a knob
+ * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model), elpatron_switching,
+ * scheduled_power_selling and soc_calculations merge one level deeper: knobs get added over time, and a config.json written before a knob
  * existed must still pick up its default (the planner, the elpatron load model and the SOC ledger
  * do raw arithmetic on these — a missing knob would silently NaN every projection;
- * a missing alerting threshold would silently never alert).
+ * a missing alerting threshold would silently never alert; a missing inverter-temperature limit
+ * would silently never stop selling).
  * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
  * predating it still boots with the validated defaults. Orphaned keys from the deleted Wh fitter
  * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the
  * spreads copy unknown keys straight through and nothing reads them.
+ * alerting.inverter_temp_p1_celsius is the exception: it reads like the live overheat threshold, and
+ * the config page would render it as an editable do-nothing field. It became
+ * scheduled_power_selling.only_sell_below_inverter_temp_celsius, so it seeds that once (a site that
+ * tuned it keeps its value) and is dropped. It leaves the disk at the first boot: the config writer
+ * sees the merged config differ from the file text and rewrites it ~300 ms in, keeping the old file
+ * as config_pre_*.backup.json.
  */
 export function mergeWithDefaults(partial: Partial<Config>): Config {
+  const { inverter_temp_p1_celsius: retiredInverterTempP1, ...alerting }: AlertingConfig & RetiredAlertingKeys = {
+    ...default_config.alerting,
+    ...partial.alerting,
+  };
   return {
     ...default_config,
     ...partial,
-    alerting: { ...default_config.alerting, ...partial.alerting },
+    alerting,
     automatic_trading: mergeAutomaticTrading(partial.automatic_trading),
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
+    // A stored schedule (even an empty one) replaces the default's sample entry wholesale, as before
+    scheduled_power_selling: {
+      ...default_config.scheduled_power_selling,
+      ...(typeof retiredInverterTempP1 === "number"
+        ? { only_sell_below_inverter_temp_celsius: retiredInverterTempP1 }
+        : {}),
+      ...partial.scheduled_power_selling,
+    },
     soc_calculations: {
       ...default_config.soc_calculations,
       ...partial.soc_calculations,
@@ -221,6 +242,9 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
     },
   };
 }
+
+/** Keys older config.json files may still carry that mergeWithDefaults migrates away */
+type RetiredAlertingKeys = { inverter_temp_p1_celsius?: unknown };
 
 /**
  * solar_model and its per-string specs are nested one more level, so they merge deeper too. Keys

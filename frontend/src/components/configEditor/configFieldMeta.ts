@@ -468,12 +468,6 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         { unit: "°C", heading: "Alarm thresholds" }
       ),
       f(
-        ["alerting", "inverter_temp_p1_celsius"],
-        "Inverter temperature P1",
-        "P1 when the inverter's hottest component reaches this — it hard-shuts-off at 100 °C.",
-        { unit: "°C" }
-      ),
-      f(
         ["alerting", "cooling_outlet_temp_p2_celsius"],
         "Cooling outlet P2",
         "P2 on the hottest cooling outlet — the early ventilation warning. Would have caught the 2025-06-30 shutdown ~80 min ahead.",
@@ -640,6 +634,18 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Resume selling above",
         "Recovery voltage before selling may continue.",
         { unit: "V" }
+      ),
+      f(
+        ["scheduled_power_selling", "only_sell_below_inverter_temp_celsius"],
+        "Stop selling at",
+        "Selling stops the moment the inverter's hottest component reaches this, and a P1 goes out (check the door and ventilation). At 100 °C it shuts down until power-cycled, as on 2025-06-30.",
+        { unit: "°C", heading: "Inverter overheating" }
+      ),
+      f(
+        ["scheduled_power_selling", "start_selling_again_below_inverter_temp_celsius"],
+        "Resume selling below",
+        "…and resumes, with a quiet P3, only once it has cooled under this. The gap keeps it from flapping on and off.",
+        { unit: "°C" }
       ),
     ],
   },

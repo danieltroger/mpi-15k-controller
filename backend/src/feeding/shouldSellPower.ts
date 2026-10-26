@@ -4,9 +4,13 @@ import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFut
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import type { Config } from "../config/config.types.ts";
+import { decideSellExport } from "./sellExportDecision.ts";
+import { useOverheatSellStop } from "./useOverheatSellStop.ts";
+import type { OverheatSellStopSignals } from "./overheatSellStop.ts";
 
 export function shouldSellPower(config: Accessor<Config>) {
   const { clampedSocAh } = useBatteryValuesProvider();
+  const overheatSellStopState = useOverheatSellStop(config);
   const scheduleOutput = createMemo(
     mapArray(
       () => Object.keys(config().scheduled_power_selling.schedule),
@@ -57,40 +61,31 @@ export function shouldSellPower(config: Accessor<Config>) {
 
   let hitLimit = false;
 
-  const exportAmountForSelling = createMemo(() => {
+  const sellDecision = createMemo(() => {
     const soc = clampedSocAh();
     const voltage = reactiveBatteryVoltage();
     if (soc === undefined || voltage === undefined) return;
 
-    const onlySellAboveSoc = config().scheduled_power_selling.only_sell_above_soc;
-    const startSellingAgainAboveSoc = config().scheduled_power_selling.start_selling_again_above_soc;
-    const onlySellAboveVoltage = config().scheduled_power_selling.only_sell_above_voltage;
-    const startSellingAgainAboveVoltage = config().scheduled_power_selling.start_selling_again_above_voltage;
-
-    const socLimitToUse = hitLimit ? startSellingAgainAboveSoc : onlySellAboveSoc;
-    const voltageLimitToUse = hitLimit ? startSellingAgainAboveVoltage : onlySellAboveVoltage;
-
-    // take the maximum value of all schedule items
-    const values = scheduleOutput().map(schedule => schedule()());
-    let result = Math.max(...values);
-    if (Math.abs(result) === Infinity) {
-      result = 0;
-    }
-
-    // Only sell if we're above BOTH soc and voltage limits
-    if (soc > socLimitToUse && voltage > voltageLimitToUse) {
-      hitLimit = false;
-      return result;
-    } else if (result) {
-      // Only allow hitting limit while we're feeding in
-      hitLimit = true;
-    }
-    return 0;
+    const decision = decideSellExport({
+      ...config().scheduled_power_selling,
+      scheduledWattsPerWindow: scheduleOutput().map(schedule => schedule()()),
+      soc,
+      voltage,
+      hitLimit,
+      sellingStoppedForOverheat: overheatSellStopState().sellingStopped,
+    });
+    hitLimit = decision.hitLimit;
+    return decision;
   });
+  // Split into number memos: the decision object is new on every SOC/voltage change, the numbers
+  // only change when the export does — feedWhenNoSolar's command effects must only see the latter
+  const exportAmountForSelling = createMemo(() => sellDecision()?.exportWatts);
+  const withheldSellWatts = createMemo(() => sellDecision()?.withheldForOverheatWatts ?? 0);
 
   createEffect(() =>
     logLog("Feed in due to scheduled power selling wants to feed in", exportAmountForSelling(), "watts")
   );
 
-  return { exportAmountForSelling };
+  const overheatSellStop: OverheatSellStopSignals = { state: overheatSellStopState, withheldSellWatts };
+  return { exportAmountForSelling, overheatSellStop };
 }
