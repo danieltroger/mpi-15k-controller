@@ -211,7 +211,7 @@ check(
   check(
     "the tokens no reading fits are kept verbatim",
     records[0]!.unidentified,
-    "759900010005,66,01070,00000,00014,7599,+0365,000"
+    "759900010005,66,01070,00000,00014,7599,+0365,000,000"
   );
   const notASlot = afterDecodedRound(
     INITIAL_INVERTER_STATUS_TRACKING,
@@ -368,7 +368,7 @@ check(
       { level: "log", text: "Inverter warning flags: none" },
       {
         level: "log",
-        text: "Inverter fault record slot 01: F12 Leakage current exceed permit range (GFCI fault) — at the fault: grid 231.3/229.6/229.8 V at 49.96 Hz, battery 41.0 V, output 229.4/230.0 V at 49.96 Hz, 115/45/138 VA (1 % load), inner 29 °C, component 46 °C; unidentified tokens 759900560005,04,05850,00012,00080,7599,+0309,000",
+        text: "Inverter fault record slot 01: F12 Leakage current exceed permit range (GFCI fault) — at the fault: grid 231.3/229.6/229.8 V at 49.96 Hz, battery 41.0 V, output 229.4/230.0 V at 49.96 Hz, 115/45/138 VA (1 % load), inner 29 °C, component 46 °C; unidentified tokens 759900560005,04,05850,00012,00080,7599,+0309,000,000",
       },
     ]
   );
@@ -574,6 +574,15 @@ check(
     "HFS03",
     "HFS04",
   ]);
+  const batchAfterSlot04: StatusPollPlan = { ...initialStatusPollPlan(), requested: ["HFS05", "HFS06"] };
+  check(
+    "a declined slot is taken as empty and the batch goes on; one unanswered while GS/PS answer abandons it",
+    [
+      afterStatusQueryOutcome(batchAfterSlot04, "HFS04", { kind: "declined" }, 0, true).requested,
+      afterStatusQueryOutcome(batchAfterSlot04, "HFS04", { kind: "unanswered" }, 0, true).requested,
+    ],
+    [["HFS05", "HFS06"], []]
+  );
   const recovered = afterLinkRecovered(plan);
   check(
     "link recovery clears every back-off and asks for MOD, CFS and WS at once",

@@ -40,8 +40,8 @@ const VALUE_FIELD_KEYS: Readonly<Record<keyof InverterFaultRecordValues, string>
   ac_input_voltage_t: "fault_record_ac_input_voltage_t",
   ac_input_frequency: "fault_record_ac_input_frequency",
   battery_voltage: "fault_record_battery_voltage",
-  ac_output_voltage_r: "fault_record_ac_output_voltage_r",
   ac_output_voltage_s: "fault_record_ac_output_voltage_s",
+  ac_output_voltage_t: "fault_record_ac_output_voltage_t",
   ac_output_frequency: "fault_record_ac_output_frequency",
   ac_output_apparent_power_r: "fault_record_ac_output_apparent_power_r",
   ac_output_apparent_power_s: "fault_record_ac_output_apparent_power_s",
@@ -60,6 +60,7 @@ const UNIDENTIFIED_FIELD_KEYS: readonly string[] = [
   "fault_record_unidentified_6",
   "fault_record_unidentified_12",
   "fault_record_unidentified_13",
+  "fault_record_unidentified_23",
   "fault_record_unidentified_24",
 ];
 

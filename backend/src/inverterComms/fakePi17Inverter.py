@@ -25,18 +25,19 @@ exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC the
 
 The status queries answer like this inverter did in October 2026: MOD 05 (Hybrid), CFS 12,00 (the
 latest fault before the incident), WS all clear, and HFS00-08 the nine records it returned on
-2026-10-26 (each naming slot 00 in its own id field); a slot it held no record for would be
-declined with a NAK.
+2026-10-26 (each naming slot 00 in its own id field).
 EDB0 (AC charging off: the end of a buy window) latches fault 14 the way 2026-10-21 did: MOD 04,
 CFS 14,00 (slot 00 again, as the real firmware kept it), battery 0 A and Idle/Idle in GS/PS. The
-latch commits like any other write, on the commit timing below.
+latch commits like any other write, on the commit timing below. Once latched, HFS04 is declined
+with a NAK (unless --no-faults): the real firmware has never declined a slot, but the engine's
+NAK path (declined, the batch goes on, the line goes quiet) must still run once per test run.
 
 Commit behaviour for the quiet-gap experiment harness (quietGapExperiment.pty.selftest.ts), the
 two readings of the July 2026 evidence:
   --commit-delay-s S        every write commits S seconds after it arrives, whatever the traffic
   --commit-needs-quiet-s Q  a write commits only once no command has arrived for Q seconds, so
                             continuous polling starves it forever
-  --no-faults               skip the fault plan above
+  --no-faults               skip the fault plan above and the declined slot
 
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
@@ -76,6 +77,7 @@ CFS_BEFORE_LATCH = "12,00"
 CFS_AFTER_LATCH = "14,00"
 WS_ALL_CLEAR = ",".join(["0"] * 23)
 # What the real inverter returned for HFS00..HFS08 on 2026-10-26: F14, F12, F12, F12, F14, F23, F57, F14, F12
+# (pi17StatusFixtures.ts HFS_BOOT_RECORDS; the e2e checks every decoded slot against those)
 HFS_RECORDS = [
     "00,14,759900010005,66,01070,00000,00014,02371,2354,2350,5000,0544,7599,+0365,2354,2352,5003,0094,00069,00189,00002,042,059,000,000",
     "00,12,759900560005,04,05850,00012,00080,02313,2296,2298,4996,0410,7599,+0309,2294,2300,4996,0115,00045,00138,00001,029,046,000,000",
@@ -87,6 +89,8 @@ HFS_RECORDS = [
     "00,14,759900410005,39,01124,00000,00017,02376,2245,2380,5000,0513,7599,+0378,2251,2365,5013,0095,00375,00189,00004,036,058,000,000",
     "00,12,759900540005,62,06392,00000,00094,02294,2363,2277,4998,0108,7599,+0296,2361,2279,4996,1612,00611,01046,00021,035,051,000,000",
 ]
+# Mid-batch, so the batch must go on past the NAK (inverterSession.pty.selftest.ts checks it)
+SLOT_DECLINED_AFTER_LATCH = 4
 
 
 def crc16_xmodem(data):
@@ -150,6 +154,7 @@ class FakeInverter:
         self.next_command_follows_anomaly = False
         all_faults = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13", "edf_late"}
         self.faults_remaining = all_faults if with_faults else set()
+        self.slot_declined_after_latch = SLOT_DECLINED_AFTER_LATCH if with_faults else None
 
     # ---------- frames ----------
     def next_serial(self):
@@ -197,7 +202,7 @@ class FakeInverter:
         return data_frame(",".join(tokens)), serial
 
     def status_frame(self, command):
-        """MOD/CFS/WS answer with data, HFS0n with slot n's record (None = no record: send a NAK)"""
+        """MOD/CFS/WS answer with data, HFS0n with slot n's record (None = declined: send a NAK)"""
         if command == "MOD":
             return data_frame(MOD_FAULT if self.fault_14_latched else MOD_HYBRID)
         if command == "CFS":
@@ -205,7 +210,9 @@ class FakeInverter:
         if command == "WS":
             return data_frame(WS_ALL_CLEAR)
         slot = int(command[4])
-        return data_frame(HFS_RECORDS[slot]) if slot < len(HFS_RECORDS) else None
+        if self.fault_14_latched and slot == self.slot_declined_after_latch:
+            return None
+        return data_frame(HFS_RECORDS[slot])
 
     def settings_frame(self, command):
         if command == "GPMP":

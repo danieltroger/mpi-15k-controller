@@ -54,7 +54,7 @@ export type InverterFaultRecord = {
   values: InverterFaultRecordValues | undefined;
   /**
    * The tokens no reading fits yet, verbatim and comma-joined: the "time" (7599… on this firmware),
-   * the "work mode" (66, 84, …), tokens 4–6, 12, 13 and 24 (see the HFS table in pi17FieldTables.ts)
+   * the "work mode" (66, 84, …), tokens 4–6, 12, 13, 23 and 24 (see the HFS table in pi17FieldTables.ts)
    */
   unidentified: string;
   time: number;
@@ -74,9 +74,9 @@ export type InverterFaultRecordValues = {
   ac_input_frequency: number;
   /** V */
   battery_voltage: number;
-  /** V; the record has no T phase for the output */
-  ac_output_voltage_r: number;
+  /** V; the record has no R phase for the output */
   ac_output_voltage_s: number;
+  ac_output_voltage_t: number;
   /** Hz */
   ac_output_frequency: number;
   /** VA */

@@ -24,11 +24,13 @@ export const WS_NIGHT_PAYLOAD = "1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1";
 export const WS_DAY_PAYLOAD = "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0";
 /**
  * All nine fault-record slots as the controller read them at its 2026-10-26 06:48 UTC boot (HFS00
- * first). Every record names slot 00 in its own id field. By their snapshots: F14 ×3 (slot 0 the
- * 2026-10-21 latch at 54.4 V, 4 the 2025-10-30 one at 52.9 V, 7 by elimination the 2025-01-08
- * one), F12 ×4 (1–3 trips of the 2024-05 empty-pack episode at 41.0–41.2 V, 8 a record reading
- * 10.8 V), F23 (5, the 2025-04-13 outage overload: grid 0 V, 114 % load) and F57 (6, the
- * 2025-06-30 over-temperature: component 99 °C).
+ * first). Every record names slot 00 in its own id field. Matched against Influx, the flash is a
+ * 9-entry ring in write order that has wrapped once: slots 1–3 are the 2024-05-09 F12 re-trips of
+ * the empty-pack episode (41.0 → 41.1 → 41.2 V as the pack crept up through the latch), 4 the
+ * 2025-01-08 F14, 5 the 2025-04-13 F23 outage overload (grid 0 V, 114 % load), 6 the 2025-06-30
+ * F57 over-temperature (component 99 °C), 7 the 2025-10-30 F14, 8 the 2026-02-25 F12 (10.8 V while
+ * Influx read the battery at 0 V) and 0, the newest, the 2026-10-21 F14 latch. The next fault most
+ * likely overwrites slot 1.
  */
 export const HFS_BOOT_RECORDS: readonly string[] = [
   "00,14,759900010005,66,01070,00000,00014,02371,2354,2350,5000,0544,7599,+0365,2354,2352,5003,0094,00069,00189,00002,042,059,000,000",

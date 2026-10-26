@@ -182,14 +182,16 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
   ],
   // ^P006HFSnn: the fault record in flash slot nn, 25 fixed-width tokens. The 2022 spec's layout
   // doesn't fit this firmware: the layout below is inferred from the nine records read on
-  // 2026-10-26 against the incidents they hold, each reading checked on at least two of them —
-  // the 2026-10-21 F14's grid 237.1 V and 54.4 V match Influx; the 2025-04-13 F23 outage reads grid
-  // 0 V / 0 Hz, output 230.0 V / 50.00 Hz, ~5.7 kVA a phase and 114 % load; the 2025-06-30 F57
-  // reads grid 246–247 V and 80/99 °C; the 2024-05 F12s an empty pack at 41.0–41.2 V. Tokens no
+  // 2026-10-26, matched against the Influx frames of the incidents they hold. Exact matches: the
+  // battery token, 52.3 V in the 2025-04-13 F23 and 51.8 V in the 2025-06-30 F57; that F57's grid
+  // 246.4/246.8 V, 221/247/221 VA, 4 % load and 80/99 °C; the 2026-10-21 F14's grid R 237.1 V and
+  // VA R 94. The output voltages are phases S and T (the record has no R): wherever a record's grid
+  // R differs from S/T they follow grid S/T, and three records match Influx's output S/T. Tokens no
   // reading fits stay verbatim strings ("unidentified"): the "time" reads 7599… and the "work mode"
   // 66, 84 … in all but one record; 4–6 look like PV but read ~110 V at night where Influx had 0 V;
-  // 12 is 7599 in every record; 13 is signed but positive while discharging. The "Fault record"
-  // prefix keeps the names from colliding with the live GS fields (and their plausibility ranges).
+  // 12 is 7599 in every record; 13 is signed but positive while discharging; 23 and 24 are 000 in
+  // every record. The "Fault record" prefix keeps the names from colliding with the live GS fields
+  // (and their plausibility ranges).
   HFS: [
     // The firmware leaves this 00 in every slot: a record is filed under the slot that was asked for
     field("Fault record id", INT, ""),
@@ -206,8 +208,8 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
     field("Fault record battery voltage", INT_TENTHS, "V"),
     field("Fault record unidentified 12", STRING, ""),
     field("Fault record unidentified 13", STRING, ""),
-    field("Fault record AC output voltage R", INT_TENTHS, "V"),
     field("Fault record AC output voltage S", INT_TENTHS, "V"),
+    field("Fault record AC output voltage T", INT_TENTHS, "V"),
     field("Fault record AC output frequency", INT_HUNDREDTHS, "Hz"),
     field("Fault record AC output apparent power R", INT, "VA"),
     field("Fault record AC output apparent power S", INT, "VA"),
@@ -215,8 +217,7 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
     field("Fault record AC output load percentage", INT, "%"),
     field("Fault record inner temperature", INT, "°C"),
     field("Fault record component max temperature", INT, "°C"),
-    // 000 in every record, like the live GS field (no external sensor is fitted)
-    field("Fault record external battery temperature", INT, "°C"),
+    field("Fault record unidentified 23", STRING, ""),
     field("Fault record unidentified 24", STRING, ""),
   ],
 };
