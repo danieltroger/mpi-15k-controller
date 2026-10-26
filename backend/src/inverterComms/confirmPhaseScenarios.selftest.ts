@@ -2,7 +2,8 @@
  * Pure self-test of the PR #62 review scenarios, replayed through the simulated pump of
  * schedulerSimulation.ts (the reviewer's harness, typed):
  *  1. revert while a starved gap-0 write is pending — the running phase keeps its strategy, so the
- *     write still gives up on its own 55 s deadline, before its gated identical copy can supersede it
+ *     write still gives up on its own 55 s deadline, before its gated identical copy can supersede it;
+ *     the next write waits for that verdict instead of joining the stale gap-0 phase
  *  2. 350 → 550 → 350 at gap 0 — the second 350 is never judged before its own 6 s, so the
  *     pre-550 readback can't "confirm" it; at the default a 350 read back with the 550 never seen is
  *     ambiguous (fieldWriteChains.ts) and resolves at the backoff re-check
@@ -60,12 +61,20 @@ const FEED_GRID_FLAGS_DISABLED = {
   });
   const [firstGpmp, gatedCopy] = sendsIn(steps, "GPMP000550");
   const edf1 = sendsIn(steps, "EDF1")[0];
-  check(
-    "1: EDF1, sent after the revert, merges into the running gap-0 phase and keeps it interleaved",
-    edf1?.armed?.strategy === "interleaved" && edf1.armed.quietGapAfterWriteMs === 0,
-    JSON.stringify({ strategy: edf1?.armed?.strategy, gap: edf1?.armed?.quietGapAfterWriteMs })
-  );
   const firstGiveUp = firstRunWith(steps, "gaveUpChecks", "GPMP000550");
+  check(
+    "1: EDF1, queued after the revert, waits for the stale gap-0 phase's verdict, then arms the silent 12 s",
+    edf1 !== undefined &&
+      firstGiveUp !== undefined &&
+      edf1.startedAtMs >= firstGiveUp.endedAtMs &&
+      edf1.armed?.strategy === "silent" &&
+      edf1.armed.quietGapAfterWriteMs === 12_000,
+    JSON.stringify({
+      sentAt: edf1?.startedAtMs,
+      strategy: edf1?.armed?.strategy,
+      gap: edf1?.armed?.quietGapAfterWriteMs,
+    })
+  );
   const firstDeadline = (firstGpmp?.endedAtMs ?? 0) + INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS;
   check(
     "1: the starved GPMP000550 gives up on its own 55 s deadline (interleaved), before its copy's gate",

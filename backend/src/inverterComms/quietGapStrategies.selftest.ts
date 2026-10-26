@@ -13,9 +13,12 @@ import {
   afterConfirmRun,
   afterSetterSent,
   decideNextAction,
+  hasEligibleSetter,
   readbackAlreadySatisfies,
+  runningPhaseIsStale,
   withQuietGapAfterWrite,
   withSettingsReadback,
+  withSetterQueued,
   type ConfirmOutcome,
   type SchedulerState,
 } from "./schedulerCore.ts";
@@ -366,10 +369,33 @@ check(
       state.confirm.dueAt === seconds(36)
   );
   state = withQuietGapAfterWrite(state, 3_000);
-  state = afterSetterSent(state, "EDB1", ["HECS"], seconds(31), true);
   check(
-    "knob → 3000: a write merging into the interleaved phase stays interleaved, on its own 6 s",
-    state.confirm?.strategy === "interleaved" && state.confirm.dueAt === seconds(36)
+    "knob → 3000 during a gap-0 phase: the phase runs on (still interleaved) but is stale",
+    state.confirm?.strategy === "interleaved" && runningPhaseIsStale(state)
+  );
+  state = withSetterQueued(state, "EDB1", "EDB", seconds(31));
+  const whileStale = decideNextAction(state, seconds(31), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "knob → 3000: a new write is held instead of joining the stale gap-0 phase",
+    // …without feeding the held gate to the wait timer: a past gate would spin the pump
+    whileStale.action === "wait" && whileStale.untilMs > seconds(31) && !hasEligibleSetter(state, seconds(31)),
+    JSON.stringify(whileStale)
+  );
+  // EDG1 (written at 30 s) gives up at 85 s; if its confirm runs kept failing, the hold lapses at 95 s
+  const confirmsKeepFailingAt = (atMs: number) => decideNextAction(state, atMs, SETTINGS_POLL_INTERVAL_MS).action;
+  check(
+    "knob → 3000: if confirm runs keep failing, the hold still lapses 10 s after the last give-up was due",
+    confirmsKeepFailingAt(seconds(94.9)) === "run_confirms" &&
+      confirmsKeepFailingAt(seconds(95)) === "send_setter" &&
+      hasEligibleSetter(state, seconds(95))
+  );
+  const stillOldForEdg1 = { HECS: { battery_discharge_to_feed_grid_when_solar_input_loss: "disabled" } };
+  state = afterConfirmRun(state, stillOldForEdg1, seconds(85)).state;
+  const afterStalePhase = decideNextAction(state, seconds(85), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "knob → 3000: once the stale phase gives up (≤ 55 s), the held write goes out",
+    state.confirm === undefined && afterStalePhase.action === "send_setter" && afterStalePhase.command === "EDB1",
+    JSON.stringify(afterStalePhase)
   );
 }
 

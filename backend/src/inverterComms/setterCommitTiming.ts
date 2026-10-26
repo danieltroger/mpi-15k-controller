@@ -106,8 +106,9 @@ export function reportConfirmOutcome(
     errorLog(
       "Inverter quiet gap 0 auto-reverted:",
       `${[...neverApplied].join(", ")} starved while GS/PS polling continued`,
-      `— later writes use the ${outcome.starvationFallback.quietGapAfterWriteMs} ms quiet gap until`,
-      `usb_parameter_setting.quiet_gap_after_write_ms changes. Set it back to ${QUIET_GAP_AFTER_WRITE_MS} (#52).`
+      "— new writes wait for any still-running gap-0 confirm phase to end (≤ 55 s), then use the",
+      `${outcome.starvationFallback.quietGapAfterWriteMs} ms quiet gap until usb_parameter_setting.quiet_gap_after_write_ms`,
+      `changes or the controller restarts (the fallback is not saved). Set it back to ${QUIET_GAP_AFTER_WRITE_MS} now (#52).`
     );
   }
   const stillPending = commandsOf(retry?.pendingChecks ?? []);

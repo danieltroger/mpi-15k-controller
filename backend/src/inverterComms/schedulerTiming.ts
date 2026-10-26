@@ -63,6 +63,13 @@ export const INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
  */
 export const STARVATION_FALLBACK_QUIET_GAP_MS = QUIET_GAP_AFTER_WRITE_MS;
 /**
+ * Setters held behind a stale gap-0 phase wait for its last verdict, at most its newest check's
+ * give-up. If confirm runs keep failing (a consumer throwing on a settings readback), that verdict
+ * never comes, so the hold lapses this long after it was due: a broken readback must not hold
+ * control writes for good.
+ */
+export const STALE_HOLD_LAPSE_MARGIN_MS = 10_000;
+/**
  * For the confirm verdict, a write no readback has proven yet counts as landed (or as never
  * landing) this long after it was sent. Only an ambiguous readback needs it: after A→B→A with B
  * never seen, "A" could mean "nothing committed yet" forever (fieldWriteChains.ts). As long as the
@@ -132,7 +139,9 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
  *   no earlier than its own write + firstInterleavedConfirmAfterWriteMs and giving up at its own
  *   write + interleavedConfirmGiveUpAfterWriteMs
  * Fixed, with its quiet gap, when a write arms a phase: writes merging into a running phase keep
- * both, so a live knob change applies from the first write after that phase ends.
+ * both, so a live knob change applies from the first write after that phase ends. A gap-0 phase
+ * that a knob change or the starvation fallback has left behind takes no new writes at all
+ * (runningPhaseIsStale): they wait for it to end, at most 55 s.
  */
 export type ConfirmStrategy = "silent" | "interleaved";
 

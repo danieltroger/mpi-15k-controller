@@ -207,8 +207,10 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
     logged.length === 2 &&
       logged[0]!.startsWith("Inverter ACKed but never applied within the interleaved confirm window:") &&
       logged[1]!.startsWith("Inverter quiet gap 0 auto-reverted: GPMP000550 starved") &&
-      logged[1]!.includes("later writes use the 12000 ms quiet gap") &&
-      logged[1]!.includes("Set it back to 12000"),
+      logged[1]!.includes("then use the 12000 ms quiet gap") &&
+      logged[1]!.includes("wait for any still-running gap-0 confirm phase") &&
+      logged[1]!.includes("not saved") &&
+      logged[1]!.includes("Set it back to 12000 now"),
     logged.join(" | ")
   );
 }

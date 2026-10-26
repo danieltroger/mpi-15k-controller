@@ -4,7 +4,7 @@
  * experiment's switch-over is visible in the log right where the writes it affects start.
  */
 import { logLog, warnLog } from "../utilities/logging.ts";
-import { withQuietGapAfterWrite, type SchedulerState } from "./schedulerCore.ts";
+import { runningPhaseIsStale, withQuietGapAfterWrite, type SchedulerState } from "./schedulerCore.ts";
 import { effectiveQuietGapMs } from "./schedulerTiming.ts";
 
 /**
@@ -15,6 +15,7 @@ export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configur
   const quietGapMs = quietGapFromConfig(configuredMs);
   const previousMs = scheduler.timing.quietGapAfterWriteMs;
   if (quietGapMs === previousMs) return scheduler;
+  const schedulerAfterChange = withQuietGapAfterWrite(scheduler, quietGapMs);
   logLog(
     "Inverter quiet gap after write:",
     previousMs,
@@ -23,9 +24,12 @@ export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configur
     "ms —",
     quietGapMs > 0 ? "radio silence after each write" : "GS/PS polling continues through writes",
     "(applies from the first write after any running confirm phase)",
-    ...(scheduler.starvationFallback ? ["— ends the starvation fallback"] : [])
+    ...(scheduler.starvationFallback ? ["— ends the starvation fallback"] : []),
+    ...(runningPhaseIsStale(schedulerAfterChange)
+      ? ["— new writes wait for the running gap-0 confirm phase to end (≤ 55 s)"]
+      : [])
   );
-  return withQuietGapAfterWrite(scheduler, quietGapMs);
+  return schedulerAfterChange;
 }
 
 export function quietGapFromConfig(configuredMs: number): number {

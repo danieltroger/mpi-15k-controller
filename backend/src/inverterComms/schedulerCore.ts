@@ -17,6 +17,7 @@ import {
   confirmStrategyFor,
   DEFAULT_SCHEDULER_TIMING,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
+  STALE_HOLD_LAPSE_MARGIN_MS,
   type ConfirmStrategy,
   type SchedulerTiming,
 } from "./schedulerTiming.ts";
@@ -119,12 +120,15 @@ export function decideNextAction(
   // readback shows) from landing when its identical-setter gate opens.
   const satisfiedSetter = state.queuedSetters.find(setter => readbackAlreadySatisfies(state, setter.command));
   if (satisfiedSetter) return { action: "drop_setter", command: satisfiedSetter.command };
-  const eligibleSetter = state.queuedSetters.find(setter => setter.notBefore <= nowMs);
+  const sendsHeld = setterSendsHeld(state, nowMs);
+  const eligibleSetter = sendsHeld ? undefined : state.queuedSetters.find(setter => setter.notBefore <= nowMs);
   if (eligibleSetter) return { action: "send_setter", command: eligibleSetter.command };
-  // A gated setter must still wake the pump when its gate opens, whatever else we wait on
-  const earliestSetterGate = state.queuedSetters.length
-    ? Math.min(...state.queuedSetters.map(setter => setter.notBefore))
-    : Infinity;
+  // A gated setter must still wake the pump when its gate opens, whatever else we wait on. Held
+  // ones don't: the stale phase's own confirm times wake it, and a passed gate would spin it.
+  const earliestSetterGate =
+    state.queuedSetters.length && !sendsHeld
+      ? Math.min(...state.queuedSetters.map(setter => setter.notBefore))
+      : Infinity;
 
   if (state.confirm) {
     if (nowMs >= state.confirm.dueAt) return { action: "run_confirms", queries: state.confirm.queries };
@@ -151,8 +155,28 @@ export function decideNextAction(
   return {
     action: "wait",
     untilMs: Math.min(nextPollDueAt, earliestSetterGate, nextConfirmDueAt),
-    reason: "poll pacing",
+    reason: sendsHeld ? "setters held until the stale gap-0 phase ends" : "poll pacing",
   };
+}
+
+/**
+ * A running gap-0 phase is stale once new phases would no longer get gap 0 (the knob was changed,
+ * or the starvation fallback latched). It may finish, but nothing may join it: a merged write keeps
+ * the phase's gap, so writes arriving less than 55 s apart would keep the line interleaved
+ * indefinitely. Setters are held instead, at most until its newest check's 55 s give-up.
+ */
+export function runningPhaseIsStale(state: SchedulerState): boolean {
+  return state.confirm?.strategy === "interleaved" && quietGapForNewPhase(state) > 0;
+}
+
+/** Held while a stale gap-0 phase runs, until STALE_HOLD_LAPSE_MARGIN_MS past its last due verdict */
+function setterSendsHeld(state: SchedulerState, nowMs: number): boolean {
+  const confirm = state.confirm;
+  if (!confirm || !runningPhaseIsStale(state)) return false;
+  const lastVerdictDueAt = confirm.checks.length
+    ? Math.max(...confirm.checks.map(check => check.writtenAtMs + state.timing.interleavedConfirmGiveUpAfterWriteMs))
+    : confirm.dueAt;
+  return nowMs < lastVerdictDueAt + STALE_HOLD_LAPSE_MARGIN_MS;
 }
 
 /** Enqueue a control write, replacing any queued same-prefix one (a stale target must never land after a newer one). */
@@ -281,10 +305,17 @@ export type ConfirmOutcome = ConfirmVerdicts & {
   starvationFallback: { quietGapAfterWriteMs: number } | undefined;
 };
 
+/**
+ * `nowMs` is when the run's last answer came in (deadlines and the next run count from it).
+ * `runStartedAtMs` is when its first query went out: every readback of the run was decoded after
+ * it, so the 6 s rule is judged against it. It defaults to `nowMs`, an instantaneous run (the pure
+ * tests); the session and the simulation pass the real start.
+ */
 export function afterConfirmRun(
   state: SchedulerState,
   decodedByQuery: Partial<Record<SettingsQueryCommandName, DecodedFields>>,
-  nowMs: number
+  nowMs: number,
+  runStartedAtMs: number = nowMs
 ): { state: SchedulerState; result: ConfirmOutcome } {
   const confirm = state.confirm;
   if (!confirm) {
@@ -292,7 +323,10 @@ export function afterConfirmRun(
     const nothing = { confirmedChecks: [], gaveUpChecks: [], notYetJudgedChecks: [], retry: undefined };
     return { state, result: { ...nothing, starvationFallback: undefined } };
   }
-  const verdicts = judgeConfirmRun(confirm, state.timing, decodedByQuery, state.fieldWriteChains, nowMs);
+  const verdicts = judgeConfirmRun(confirm, state.timing, decodedByQuery, state.fieldWriteChains, {
+    runStartedAtMs,
+    nowMs,
+  });
   const startsStarvationFallback =
     confirm.strategy === "interleaved" &&
     verdicts.gaveUpChecks.length > 0 &&
@@ -382,6 +416,7 @@ export function readbackAlreadySatisfies(state: SchedulerState, command: string)
  * satisfies: consumers queue desired state on every change, and those must not chop rounds short.
  */
 export function hasEligibleSetter(state: SchedulerState, nowMs: number): boolean {
+  if (setterSendsHeld(state, nowMs)) return false;
   return state.queuedSetters.some(
     setter => setter.notBefore <= nowMs && !readbackAlreadySatisfies(state, setter.command)
   );

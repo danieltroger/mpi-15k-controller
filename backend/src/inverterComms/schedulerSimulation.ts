@@ -116,7 +116,7 @@ export function simulatePump({
       const decodedByQuery = readRegisters(registers, decision.queries, nowMs);
       for (const query of decision.queries)
         state = withSettingsReadback(state, query, decodedByQuery[query] ?? {}, nowMs);
-      const confirmRun = afterConfirmRun(state, decodedByQuery, nowMs);
+      const confirmRun = afterConfirmRun(state, decodedByQuery, nowMs, startedAtMs);
       state = confirmRun.state;
       steps.push({
         action: "run_confirms",
