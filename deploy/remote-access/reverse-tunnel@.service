@@ -21,8 +21,10 @@ EnvironmentFile=/etc/remote-access/tunnel-%i.env
 # Keep retrying even when the very first connection fails, e.g. when the pi boots before the
 # router has internet again. Without it autossh gives up if ssh fails within its first 30 s.
 Environment=AUTOSSH_GATETIME=0
-# With -M 0 this only caps autossh's backoff between failed attempts. The default of 600 s lets
-# the gap grow to 10 minutes about an hour into an outage; 60 s keeps it at a minute.
+# With -M 0 this only shapes autossh's backoff between failed attempts (grace_time() in 1.4g): after
+# 5 quick retries the gap is POLL/100 * t^2/3, capped at POLL, and the count resets once ssh stays up
+# for max(POLL/10, 10) s. The default of 600 s grows the gap to 10 minutes about an hour into an
+# outage. 60 s scales it down 10x and caps it at a minute, and 10 s of uptime resets it.
 Environment=AUTOSSH_POLL=60
 # -M 0: no autossh monitor ports. ServerAlive makes ssh exit after ~90 s without replies from the
 # remote, and autossh starts a new one. ExitOnForwardFailure makes ssh exit when the remote port is

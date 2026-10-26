@@ -49,7 +49,7 @@ Off-site access to the pi runs as its own systemd units, separate from the contr
 
 All four run as `ubuntu` (the tunnels log in with `~/.ssh/id_ed25519`, as before), start at boot after `network-online.target` (unlike the controller, they can't do anything without the network) and restart forever.
 
-- **Tunnels** ([`reverse-tunnel@.service`](remote-access/reverse-tunnel@.service), forwards in `remote-access/tunnel-*.env`): `autossh -M 0` with `ServerAliveInterval=30`/`ServerAliveCountMax=3`, so a dead link is noticed within ~90 s and autossh starts a new ssh. With `ExitOnForwardFailure=yes`, ssh exits when the remote port is still taken, and autossh retries, instead of the connection staying up without the forward. `AUTOSSH_GATETIME=0` keeps autossh retrying when the first connection after boot fails. `AUTOSSH_POLL=60` caps its backoff between failed attempts at a minute; by default the gap grows to 10 minutes about an hour into an outage. systemd restarts autossh itself if it exits. Logs go to the journal.
+- **Tunnels** ([`reverse-tunnel@.service`](remote-access/reverse-tunnel@.service), forwards in `remote-access/tunnel-*.env`): `autossh -M 0` with `ServerAliveInterval=30`/`ServerAliveCountMax=3`, so a dead link is noticed within ~90 s and autossh starts a new ssh. With `ExitOnForwardFailure=yes`, ssh exits when the remote port is still taken, and autossh retries, instead of the connection staying up without the forward. `AUTOSSH_GATETIME=0` keeps autossh retrying when the first connection after boot fails. `AUTOSSH_POLL=60` scales autossh's backoff between failed attempts down 10× and caps it at a minute; by default the gap grows to 10 minutes about an hour into an outage. systemd restarts autossh itself if it exits. Logs go to the journal.
 - **sshx** ([`sshx.service`](remote-access/sshx.service) → [`sshx-session.sh`](remote-access/sshx-session.sh)): starts `sshx --quiet`, POSTs the session link to `SSHX_PUBLISH_URL` (the same request the rc.local line sent), and exits when the sshx server has dropped the session. systemd then starts a new session, with a new link, 30 s later. sshx itself retries a dropped session forever: after the 2026-10-23 boot the published link was dead within 6 minutes and stayed dead for days. The journal shows the session id but not the link's key. Terminals opened in sshx run inside the unit and end when it restarts.
 
 ### Host-local settings: `/etc/remote-access/remote.env`
@@ -86,36 +86,85 @@ A refused forward ends the tunnel's ssh within seconds (`ExitOnForwardFailure`),
 
 ### Migrating from `/etc/rc.local`
 
-Work from a machine on the LAN (`ssh ubuntu@192.168.1.106`): it reaches the pi without any tunnel, so a tunnel that doesn't come back can be fixed from there. A new tunnel can't bind its remote port while the rc.local one holds it, so switch one tunnel at a time, least critical first: mqtt, ws, ssh, then sshx. Each rc.local autossh is identified by its monitor port (`-M`): 2975 = mqtt, 2988 = ws, 2990 = ssh. Stopping an autossh takes its ssh child down with it.
+Do it all from a machine on the LAN (`ssh ubuntu@192.168.1.106`). That path doesn't go through any tunnel, so a tunnel that doesn't come back can always be fixed from there. Steps 1–6 don't touch the controller; only the reboot test (7) restarts it.
+
+**Backups:** step 1 makes `/etc/rc.local.bak-before-57` with `cp -n`, so re-running the step never overwrites it with an already-edited file. **Never restore an older rc.local backup.** `/etc/rc.local.bak-20260705` still starts the controller, and a second controller would fight the systemd one over the inverter's serial port. The rollbacks below only uncomment the lines this migration commented out.
+
+**0. Get the files:** `cd ~/mpi-15k-controller && git pull`. If other controller changes come with the pull, they land on disk too and run from the next controller restart, i.e. the reboot test.
+
+**1. Back up, configure, install.** Nothing starts yet.
 
 ```sh
-# 1. Back up rc.local, create remote.env (above), install the units without starting them
-sudo cp -a /etc/rc.local /etc/rc.local.bak-$(date +%Y%m%d)
-./deploy/install-remote-access.sh
-
-# 2.+3. Per tunnel: stop the old one, start the new one, check it. Here mqtt; then ws (2988), ssh (2990).
-pkill -u ubuntu -f '^/usr/lib/autossh/autossh -M 2975 '
-sudo systemctl enable --now reverse-tunnel@mqtt
-sleep 15; journalctl -u reverse-tunnel@mqtt -n 10 --no-pager   # no "remote port forwarding failed"
-
-# sshx: stop the rc.local one (its link has been dead since 2026-10-23); the unit publishes a new link
-pkill -u ubuntu -x sshx
-sudo systemctl enable --now sshx
-
-# 4. Comment the lines out of rc.local, as was done for the controller in 2026-07: prefix the sshx,
-#    autossh, up.txt and timedatectl lines with "# (replaced by …, <date>) "
-sudoedit /etc/rc.local
-
-# 5. Stop the uptime logger, the only thing left in rc-local.service (the tunnels and sshx ran in su sessions)
-sudo systemctl kill rc-local.service
-
-# 6. Verify
-./deploy/check-remote-access.sh
+cd ~/mpi-15k-controller
+sudo cp -an /etc/rc.local /etc/rc.local.bak-before-57
+grep -oE '[a-z]+@[^ ]+ -v?p [0-9]+' /etc/rc.local | sort -u    # → TUNNEL_REMOTE_LOGIN and TUNNEL_REMOTE_PORT
+grep -oE 'https://[^"]+/deploy/sshx-[^"]+' /etc/rc.local      # → SSHX_PUBLISH_URL
+sudo install -d -m 0755 /etc/remote-access
+sudo install -m 0600 deploy/remote-access/remote.env.example /etc/remote-access/remote.env
+sudoedit /etc/remote-access/remote.env
+./deploy/install-remote-access.sh          # expect 6× "Wrote …", then "Nothing started"
 ```
 
-If a new tunnel doesn't come up, put the old one back until it's sorted out: `sudo systemctl disable --now reverse-tunnel@<name>`, then run that tunnel's line from the backup, e.g. `sudo bash -c "$(grep -F -- '-R 1883:' /etc/rc.local.bak-<date>)"`.
+**2.+3. Switch the tunnels one at a time, least critical first (mqtt, ws, ssh), and verify each.** A new tunnel can't bind its remote port while the rc.local one holds it. With `ExitOnForwardFailure` it would only retry until the port is free, so stop the old one first, then start the new one. Each tunnel is down for a few seconds. Each rc.local autossh is identified by its monitor port (`-M`): 2975 = mqtt, 2988 = ws, 2990 = ssh. Stopping an autossh also stops its ssh child.
 
-**Reboot test** (the case this is for). It restarts the controller too, so pick a time with no sell/buy window active or imminent and clear of the daily plan run. Afterwards, from the LAN: `./deploy/check-remote-access.sh`, and `systemctl status rc-local` lists no processes. If something didn't come back, the LAN path still works: fix it, or fall back with `sudo systemctl disable reverse-tunnel@{ssh,ws,mqtt} sshx`, the backup copied over `/etc/rc.local`, and another reboot.
+```sh
+# mqtt (old autossh -M 2975)
+pkill -u ubuntu -f '^/usr/lib/autossh/autossh -M 2975 '
+sleep 2; pgrep -af 'ssh -L 2975' || echo "old mqtt tunnel gone"   # still there: pkill -u ubuntu -f '^/usr/bin/ssh -L 2975:'
+sudo systemctl enable --now reverse-tunnel@mqtt
+sleep 20; journalctl -u reverse-tunnel@mqtt -n 10 --no-pager      # "ssh child pid is …", no "remote port forwarding failed"
+./deploy/check-remote-access.sh   # "Tunnels" must be all ok. Units/processes not switched yet still show FAIL.
+
+# ws: the same with -M 2988 / 'ssh -L 2988' / reverse-tunnel@ws
+# ssh: the same with -M 2990 / 'ssh -L 2990' / reverse-tunnel@ssh
+```
+
+`check-remote-access.sh` probes through whichever tunnel holds each remote port, so its "Tunnels" section shows that remote access works at every point of the switch. If a new tunnel doesn't come up after a minute, check `journalctl -u reverse-tunnel@<name>`. To put the old one back: `sudo systemctl disable --now reverse-tunnel@<name>`, then `sudo bash -c "$(grep -F -- '-R <remote port>:' /etc/rc.local.bak-before-57)"`. Each of 6022, 7777 and 1883 matches exactly one line there.
+
+**sshx:**
+
+```sh
+pkill -u ubuntu -x sshx                    # the rc.local session; its link has been dead since 2026-10-23
+sudo systemctl enable --now sshx
+journalctl -u sshx -n 5 --no-pager         # "Published the new sshx session https://sshx.io/s/…#<key withheld>"
+```
+
+Then open the new link from wherever it's normally looked up.
+
+**4. Comment the migrated lines out of rc.local.** That's the up.txt loop, sshx, the three autossh lines and `timedatectl`. The prefix is fixed, so the rollback can find exactly these lines again. Lines that are already commented (the controller, the old smb tunnel) are left alone.
+
+```sh
+sudo sed -i -E "/^[^#]*(up\.txt|sshx|autossh|timedatectl)/s|^|# (replaced by reverse-tunnel@.service/sshx.service, $(date +%F)) |" /etc/rc.local
+grep -c '^# (replaced by reverse-tunnel@' /etc/rc.local   # 6
+grep -vE '^(#|$)' /etc/rc.local                            # only "cd /tmp" and "exit 0" left
+bash -n /etc/rc.local
+```
+
+**5. Stop what rc.local still runs, and clean up after it.**
+
+```sh
+sudo systemctl kill rc-local.service       # only the up.txt loop is left in there
+systemctl status rc-local --no-pager       # active (exited), no processes listed
+sudo rm -f /tmp/sshx-setup.log /tmp/autossh-ssh.log /tmp/autossh-frontend-ws.log /tmp/autossh-mqtt.log /tmp/timezone.log /tmp/pid
+sudo rm /var/log/up.txt                    # optional (136 MB)
+```
+
+**6. Verify:** `./deploy/check-remote-access.sh` prints `ok` for all four units, the processes and all three tunnels, and exits 0.
+
+**7. Reboot test** (optional, but it's the case this is for):
+
+- **Best done when someone can physically reach the pi.** A tunnel that doesn't come back can be fixed from the LAN, but a pi that doesn't boot can't.
+- It restarts the controller. Pick a time with no sell/buy window active or imminent (`scheduled_power_selling/buying.schedule` in `backend/config.json`, UTC keys), not within ±10 min of `automatic_trading.plan_at_local_time`.
+- Run `sudo reboot`, then wait for `ping 192.168.1.106` and `ssh ubuntu@192.168.1.106`.
+- Run `./deploy/check-remote-access.sh` (all ok) and `systemctl status mpi-15k-controller rc-local --no-pager` (rc-local lists no processes).
+- **Fallback:** fix whatever didn't come up (`journalctl -u <unit> -b`) over the LAN. To go back to the rc.local setup, run the commands below. They uncomment only the six migrated lines; the controller line stays commented.
+
+```sh
+sudo systemctl disable --now reverse-tunnel@ssh reverse-tunnel@ws reverse-tunnel@mqtt sshx
+sudo sed -i 's|^# (replaced by reverse-tunnel@.service/sshx.service, [0-9-]*) ||' /etc/rc.local
+grep -c 'replaced by mpi-15k-controller.service' /etc/rc.local   # still 1: the controller stays commented
+sudo reboot
+```
 
 ### What else rc.local did
 

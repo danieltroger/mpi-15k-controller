@@ -67,12 +67,12 @@ check_processes_are_supervised() {
 # status line, mosquitto with a CONNACK.
 probe_tunnels_from_remote() {
   local remote_login remote_port
-  remote_login=$(sudo sed -n 's/^TUNNEL_REMOTE_LOGIN=//p' "${CONFIG_DIR}/remote.env")
-  remote_port=$(sudo sed -n 's/^TUNNEL_REMOTE_PORT=//p' "${CONFIG_DIR}/remote.env")
+  remote_login=$(read_env_setting "${CONFIG_DIR}/remote.env" TUNNEL_REMOTE_LOGIN)
+  remote_port=$(read_env_setting "${CONFIG_DIR}/remote.env" TUNNEL_REMOTE_PORT)
   local probe_arguments=()
   local tunnel forward
   for tunnel in "${TUNNELS[@]}"; do
-    forward=$(sed -n 's/^TUNNEL_FORWARD=//p' "${CONFIG_DIR}/tunnel-${tunnel}.env")
+    forward=$(read_env_setting "${CONFIG_DIR}/tunnel-${tunnel}.env" TUNNEL_FORWARD)
     probe_arguments+=("${tunnel}" "${forward%%:*}")
   done
   ssh -o BatchMode=yes -o ConnectTimeout=15 -p "${remote_port}" "${remote_login}" \
@@ -98,6 +98,16 @@ while (($# >= 2)); do
 done
 exit "${failed}"
 REMOTE_PROBES
+}
+
+# A value as the units see it: systemd's EnvironmentFile= drops one pair of quotes around it.
+read_env_setting() {
+  local file=$1 setting=$2 value
+  value=$(sudo sed -n "s/^${setting}=//p" "${file}")
+  if [[ ${value} =~ ^\"(.*)\"$ || ${value} =~ ^\'(.*)\'$ ]]; then
+    value=${BASH_REMATCH[1]}
+  fi
+  printf '%s' "${value}"
 }
 
 main "$@"

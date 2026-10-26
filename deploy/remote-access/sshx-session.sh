@@ -43,18 +43,24 @@ main() {
 
 start_sshx() {
   # stdout (just the link, with --quiet) and stderr (the log) share one pipe. The link is told apart
-  # by its shape, since log lines start with a timestamp.
-  coproc SSHX_PROCESS { exec "${SSHX_BIN}" --quiet </dev/null 2>&1; }
+  # by its shape, since log lines start with a timestamp. sshx and the terminals it starts inherit its
+  # environment and need none of remote.env's settings; only this script uses them.
+  coproc SSHX_PROCESS {
+    unset SSHX_PUBLISH_URL TUNNEL_REMOTE_LOGIN TUNNEL_REMOTE_PORT
+    exec "${SSHX_BIN}" --quiet </dev/null 2>&1
+  }
   sshx_pid=${SSHX_PROCESS_PID}
   # bash unsets the coproc's fd array as soon as sshx exits. Keep a copy to read its last lines.
   exec {sshx_output_fd}<&"${SSHX_PROCESS[0]}"
 }
 
 wait_for_session_url() {
-  local line read_status
+  local line read_status remaining
   local deadline=$((SECONDS + SESSION_URL_TIMEOUT_SECONDS))
-  while ((SECONDS < deadline)); do
-    if IFS= read -r -t $((deadline - SECONDS)) line <&"${sshx_output_fd}"; then
+  # `remaining` is computed once per round: if SECONDS ticked between a loop test and the read, the read
+  # would run as `read -t 0`, which returns 1 on an empty pipe and would pass for end of output.
+  while remaining=$((deadline - SECONDS)) && ((remaining > 0)); do
+    if IFS= read -r -t "${remaining}" line <&"${sshx_output_fd}"; then
       line=$(strip_colour_codes "${line}")
       if [[ ${line} =~ ^https://[^[:space:]]+$ ]]; then
         session_url=${line}
@@ -76,9 +82,10 @@ wait_for_session_url() {
 
 publish_session_url() {
   # Same request the rc.local launcher sent (`curl -d "$line"`): a form POST whose body is the bare link.
-  # curl's own errors name the host at most, never the publish URL's path.
-  if curl --fail --silent --show-error --max-time 30 --retry 5 --retry-delay 10 --retry-all-errors \
-    --output /dev/null --data-raw "${session_url}" "${SSHX_PUBLISH_URL}"; then
+  # The link goes in on stdin, not on curl's command line; curl reads it once and resends it on every
+  # retry. curl's own errors name the host at most, never the publish URL's path.
+  if printf '%s' "${session_url}" | curl --fail --silent --show-error --max-time 30 --retry 5 --retry-delay 10 \
+    --retry-all-errors --output /dev/null --data-binary @- "${SSHX_PUBLISH_URL}"; then
     # Everything after '#' is the session's encryption key: whoever has it gets a shell.
     echo "Published the new sshx session ${session_url%%#*}#<key withheld>"
   else

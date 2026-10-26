@@ -55,6 +55,12 @@ main() {
     units+=("reverse-tunnel@${tunnel}.service")
   done
   units+=(sshx.service)
+  # Snapshot before `enable --now`, which starts stopped units with the new files: only units that
+  # were running before still have the old ones.
+  local units_were_running=0
+  if systemctl is-active --quiet "${units[@]}"; then
+    units_were_running=1
+  fi
 
   if ((enable)); then
     warn_about_rc_local_processes
@@ -62,7 +68,7 @@ main() {
   else
     echo "Nothing started. Per unit: sudo systemctl enable --now <unit>; all of them: re-run with --enable."
   fi
-  if ((files_changed)) && systemctl is-active --quiet "${units[@]}"; then
+  if ((files_changed && units_were_running)); then
     echo "NOTE: units that were already running keep their old settings until restarted:"
     echo "  sudo systemctl restart <unit>"
     echo "(do reverse-tunnel@ssh from the LAN; sshx gets a new session link)"
@@ -97,7 +103,8 @@ check_prerequisites() {
   else
     local setting
     for setting in TUNNEL_REMOTE_LOGIN TUNNEL_REMOTE_PORT SSHX_PUBLISH_URL; do
-      if ! sudo grep -qE "^${setting}=.+" "${REMOTE_ENV}"; then
+      # A value, quoted or not (systemd drops one pair of quotes).
+      if ! sudo grep -qE "^${setting}=[\"']?[^\"' ]" "${REMOTE_ENV}"; then
         echo "ERROR: ${REMOTE_ENV} sets no ${setting}." >&2
         missing=1
       fi
