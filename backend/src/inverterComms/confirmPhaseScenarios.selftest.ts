@@ -4,7 +4,8 @@
  *  1. revert while a starved gap-0 write is pending — the running phase keeps its strategy, so the
  *     write still gives up on its own 55 s deadline, before its gated identical copy can supersede it
  *  2. 350 → 550 → 350 at gap 0 — the second 350 is never judged before its own 6 s, so the
- *     pre-550 readback can't "confirm" it
+ *     pre-550 readback can't "confirm" it; at the default a 350 read back with the 550 never seen is
+ *     ambiguous (fieldWriteChains.ts) and resolves at the backoff re-check
  *  3. the default gap on a 3-write burst — a check confirmed on the first run leaves the phase, so
  *     its desired-state copy is dropped instead of re-sent at the gate (an improvement over main)
  *  4. the starvation fallback — one gap-0 give-up puts later writes back on the silent 12 s gap
@@ -99,7 +100,7 @@ for (const quietGapAfterWriteMs of [0, 12_000]) {
     quietGapAfterWriteMs,
     boot: { GPMP: { maximum_feeding_grid_power: 350 } },
     events: [queueSetterAt(seconds(100), "GPMP000550", "GPMP0"), queueSetterAt(seconds(103), "GPMP000350", "GPMP0")],
-    untilMs: seconds(140),
+    untilMs: seconds(160),
     // Each commit lands 8 s after its own write: 550 at ~108.1 s, 350 at ~111.6 s
     commitDelayMs: 8_000,
   });
@@ -111,6 +112,16 @@ for (const quietGapAfterWriteMs of [0, 12_000]) {
     confirmedRun !== undefined && confirmedRun.endedAtMs >= back350CommitsAt,
     `confirmed at ${secondsText(confirmedRun?.endedAtMs)}, its commit at ${secondsText(back350CommitsAt)}`
   );
+  if (quietGapAfterWriteMs === 12_000) {
+    const [firstConfirm, backoffConfirm] = confirmRunsIn(steps);
+    check(
+      '2 (gap 12000): the 350 at the first confirm can\'t tell "both landed" from "nothing yet" — re-checked after the backoff, not given up',
+      firstConfirm?.result.retry !== undefined &&
+        backoffConfirm === confirmedRun &&
+        confirmRunsIn(steps).every(run => run.result.gaveUpChecks.length === 0),
+      `first confirm ${secondsText(firstConfirm?.endedAtMs)}, confirmed ${secondsText(confirmedRun?.endedAtMs)}`
+    );
+  }
   if (quietGapAfterWriteMs === 0) {
     const firstRun = confirmRunsIn(steps)[0];
     check(

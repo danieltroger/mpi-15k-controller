@@ -23,8 +23,9 @@ import {
 import type { SchedulerTiming } from "./schedulerTiming.ts";
 import { expectedReadbackChecksForSetter } from "./setterConfirmation.ts";
 
-/** GS+PS ≈ 1.1 s of wire time; a settings answer ~0.15 s; a setter and its ACK ~0.1 s */
+/** GS+PS ≈ 1.1 s of wire time (2.5 s with the settings queries); a settings answer ~0.15 s; a setter and its ACK ~0.1 s */
 export const POLL_ROUND_DURATION_MS = 1_100;
+export const SETTINGS_POLL_ROUND_DURATION_MS = 2_500;
 export const CONFIRM_QUERY_DURATION_MS = 150;
 export const SETTER_DURATION_MS = 100;
 export const SETTINGS_POLL_INTERVAL_MS = 300_000;
@@ -73,6 +74,7 @@ export function simulatePump({
   fromMs,
   untilMs,
   onSetterSent = () => {},
+  settingsPollIntervalMs = SETTINGS_POLL_INTERVAL_MS,
 }: {
   initial: SchedulerState;
   registers: SimulatedRegister[];
@@ -81,6 +83,8 @@ export function simulatePump({
   untilMs: number;
   /** Called with each setter's ACK time, e.g. to schedule its commit */
   onSetterSent?: (command: string, sentAtMs: number) => void;
+  /** The slow settings poll's cadence; its rounds read every register, like the session's */
+  settingsPollIntervalMs?: number;
 }): { state: SchedulerState; steps: SimulatedStep[] } {
   let state = initial;
   let nowMs = fromMs;
@@ -88,7 +92,7 @@ export function simulatePump({
   const steps: SimulatedStep[] = [];
   while (nowMs < untilMs) {
     while (pendingEvents.length && pendingEvents[0]!.atMs <= nowMs) state = pendingEvents.shift()!.apply(state, nowMs);
-    const decision = decideNextAction(state, nowMs, SETTINGS_POLL_INTERVAL_MS);
+    const decision = decideNextAction(state, nowMs, settingsPollIntervalMs);
     const startedAtMs = nowMs;
     if (decision.action === "wait") {
       const wakeAt = Math.min(decision.untilMs, pendingEvents[0]?.atMs ?? Infinity);
@@ -123,7 +127,14 @@ export function simulatePump({
         stateAfter: state,
       });
     } else {
-      nowMs += POLL_ROUND_DURATION_MS;
+      nowMs += decision.includeSettingsPoll ? SETTINGS_POLL_ROUND_DURATION_MS : POLL_ROUND_DURATION_MS;
+      if (decision.includeSettingsPoll) {
+        const settingsQueries = [...new Set(registers.map(register => register.query))];
+        const decodedByQuery = readRegisters(registers, settingsQueries, nowMs);
+        for (const query of settingsQueries) {
+          state = withSettingsReadback(state, query, decodedByQuery[query] ?? {}, nowMs);
+        }
+      }
       state = afterPollRound(state, {
         startedAtMs,
         endedAtMs: nowMs,

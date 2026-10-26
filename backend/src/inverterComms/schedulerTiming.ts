@@ -62,6 +62,15 @@ export const INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
  * later phase back on this measured silent gap until the knob next changes.
  */
 export const STARVATION_FALLBACK_QUIET_GAP_MS = QUIET_GAP_AFTER_WRITE_MS;
+/**
+ * A write no readback has proven yet counts as landed (or as never landing) this long after it was
+ * sent. Only an ambiguous readback needs it: after A→B→A with B never seen, "A" could mean "nothing
+ * committed yet" forever (fieldWriteChains.ts). As long as the silent backoff, so the silent
+ * re-check always resolves it, and below the interleaved give-up minus one re-check. Covers commits
+ * up to 30 s: ~6 s under light traffic, the 12–18 s the ambiguity was found at; a commit starved
+ * longer than that is the give-up's business.
+ */
+export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
 
 /**
  * Gap between the END of one background GS+PS round and the start of the next: rounds run
@@ -83,6 +92,8 @@ export type SchedulerTiming = {
   interleavedConfirmGiveUpAfterWriteMs: number;
   /** The gap new phases use after an interleaved give-up, until the knob next changes */
   starvationFallbackQuietGapMs: number;
+  /** An unproven write counts as landed this long after its send (WRITE_COMMIT_WINDOW_MS) */
+  writeCommitWindowMs: number;
   pollRoundGapMs: number;
   pollRoundGapAfterFailureMs: number;
 };
@@ -94,6 +105,7 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
   interleavedConfirmIntervalMs: INTERLEAVED_CONFIRM_INTERVAL_MS,
   interleavedConfirmGiveUpAfterWriteMs: INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS,
   starvationFallbackQuietGapMs: STARVATION_FALLBACK_QUIET_GAP_MS,
+  writeCommitWindowMs: WRITE_COMMIT_WINDOW_MS,
   pollRoundGapMs: POLL_ROUND_GAP_MS,
   pollRoundGapAfterFailureMs: POLL_ROUND_GAP_AFTER_FAILURE_MS,
 };
