@@ -290,7 +290,7 @@ async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Prom
   if (isSettingsQuery(command)) {
     state.scheduler = withSettingsReadback(state.scheduler, command, fields, performance.now());
   }
-  state.onDecodedRound({ command, fields, decodedAt: Date.now() });
+  state.onDecodedRound({ command, wireCommand, fields, decodedAt: Date.now() });
   return { kind: "decoded", fields };
 }
 

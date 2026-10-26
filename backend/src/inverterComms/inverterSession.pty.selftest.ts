@@ -13,13 +13,14 @@
  * a 3.5 s main-thread stall.
  *
  * The status queries run with the real tracker (inverterStatusTracking.ts) closing the loop, as in
- * production: the fault-record slots are read at startup, one per round, empty ones NAKed; then,
- * once the cadence has been measured, an EDB0 latches fault 14 in the fake like 2026-10-21's buy
- * window end did, and the engine must see the DC side go idle, read Fault mode at once, notice the
- * new fault code and read every slot again.
+ * production: the nine fault-record slots are read at startup, one per round; then, once the
+ * cadence has been measured, an EDB0 latches fault 14 in the fake like 2026-10-21's buy window end
+ * did, and the engine must see the DC side go idle, read Fault mode at once, notice the new fault
+ * code and read every slot again — with slot 04 declined (NAK) this time, so a query NAK still
+ * crosses the wire although the real firmware has never declined a slot.
  *
  * Run from backend/ with:  yarn node src/inverterComms/inverterSession.pty.selftest.ts
- * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~70 s.
+ * Needs python3 and Linux ptys (both present on ubuntu-latest CI runners). Takes ~80 s.
  */
 import process from "process";
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from "child_process";
@@ -38,8 +39,12 @@ import {
   INITIAL_INVERTER_STATUS_TRACKING,
   type InverterStatusEvent,
 } from "./inverterStatusTracking.ts";
-import { ALL_FAULT_RECORD_QUERIES } from "./statusPollPlan.ts";
+import { ALL_FAULT_RECORD_QUERIES, FAULT_RECORD_IDS, faultRecordIdOfWireCommand } from "./statusPollPlan.ts";
+import type { InverterFaultRecord } from "./inverterStatus.types.ts";
 import { WORKING_MODE_TEXT_BY_CODE } from "./pi17FieldTables.ts";
+import { decodeQueryPayload } from "./pi17Decode.ts";
+import { faultRecordOf, sameFaultRecordContent } from "./inverterFaultRecords.ts";
+import { HFS_BOOT_RECORDS } from "./pi17StatusFixtures.ts";
 
 const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", import.meta.url));
 /** More blocked jobs than the pool has threads (default 4; production runs UV_THREADPOOL_SIZE=32) */
@@ -49,14 +54,26 @@ const EVENT_LOOP_STALL_MS = 3_500;
 const SETTLED_WINDOW_MS = 8_000;
 /** ≤ 1.33 s per GS+PS round; the retired daemon managed ~1.2 s, the live engine ~1.15 s */
 const MAX_MEDIAN_GS_GAP_MS = 1_330;
-/** From the EDB0 to the second read of the last fault-record slot: quiet gap, confirm, ~12 rounds */
-const LATCH_SCENARIO_TIMEOUT_MS = 30_000;
+/**
+ * One budget for the whole latch scenario — the EDB1 readback, the EDB0 readback, then the second
+ * read of the last fault-record slot (quiet gaps, confirms, ~12 rounds, nine of them carrying a
+ * 138-byte record or a NAK). Shared rather than per wait, so a run that stalls in any of them
+ * still prints its diagnostics well inside HARD_TIMEOUT_MS (~55 s to the scenario's start + this).
+ */
+const LATCH_SCENARIO_TIMEOUT_MS = 60_000;
 /**
  * The fault-14 latch must be read as Fault mode this soon (quiet gap 1.5 s + confirm + 2–3 rounds),
  * i.e. by the DC-idle trigger — the minute poll isn't due until ~60 s into the run
  */
 const MAX_LATCH_TO_FAULT_MODE_READ_S = 8;
 const HARD_TIMEOUT_MS = 150_000;
+/**
+ * The fake's flash, as the real inverter answered HFS00..HFS08 on 2026-10-26, decoded: whole
+ * payloads, since a fault code alone can't tell slot 1's F12 from slot 2's
+ */
+const DECODED_FIELDS_BY_SLOT = HFS_BOOT_RECORDS.map(payload => decodeQueryPayload("HFS", payload).fields);
+/** The slot the fake declines with a NAK when the engine reads the slots again after the latch */
+const SLOT_DECLINED_AFTER_LATCH = "HFS04";
 /** Values every fake GS/PS answer carries (the live 2026-10-25 frames) — a misattributed frame can't */
 const FAKE_GS_BATTERY_VOLTAGE = 53.2;
 const FAKE_PS_SOLAR_POWER_1 = 80;
@@ -207,6 +224,8 @@ async function runEndToEnd(): Promise<void> {
   // A buy window: AC charging on (EDB1, confirmed by readback — EDB0 queued before that would be
   // dropped as already satisfied), then its end (EDB0), which latches fault 14 in the fake. Then
   // wait for the engine's whole reaction.
+  const latchScenarioStartedAt = Date.now();
+  const latchScenarioDeadline = latchScenarioStartedAt + LATCH_SCENARIO_TIMEOUT_MS;
   for (const command of ["EDB1", "EDB0"] as const) {
     const roundsBeforeWrite = decodedRounds.length;
     engine.queueSetter({
@@ -216,18 +235,23 @@ async function runEndToEnd(): Promise<void> {
       onResult: ({ acknowledged }) => setterResults.set(command, acknowledged),
     });
     const expectedFlag = command === "EDB1" ? "enabled" : "disabled";
-    await waitFor(
+    const readBack = await waitFor(
       () =>
         decodedRounds
           .slice(roundsBeforeWrite)
           .some(round => round.command === "HECS" && round.fields.ac_charge_battery === expectedFlag),
-      LATCH_SCENARIO_TIMEOUT_MS
+      latchScenarioDeadline - Date.now()
     );
+    if (!readBack) console.log(`no HECS readback with AC charging ${expectedFlag} after ${command} within the budget`);
   }
   const lastSlotQuery = ALL_FAULT_RECORD_QUERIES.at(-1);
   const latchScenarioCompleted = await waitFor(
     () => fake.events.filter(event => event.event === "frame_sent" && event.answering === lastSlotQuery).length >= 2,
-    LATCH_SCENARIO_TIMEOUT_MS
+    latchScenarioDeadline - Date.now()
+  );
+  console.log(
+    `latch scenario ${latchScenarioCompleted ? "completed" : "did NOT complete"} in`,
+    `${((Date.now() - latchScenarioStartedAt) / 1000).toFixed(1)} s of its ${LATCH_SCENARIO_TIMEOUT_MS / 1000} s budget`
   );
 
   const counters = engine.exchangeCounters();
@@ -253,7 +277,14 @@ async function runEndToEnd(): Promise<void> {
     medianGsGapMs,
     threadpoolStillBlocked,
   });
-  evaluateStatusQueries({ decodedRounds, fakeEvents, statusEvents, setterResults, latchScenarioCompleted });
+  evaluateStatusQueries({
+    decodedRounds,
+    fakeEvents,
+    statusEvents,
+    faultRecords: statusTracking.status.fault_records,
+    setterResults,
+    latchScenarioCompleted,
+  });
 }
 
 /** MOD/CFS/WS/HFS on the wire and the tracker's loop around them, ending with the fault-14 latch */
@@ -261,12 +292,14 @@ function evaluateStatusQueries({
   decodedRounds,
   fakeEvents,
   statusEvents,
+  faultRecords,
   setterResults,
   latchScenarioCompleted,
 }: {
   decodedRounds: readonly DecodedRound[];
   fakeEvents: readonly FakeInverterEvent[];
   statusEvents: readonly InverterStatusEvent[];
+  faultRecords: readonly InverterFaultRecord[];
   setterResults: ReadonlyMap<string, boolean>;
   latchScenarioCompleted: boolean;
 }) {
@@ -287,7 +320,9 @@ function evaluateStatusQueries({
       warningRounds.every(round => Object.values(round.fields).every(flag => flag === "inactive")) &&
       faultRecordRounds.length >= 2 &&
       faultRecordRounds.every(
-        round => round.fields.fault_record_id === 0 && round.fields.fault_record_fault_code === 12
+        round =>
+          JSON.stringify(round.fields) ===
+          JSON.stringify(DECODED_FIELDS_BY_SLOT[faultRecordIdOfWireCommand(round.wireCommand) ?? -1])
       ),
     `MOD ${modeRounds.length}, CFS ${latestFaultRounds.length}, WS ${warningRounds.length}, HFS ${faultRecordRounds.length}`
   );
@@ -297,7 +332,7 @@ function evaluateStatusQueries({
   const slotQueries = ALL_FAULT_RECORD_QUERIES.map(query => `^P006${query}`);
   const slotReadsBeforeLatch = received.filter(event => slotQueries.includes(event.command) && event.t < latchedAt);
   check(
-    "at startup every fault-record slot was read exactly once (empty slots' NAKs taken at once, never retried)",
+    "at startup every fault-record slot was read exactly once (never retried)",
     slotQueries.every(query => slotReadsBeforeLatch.filter(event => event.command === query).length === 1),
     slotReadsBeforeLatch.map(event => event.command.slice(5)).join(",")
   );
@@ -306,11 +341,17 @@ function evaluateStatusQueries({
     return received.some(event => event.command === "^P003GS" && event.t > previousSlotReadAt && event.t < slotRead.t);
   });
   check("one fault-record slot per poll round (a GS between every two)", slotReadsSpreadOverRounds);
-  const declinedSlotAnswers = fakeEvents.filter(event => event.event === "frame_sent" && event.role === "declined");
   check(
-    "slots 01–08 were declined with a NAK at startup and after the latch (16 NAKs, each slot read once per batch)",
-    declinedSlotAnswers.length === 16,
-    `${declinedSlotAnswers.length} NAKs`
+    "the nine records (each naming slot 00 itself) were filed under the slots they were read from",
+    faultRecords.length === FAULT_RECORD_IDS.length &&
+      FAULT_RECORD_IDS.every((slot, index) => {
+        const filed = faultRecords[index];
+        const expected = faultRecordOf(DECODED_FIELDS_BY_SLOT[slot]!, slot, 0);
+        return filed?.record_id === slot && expected !== undefined && sameFaultRecordContent(filed, expected);
+      }),
+    faultRecords
+      .map(record => `${record.record_id}:F${record.fault_code}@${record.values?.battery_voltage ?? "?"}V`)
+      .join(" ")
   );
 
   check(
@@ -345,9 +386,34 @@ function evaluateStatusQueries({
     eventKinds.includes("mode -→05") && eventKinds.includes("fault -→12")
   );
   check(
-    "after the new fault code every slot was read again",
+    "after the new fault code every slot was read again, once each (the declined one not retried)",
     latchScenarioCompleted &&
       slotQueries.every(query => received.filter(event => event.command === query && event.t > latchedAt).length === 1)
+  );
+
+  // The run's one query NAK: declined → no decoded round, the batch goes on, the line goes quiet
+  const declinedAnswers = fakeEvents.flatMap(event =>
+    event.event === "frame_sent" && event.role === "declined" ? [event] : []
+  );
+  const declinedAt = declinedAnswers[0]?.t ?? Infinity;
+  const firstSendAfterDecline = received.find(event => event.t > declinedAt);
+  check(
+    `${SLOT_DECLINED_AFTER_LATCH} was declined with a NAK after the latch, the run's only NAK to a query`,
+    declinedAnswers.length === 1 && declinedAnswers[0]!.answering === SLOT_DECLINED_AFTER_LATCH,
+    declinedAnswers.map(event => event.answering).join(",")
+  );
+  check(
+    `the declined ${SLOT_DECLINED_AFTER_LATCH} decoded nothing (its only decoded round is the startup read)`,
+    faultRecordRounds.filter(round => round.wireCommand === SLOT_DECLINED_AFTER_LATCH).length === 1
+  );
+  check(
+    `after the query NAK the line was quiet ≥ ${LINE_QUIET_BEFORE_SEND_MS} ms before the next send`,
+    firstSendAfterDecline !== undefined &&
+      firstSendAfterDecline.follows_anomaly &&
+      firstSendAfterDecline.ms_since_last_tx_byte >= LINE_QUIET_BEFORE_SEND_MS - 20,
+    firstSendAfterDecline
+      ? `${firstSendAfterDecline.command} after ${firstSendAfterDecline.ms_since_last_tx_byte} ms`
+      : "no send after the NAK"
   );
 }
 

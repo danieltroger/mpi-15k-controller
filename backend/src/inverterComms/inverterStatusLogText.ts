@@ -6,6 +6,7 @@
  */
 import type { InverterWorkingModeCode } from "./inverterStatus.types.ts";
 import type { InverterStatusEvent } from "./inverterStatusTracking.ts";
+import { describeFaultRecordValues } from "./inverterFaultRecordText.ts";
 
 export function describeInverterStatusEvent(event: InverterStatusEvent): {
   level: "log" | "warn" | "debug";
@@ -51,8 +52,8 @@ export function describeInverterStatusEvent(event: InverterStatusEvent): {
       level: "log",
       text:
         `Inverter fault record slot ${formatSlot(record.record_id)}${event.changedSinceLastRead ? " (changed since the last read)" : ""}: ` +
-        `${record.fault_text}, stored time ${record.recorded_at_text || "?"} (YYMMDDhhmmss per the spec), work mode ${record.work_mode || "?"}, ` +
-        `value snapshot (alignment unverified) ${record.snapshot}`,
+        `${record.fault_text} — at the fault: ${record.values ? describeFaultRecordValues(record.values) : "values unreadable"}; ` +
+        `unidentified tokens ${record.unidentified}`,
     };
   }
   if (event.kind === "dc_idle_reported") {

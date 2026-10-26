@@ -12,7 +12,8 @@ import { ACK_FRAME, NAK_FRAME, classifyFrame, concatenateBuffers, createFrameAcc
 import {
   CFS_FAULT_14_PAYLOAD,
   dataFrameAsTheInverterSendsIt,
-  HFS00_PAYLOAD,
+  HFS_BOOT_RECORDS,
+  HFS_DATALOGGER_PAYLOAD,
   MOD_FAULT_PAYLOAD,
   WS_DAY_PAYLOAD,
   WS_NIGHT_PAYLOAD,
@@ -74,7 +75,8 @@ const CFS_DATALOGGER = dataFrameAsTheInverterSendsIt(CFS_FAULT_14_PAYLOAD);
 const WS_NIGHT_DATALOGGER = dataFrameAsTheInverterSendsIt(WS_NIGHT_PAYLOAD);
 const WS_DAY_DATALOGGER = dataFrameAsTheInverterSendsIt(WS_DAY_PAYLOAD);
 const WS_MPPSOLAR_REFERENCE = latin1("^D0471,1,0,0,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,\x14\x9c\r");
-const HFS00_DATALOGGER = dataFrameAsTheInverterSendsIt(HFS00_PAYLOAD);
+// All nine slots as the controller read them on 2026-10-26: every record has the same shape
+const HFS_BOOT_RECORD_FRAMES = HFS_BOOT_RECORDS.map(dataFrameAsTheInverterSendsIt);
 
 const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer[]>> = {
   GS: [GS_LIVE_1, GS_LIVE_2, GS_LIVE_3, GS_REFERENCE],
@@ -85,7 +87,7 @@ const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer
   MOD: [MOD_REFERENCE, MOD_FAULT_DATALOGGER],
   CFS: [CFS_DATALOGGER],
   WS: [WS_NIGHT_DATALOGGER, WS_DAY_DATALOGGER, WS_MPPSOLAR_REFERENCE],
-  HFS: [HFS00_DATALOGGER],
+  HFS: HFS_BOOT_RECORD_FRAMES,
 };
 const ALL_COMMANDS: readonly Pi17QueryCommandName[] = ["GS", "PS", "BATS", "HECS", "GPMP", "MOD", "CFS", "WS", "HFS"];
 
@@ -362,7 +364,8 @@ check(
   "status gated: CFS code 100 / slot 9 dropped, an HFS slot 9 dropped",
   implausibleFieldsIn(decodeQueryPayload("CFS", "100,00").fields).length === 1 &&
     implausibleFieldsIn(decodeQueryPayload("CFS", "14,09").fields).length === 1 &&
-    implausibleFieldsIn({ ...decodeQueryPayload("HFS", HFS00_PAYLOAD).fields, fault_record_id: 9 }).length === 1
+    implausibleFieldsIn({ ...decodeQueryPayload("HFS", HFS_DATALOGGER_PAYLOAD).fields, fault_record_id: 9 }).length ===
+      1
 );
 check(
   "status gated: an unknown working mode and a WS flag that is neither 0 nor 1 are dropped",
@@ -407,10 +410,14 @@ for (const key of [...USB_VALUE_KEYS, "max._ac_charging_current"]) {
   if (!numericSettingsFieldNames.has(key)) continue; // option-valued readbacks are covered by the option check
   check(`gate has a range for consumed settings readback ${key}`, key in PLAUSIBLE_NUMERIC_RANGES);
 }
-const numericStatusFields = [...PI17_QUERY_RESPONSE_FIELDS.CFS, ...PI17_QUERY_RESPONSE_FIELDS.HFS]
-  .filter(spec => spec.reading.kind === "int")
-  .map(spec => influxFieldName(spec.name));
-for (const name of numericStatusFields) {
+// The status fields an alert reads; a fault record's snapshot values are informational and
+// deliberately ungated (a record from a battery-disconnect fault may well read 10.8 V)
+const alertReadStatusFields = [
+  ...PI17_QUERY_RESPONSE_FIELDS.CFS.filter(spec => spec.reading.kind === "int").map(spec => influxFieldName(spec.name)),
+  "fault_record_id",
+  "fault_record_fault_code",
+];
+for (const name of alertReadStatusFields) {
   check(`gate has a range for status field ${name}`, name in PLAUSIBLE_NUMERIC_RANGES);
 }
 // The gate looks ranges and option checks up by field name alone, whatever the command: two

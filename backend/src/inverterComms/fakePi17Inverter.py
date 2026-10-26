@@ -23,19 +23,21 @@ Like the real firmware, every CRC byte that would be 0x0A/0x0D/0x28 is sent as t
 live at the second cutover attempt, 2026-10-25; 0x00 is not bumped), so ~2.3 % of all frames
 exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC theirs.
 
-The status queries answer like this inverter answered the WiFi datalogger in October 2026: MOD
-05 (Hybrid), CFS 12,00 (the latest fault before the incident), WS all clear, HFS00 the real fault
-12 record, and a NAK for slots 01-08 (what an empty slot answers is unknown, so the fake declines).
+The status queries answer like this inverter did in October 2026: MOD 05 (Hybrid), CFS 12,00 (the
+latest fault before the incident), WS all clear, and HFS00-08 the nine records it returned on
+2026-10-26 (each naming slot 00 in its own id field).
 EDB0 (AC charging off: the end of a buy window) latches fault 14 the way 2026-10-21 did: MOD 04,
 CFS 14,00 (slot 00 again, as the real firmware kept it), battery 0 A and Idle/Idle in GS/PS. The
-latch commits like any other write, on the commit timing below.
+latch commits like any other write, on the commit timing below. Once latched, HFS04 is declined
+with a NAK (unless --no-faults): the real firmware has never declined a slot, but the engine's
+NAK path (declined, the batch goes on, the line goes quiet) must still run once per test run.
 
 Commit behaviour for the quiet-gap experiment harness (quietGapExperiment.pty.selftest.ts), the
 two readings of the July 2026 evidence:
   --commit-delay-s S        every write commits S seconds after it arrives, whatever the traffic
   --commit-needs-quiet-s Q  a write commits only once no command has arrived for Q seconds, so
                             continuous polling starves it forever
-  --no-faults               skip the fault plan above
+  --no-faults               skip the fault plan above and the declined slot
 
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
@@ -74,7 +76,21 @@ MOD_FAULT = "04"
 CFS_BEFORE_LATCH = "12,00"
 CFS_AFTER_LATCH = "14,00"
 WS_ALL_CLEAR = ",".join(["0"] * 23)
-HFS00_RECORD = "00,12,759900560005,04,05850,00012,00080,02313,2296,2298,4996,0410,7599,+0309,2294,2300,4996,0115,00045,00138,00001,029,046,000,000"
+# What the real inverter returned for HFS00..HFS08 on 2026-10-26: F14, F12, F12, F12, F14, F23, F57, F14, F12
+# (pi17StatusFixtures.ts HFS_BOOT_RECORDS; the e2e checks every decoded slot against those)
+HFS_RECORDS = [
+    "00,14,759900010005,66,01070,00000,00014,02371,2354,2350,5000,0544,7599,+0365,2354,2352,5003,0094,00069,00189,00002,042,059,000,000",
+    "00,12,759900560005,04,05850,00012,00080,02313,2296,2298,4996,0410,7599,+0309,2294,2300,4996,0115,00045,00138,00001,029,046,000,000",
+    "00,12,759900070005,15,05913,00009,00088,02318,2358,2386,4998,0411,7599,+0328,2356,0000,5001,1321,00237,00166,00013,029,046,000,000",
+    "00,12,759900160005,41,05940,00011,00085,02378,2326,2367,4994,0412,7599,+0380,2326,2367,4992,0309,00255,00236,00005,029,046,000,000",
+    "00,14,759900550005,47,01105,00000,00009,02236,2197,2172,4993,0529,7599,+0236,2193,2174,4993,0139,00250,00203,00003,039,056,000,000",
+    "00,23,759900310003,37,06947,00000,00053,00000,0000,0000,0000,0523,7599,+0303,2300,2300,5000,5706,05694,05745,00114,048,071,000,000",
+    "00,57,759900560005,84,06296,00000,00000,02464,2468,2466,5002,0518,7599,+0466,2462,2462,4996,0221,00247,00221,00004,080,099,000,000",
+    "00,14,759900410005,39,01124,00000,00017,02376,2245,2380,5000,0513,7599,+0378,2251,2365,5013,0095,00375,00189,00004,036,058,000,000",
+    "00,12,759900540005,62,06392,00000,00094,02294,2363,2277,4998,0108,7599,+0296,2361,2279,4996,1612,00611,01046,00021,035,051,000,000",
+]
+# Mid-batch, so the batch must go on past the NAK (inverterSession.pty.selftest.ts checks it)
+SLOT_DECLINED_AFTER_LATCH = 4
 
 
 def crc16_xmodem(data):
@@ -138,6 +154,7 @@ class FakeInverter:
         self.next_command_follows_anomaly = False
         all_faults = {"gs3", "ps3", "setter1", "gs5", "gs7", "gs9", "gs11", "gs13", "edf_late"}
         self.faults_remaining = all_faults if with_faults else set()
+        self.slot_declined_after_latch = SLOT_DECLINED_AFTER_LATCH if with_faults else None
 
     # ---------- frames ----------
     def next_serial(self):
@@ -185,14 +202,17 @@ class FakeInverter:
         return data_frame(",".join(tokens)), serial
 
     def status_frame(self, command):
-        """MOD/CFS/WS answer with data; an HFS slot other than 00 declines (None = send a NAK)"""
+        """MOD/CFS/WS answer with data, HFS0n with slot n's record (None = declined: send a NAK)"""
         if command == "MOD":
             return data_frame(MOD_FAULT if self.fault_14_latched else MOD_HYBRID)
         if command == "CFS":
             return data_frame(CFS_AFTER_LATCH if self.fault_14_latched else CFS_BEFORE_LATCH)
         if command == "WS":
             return data_frame(WS_ALL_CLEAR)
-        return data_frame(HFS00_RECORD) if command == "HFS00" else None
+        slot = int(command[4])
+        if self.fault_14_latched and slot == self.slot_declined_after_latch:
+            return None
+        return data_frame(HFS_RECORDS[slot])
 
     def settings_frame(self, command):
         if command == "GPMP":

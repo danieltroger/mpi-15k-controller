@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 import { getBackendSyncedSignal } from "~/helpers/getBackendSyncedSignal";
 import { formatDurationMs, formatRelativeTime, useNowMs } from "~/helpers/format";
 import type { InverterOperatingStatus } from "../../../../backend/src/inverterComms/inverterStatus.types";
+import { describeFaultRecordValues } from "../../../../backend/src/inverterComms/inverterFaultRecordText";
 import { DiagRow } from "./DiagRow";
 
 /**
@@ -54,14 +55,24 @@ function InverterStatusRows(props: { status: InverterOperatingStatus; nowMs: num
         value={props.status.warnings ? props.status.warnings.active.join(", ") || "none" : "—"}
       />
       <Show when={props.status.fault_records.length}>
-        <div class="diag__subhead">Fault records in flash</div>
+        <div
+          class="diag__subhead"
+          title="The firmware stores no readable time; the values follow the record layout inferred for this firmware"
+        >
+          Fault records in flash
+        </div>
         <For each={props.status.fault_records}>
           {record => (
-            <DiagRow
-              label={`Slot ${String(record.record_id).padStart(2, "0")}`}
-              value={`${record.fault_text}, stored ${record.recorded_at_text}`}
-              title={`Work mode ${record.work_mode}; value snapshot (alignment unverified): ${record.snapshot}`}
-            />
+            <>
+              <DiagRow
+                label={`Slot ${String(record.record_id).padStart(2, "0")}`}
+                value={record.fault_text}
+                title={`Unidentified tokens: ${record.unidentified}`}
+              />
+              <Show when={record.values}>
+                {values => <p class="diag__reason">At the fault: {describeFaultRecordValues(values())}</p>}
+              </Show>
+            </>
           )}
         </For>
       </Show>

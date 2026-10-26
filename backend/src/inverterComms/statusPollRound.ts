@@ -130,10 +130,7 @@ function afterFaultRecordOutcome(
     }
     return plan;
   }
-  // A firmware that answers every slot with slot 00's record would otherwise just overwrite slot 00
-  const recordSlot = outcome.fields.fault_record_id;
-  if (recordSlot !== requestedSlot) {
-    warnLog(`Inverter fault record mismatch: requested ${statusQuery}, the record names slot`, recordSlot);
-  }
+  // The record's own slot field is 00 in every slot on this firmware, so it isn't checked: the
+  // tracker files the record under the slot asked for (inverterFaultRecords.ts)
   return plan;
 }

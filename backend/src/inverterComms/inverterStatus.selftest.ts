@@ -32,12 +32,14 @@ import {
   type StatusTrackingStep,
 } from "./inverterStatusTracking.ts";
 import { describeInverterStatusEvent } from "./inverterStatusLogText.ts";
+import { describeFaultRecordValues } from "./inverterFaultRecordText.ts";
 import { afterStatusQueryOutcome, type QueryOutcome } from "./statusPollRound.ts";
 import { setOnErrorLog } from "../utilities/logging.ts";
 import type { DecodedFields, DecodedRound, Pi17QueryCommandName } from "./pi17Protocol.types.ts";
 import {
   CFS_FAULT_14_PAYLOAD,
-  HFS00_PAYLOAD,
+  HFS_BOOT_RECORDS,
+  HFS_DATALOGGER_PAYLOAD,
   MOD_FAULT_PAYLOAD,
   MOD_HYBRID_PAYLOAD,
   WS_DAY_PAYLOAD,
@@ -58,12 +60,18 @@ function check(name: string, actual: unknown, expected: unknown) {
 // 2026-10-21 04:15:06 UTC, the latch
 const LATCH_MS = +new Date("2026-10-21T04:15:06Z");
 
-function round(command: Pi17QueryCommandName, payload: string, decodedAt: number): DecodedRound {
-  return { command, fields: decodeQueryPayload(command, payload).fields, decodedAt };
+/** `wireCommand` differs from `command` only for a fault-record slot (HFS03) */
+function round(
+  command: Pi17QueryCommandName,
+  payload: string,
+  decodedAt: number,
+  wireCommand: string = command
+): DecodedRound {
+  return { command, wireCommand, fields: decodeQueryPayload(command, payload).fields, decodedAt };
 }
 
 function roundWithFields(command: Pi17QueryCommandName, fields: DecodedFields, decodedAt: number): DecodedRound {
-  return { command, fields, decodedAt };
+  return { command, wireCommand: command, fields, decodedAt };
 }
 
 function replay(rounds: readonly DecodedRound[], from: InverterStatusTracking = INITIAL_INVERTER_STATUS_TRACKING) {
@@ -98,14 +106,14 @@ check("CFS 14,00 decodes as fault 14 in flash slot 0", decodeQueryPayload("CFS",
   check("WS: this firmware's 23 flags decode, the spec's 24th is absent", Object.keys(nightFlags).length, 23);
 }
 {
-  const record = decodeQueryPayload("HFS", HFS00_PAYLOAD);
+  const record = decodeQueryPayload("HFS", HFS_DATALOGGER_PAYLOAD);
   check(
-    "HFS00 decodes without problems into its 25 fields",
+    "the datalogger's HFS record decodes without problems into its 25 fields",
     [record.problems, Object.keys(record.fields).length],
     [[], 25]
   );
   check(
-    "HFS00: slot 0, fault 12, the stored time and work mode verbatim",
+    "its id field (00, as in every slot), fault 12, and the unreadable time and work mode verbatim",
     [
       record.fields.fault_record_id,
       record.fields.fault_record_fault_code,
@@ -138,6 +146,83 @@ check(
   describeInverterFaultCode(28),
   "F28 (not in the manual's or the PI17 spec's fault list)"
 );
+
+// ——— the nine records the controller read at its 2026-10-26 boot: filed by the slot asked for ———
+{
+  const bootRead = replay(
+    HFS_BOOT_RECORDS.map((payload, slot) => round("HFS", payload, LATCH_MS + slot * 1_800, `HFS0${slot}`))
+  );
+  const records = bootRead.tracking.status.fault_records;
+  check(
+    "every record names slot 00 itself, yet each is filed under the slot that was asked for",
+    [
+      HFS_BOOT_RECORDS.every(payload => decodeQueryPayload("HFS", payload).fields.fault_record_id === 0),
+      records.map(record => [record.record_id, record.fault_code]),
+    ],
+    [
+      true,
+      [
+        [0, 14],
+        [1, 12],
+        [2, 12],
+        [3, 12],
+        [4, 14],
+        [5, 23],
+        [6, 57],
+        [7, 14],
+        [8, 12],
+      ],
+    ]
+  );
+  check(
+    "nine reads, nine records logged, none taken for a rewrite of another",
+    bootRead.steps.map(step =>
+      step.events.map(event => (event.kind === "fault_record_read" ? event.changedSinceLastRead : event.kind))
+    ),
+    HFS_BOOT_RECORDS.map(() => [false])
+  );
+  check(
+    "every record's readable values decode",
+    records.every(record => record.values !== undefined),
+    true
+  );
+  const faultCounts: Record<string, number> = {};
+  for (const record of records) faultCounts[`F${record.fault_code}`] = (faultCounts[`F${record.fault_code}`] ?? 0) + 1;
+  check("the history: F14 ×3, F12 ×4, F23 and F57 once", faultCounts, { F14: 3, F12: 4, F23: 1, F57: 1 });
+  check(
+    "slot 0, the 2026-10-21 latch: grid 237.1 V as Influx had it, the pack at 54.4 V, 59 °C",
+    describeFaultRecordValues(records[0]!.values!),
+    "grid 237.1/235.4/235.0 V at 50.00 Hz, battery 54.4 V, output 235.4/235.2 V at 50.03 Hz, 94/69/189 VA (2 % load), inner 42 °C, component 59 °C"
+  );
+  check(
+    "slot 5, the 2025-04-13 outage overload: no grid, islanding at 230 V / 50 Hz, ~5.7 kVA a phase, 114 % load",
+    describeFaultRecordValues(records[5]!.values!),
+    "grid 0.0/0.0/0.0 V at 0.00 Hz, battery 52.3 V, output 230.0/230.0 V at 50.00 Hz, 5706/5694/5745 VA (114 % load), inner 48 °C, component 71 °C"
+  );
+  check(
+    "slot 6, the 2025-06-30 over-temperature: grid 246–247 V, 80 °C inside, 99 °C at the hottest component",
+    [
+      records[6]!.values!.ac_input_voltage_r,
+      records[6]!.values!.inner_temperature,
+      records[6]!.values!.component_max_temperature,
+    ],
+    [246.4, 80, 99]
+  );
+  check(
+    "the tokens no reading fits are kept verbatim",
+    records[0]!.unidentified,
+    "759900010005,66,01070,00000,00014,7599,+0365,000,000"
+  );
+  const notASlot = afterDecodedRound(
+    INITIAL_INVERTER_STATUS_TRACKING,
+    round("HFS", HFS_BOOT_RECORDS[0]!, LATCH_MS, "HFS")
+  );
+  check(
+    "an HFS round that doesn't say which slot it asked for is reported, not filed",
+    [notASlot.events.map(event => event.kind), notASlot.tracking.status.fault_records],
+    [["unreadable_round"], []]
+  );
+}
 
 // ——— the status poll plan ———
 {
@@ -259,7 +344,7 @@ check(
     round("MOD", MOD_HYBRID_PAYLOAD, LATCH_MS - 120_000),
     round("CFS", "12,00", LATCH_MS - 119_000),
     round("WS", WS_DAY_PAYLOAD, LATCH_MS - 118_000),
-    round("HFS", HFS00_PAYLOAD, LATCH_MS - 117_000),
+    round("HFS", HFS_DATALOGGER_PAYLOAD, LATCH_MS - 117_000, "HFS01"),
   ]);
   check(
     "startup readings are baselines: one event each, no extra queries asked for",
@@ -283,7 +368,7 @@ check(
       { level: "log", text: "Inverter warning flags: none" },
       {
         level: "log",
-        text: "Inverter fault record slot 00: F12 Leakage current exceed permit range (GFCI fault), stored time 759900560005 (YYMMDDhhmmss per the spec), work mode Fault mode (04), value snapshot (alignment unverified) 05850,00012,00080,02313,2296,2298,4996,0410,7599,+0309,2294,2300,4996,0115,00045,00138,00001,029,046,000,000",
+        text: "Inverter fault record slot 01: F12 Leakage current exceed permit range (GFCI fault) — at the fault: grid 231.3/229.6/229.8 V at 49.96 Hz, battery 41.0 V, output 229.4/230.0 V at 49.96 Hz, 115/45/138 VA (1 % load), inner 29 °C, component 46 °C; unidentified tokens 759900560005,04,05850,00012,00080,7599,+0309,000,000",
       },
     ]
   );
@@ -293,7 +378,11 @@ check(
       beforeLatch.tracking.status.working_mode,
       beforeLatch.tracking.status.latest_fault,
       beforeLatch.tracking.status.warnings,
-      beforeLatch.tracking.status.fault_records.map(record => [record.record_id, record.fault_code, record.work_mode]),
+      beforeLatch.tracking.status.fault_records.map(record => [
+        record.record_id,
+        record.fault_code,
+        record.values?.battery_voltage,
+      ]),
     ],
     [
       {
@@ -312,7 +401,7 @@ check(
         time: LATCH_MS - 119_000,
       },
       { active: [], time: LATCH_MS - 118_000 },
-      [[0, 12, "Fault mode (04)"]],
+      [[1, 12, 41]],
     ]
   );
 
@@ -334,7 +423,7 @@ check(
       round("CFS", CFS_FAULT_14_PAYLOAD, LATCH_MS + 9_000),
       round("WS", WS_DAY_PAYLOAD, LATCH_MS + 9_500),
       round("MOD", MOD_FAULT_PAYLOAD, LATCH_MS + 10_000),
-      round("HFS", HFS00_PAYLOAD, LATCH_MS + 11_000),
+      round("HFS", HFS_DATALOGGER_PAYLOAD, LATCH_MS + 11_000, "HFS01"),
       round("MOD", MOD_FAULT_PAYLOAD, LATCH_MS + 70_000),
     ],
     beforeLatch.tracking
@@ -432,7 +521,7 @@ check(
 
   // A slot whose content changes is logged again, flagged as changed
   const rewritten = replay(
-    [round("HFS", HFS00_PAYLOAD.replace(/^00,12,/, "00,14,"), LATCH_MS + 3_600_000)],
+    [round("HFS", HFS_DATALOGGER_PAYLOAD.replace(/^00,12,/, "00,14,"), LATCH_MS + 3_600_000, "HFS01")],
     latch.tracking
   );
   check(
@@ -485,6 +574,15 @@ check(
     "HFS03",
     "HFS04",
   ]);
+  const batchAfterSlot04: StatusPollPlan = { ...initialStatusPollPlan(), requested: ["HFS05", "HFS06"] };
+  check(
+    "a declined slot is taken as empty and the batch goes on; one unanswered while GS/PS answer abandons it",
+    [
+      afterStatusQueryOutcome(batchAfterSlot04, "HFS04", { kind: "declined" }, 0, true).requested,
+      afterStatusQueryOutcome(batchAfterSlot04, "HFS04", { kind: "unanswered" }, 0, true).requested,
+    ],
+    [["HFS05", "HFS06"], []]
+  );
   const recovered = afterLinkRecovered(plan);
   check(
     "link recovery clears every back-off and asks for MOD, CFS and WS at once",
