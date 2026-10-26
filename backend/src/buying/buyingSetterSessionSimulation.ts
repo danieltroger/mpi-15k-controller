@@ -1,8 +1,10 @@
 /**
- * Runs the real buying-setter graph (via buyingSetterWiringHarness.ts) against #48's real pure
- * scheduler (schedulerCore.ts) and a modelled inverter, in simulated time: setters are queued,
- * gated, sent, confirmed after the quiet gap and polled exactly as the session would, and their
- * readbacks flow back into the graph. Only the wire is faked.
+ * Runs the real buying-setter graph (via buyingSetterWiringHarness.ts) against the real pure scheduler
+ * (schedulerCore.ts) and a modelled inverter, in simulated time: setters are queued, gated, sent,
+ * confirmed after the quiet gap and polled exactly as the session would, their readbacks flow back into
+ * the graph, and the graph sees the session's write chains and can ask it for a settings readback.
+ * Only the wire is faked. The modelled inverter commits every write a fixed time after it went out, so
+ * in send order.
  */
 import type { SetterQueueItem } from "../inverterComms/inverterComms.types.ts";
 import type { DecodedFields, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
@@ -13,11 +15,13 @@ import {
   decideNextAction,
   initialSchedulerState,
   type SchedulerState,
+  withSettingsPollDue,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
 } from "../inverterComms/schedulerCore.ts";
 import type { SchedulerTiming } from "../inverterComms/schedulerTiming.ts";
+import { unprovenWritesIn } from "../inverterComms/fieldWriteChains.ts";
 import {
   advanceTo,
   createWiringHarness,
@@ -42,6 +46,8 @@ const STEP_MS = 250;
 export type InverterModel = {
   limitAmps: number;
   acChargingEnabled: boolean;
+  /** How long after a write it commits (default COMMIT_AFTER_WRITE_MS) */
+  commitAfterWriteMs?: number;
   /** Setters the inverter ACKs but never applies */
   neverApplies: ReadonlySet<string>;
   /** Setters the inverter rejects (NAK): nothing commits, and onResult reports acknowledged: false */
@@ -86,7 +92,11 @@ export function createSessionSimulation({
     {
       clock,
       queueSetter: item => queueIntoSession(session, clock, item),
-      lastSentAtMsByCommand: () => session.scheduler.lastSentAtByCommand,
+      // As the session exposes them: the drop-trust chains
+      unprovenWrites: (query, field) => unprovenWritesIn(session.scheduler.dropTrustChains, query, field),
+      requestSettingsReadback: () => {
+        session.scheduler = withSettingsPollDue(session.scheduler);
+      },
       settingsReadbackAtMs: query => session.scheduler.latestSettingsReadbacks[query]?.decodedAtMs,
     }
   );
@@ -170,7 +180,7 @@ function sendSetter(simulation: SessionSimulation, command: string, nowMs: numbe
   });
   const acknowledged = !inverter.rejects?.has(command);
   if (acknowledged && !inverter.neverApplies.has(command)) {
-    inverter.pendingCommits.push({ atMs: nowMs + COMMIT_AFTER_WRITE_MS, command });
+    inverter.pendingCommits.push({ atMs: nowMs + (inverter.commitAfterWriteMs ?? COMMIT_AFTER_WRITE_MS), command });
   }
   const answeredAtMs = nowMs + SETTER_EXCHANGE_MS;
   // Like the session: the send is recorded first, then the owner hears the ACK or NAK

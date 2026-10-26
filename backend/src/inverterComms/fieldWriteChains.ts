@@ -8,7 +8,8 @@
  * landed — seen in a readback, or past its commit window. And while B may still land, a readback
  * showing A (or anything but B) can't vouch for the field: a queued A must not be dropped against it.
  * The scheduler keeps two sets of chains over the same writes, one per commit window: the confirm's
- * and the satisfied drop's longer one (schedulerTiming.ts).
+ * and the satisfied drop's longer one (schedulerTiming.ts). The longer one is also what the session
+ * hands consumers as a field's unproven writes (the buy-window step-down's proof of its cap, #65).
  */
 import type { DecodedFieldValue, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 
@@ -24,8 +25,19 @@ export type FieldWriteChain = {
 /** Keyed by readbackFieldKey(query, field) */
 export type FieldWriteChains = Readonly<Record<string, FieldWriteChain>>;
 
+const NO_UNPROVEN_WRITES: readonly FieldWrite[] = [];
+
 export function readbackFieldKey(query: SettingsQueryCommandName, field: string): string {
   return `${query}:${field}`;
+}
+
+/** One field's writes that no readback has proven landed yet, oldest first (none: an empty list) */
+export function unprovenWritesIn(
+  chains: FieldWriteChains,
+  query: SettingsQueryCommandName,
+  field: string
+): readonly FieldWrite[] {
+  return chains[readbackFieldKey(query, field)]?.writes ?? NO_UNPROVEN_WRITES;
 }
 
 /** Record one field's write in a set of chains (a copy) */

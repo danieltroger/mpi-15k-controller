@@ -78,7 +78,7 @@ export const STALE_HOLD_LAPSE_MARGIN_MS = 10_000;
  * ambiguity was found at. Slower ones (July 2026: one landed 42 s into a quiet period) can make a
  * burst's verdict wrong either way: a false "confirmed" when the window takes both writes as landed,
  * or a false give-up. So nothing that can lose a write relies on this window: the satisfied drop
- * uses DROP_TRUST_COMMIT_WINDOW_MS.
+ * uses DROP_TRUST_COMMIT_WINDOW_MS, and so does the buy-window step-down's proof of its cap (#65).
  */
 export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
 /**

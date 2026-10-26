@@ -50,7 +50,8 @@ export function useInverterValues(config: Accessor<Config>) {
     inverterStatus: statusTracker.inverterStatus,
     queueSetter: session.queueSetter,
     lastWriteAt: session.lastWriteAt,
-    lastSentAtMsByCommand: session.lastSentAtMsByCommand,
+    unprovenWrites: session.unprovenWrites,
+    requestSettingsReadback: session.requestSettingsReadback,
     settingsReadbackAtMs: session.settingsReadbackAtMs,
     serialIsOpen: session.serialIsOpen,
   };

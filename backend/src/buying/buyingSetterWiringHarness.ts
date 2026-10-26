@@ -1,11 +1,21 @@
 /**
  * Test harness for buyingSetterWiring.ts: builds the real reactive graph under createRoot on plain
  * signals with a simulated clock, so the selftests can drive window ends, readbacks and the hall and
- * see exactly what gets queued in each tick.
+ * see exactly what gets queued in each tick. Unless a (simulated) session is passed in, the harness
+ * keeps the session's write chains itself, with the real scheduler functions: recordSend and the
+ * decodes feed them like the session's sends and readbacks.
  */
 import { type Accessor, batch, createRoot, createSignal, type Setter } from "solid-js";
 import type { DecodedRound, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem, UsbValues } from "../inverterComms/inverterComms.types.ts";
+import { type FieldWrite, unprovenWritesIn } from "../inverterComms/fieldWriteChains.ts";
+import {
+  afterSetterSent,
+  initialSchedulerState,
+  type SchedulerState,
+  withSettingsPollDue,
+  withSettingsReadback,
+} from "../inverterComms/schedulerCore.ts";
 import { wireBuyingSetters } from "./buyingSetterWiring.ts";
 
 /** The simulated wall clock runs this far ahead of the monotonic one, so mixing them up shows */
@@ -17,8 +27,10 @@ export type WiringHarness = {
   clock: SimulatedClock;
   /** Every command the wiring queued, in order, with the simulated time */
   queued: { atMs: number; command: string; item: SetterQueueItem }[];
-  /** Stands in for the session's send record unless one is passed in (see recordSend) */
-  sendRecord: Record<string, number>;
+  /** When the wiring asked the session for a settings readback */
+  readbackRequestsAtMs: number[];
+  /** Stands in for the session's write chains unless a session is passed in (see recordSend) */
+  scheduler: SchedulerState;
   wiring: ReturnType<typeof wireBuyingSetters>;
   dispose: () => void;
   setChargingAmperage: Setter<number | undefined>;
@@ -43,19 +55,22 @@ export function createWiringHarness(
   {
     clock = { monotonicMs: 0 },
     queueSetter,
-    lastSentAtMsByCommand,
+    unprovenWrites,
+    requestSettingsReadback,
     settingsReadbackAtMs = () => undefined,
   }: {
     clock?: SimulatedClock;
     queueSetter?: (item: SetterQueueItem) => void;
-    /** A real (simulated) session's send record; without one, the harness's own sendRecord */
-    lastSentAtMsByCommand?: () => Readonly<Record<string, number>>;
+    /** A real (simulated) session's readback request; without one, the harness marks its own poll due */
+    requestSettingsReadback?: () => void;
+    /** A real (simulated) session's write chains; without one, the harness's own (see recordSend) */
+    unprovenWrites?: (query: SettingsQueryCommandName, field: string) => readonly FieldWrite[];
     /** The session's settings-decode times; without one, none (a HECS of unknown age) */
     settingsReadbackAtMs?: (query: SettingsQueryCommandName) => number | undefined;
   } = {}
 ): WiringHarness {
   const queued: WiringHarness["queued"] = [];
-  const sendRecord: Record<string, number> = {};
+  const readbackRequestsAtMs: number[] = [];
   return createRoot(dispose => {
     const [chargingAmperageForBuying, setChargingAmperage] = createSignal(start.chargingAmperageForBuying);
     const [stillFeedingIn, setStillFeedingIn] = createSignal(false);
@@ -66,6 +81,7 @@ export function createWiringHarness(
     );
     const [solarWatts, setSolarWatts] = createSignal<number | undefined>(start.solarWatts ?? 0);
     const [clockTick, setClockTick] = createSignal(0);
+    const harness = { scheduler: initialSchedulerState() };
     const wiring = wireBuyingSetters({
       stillFeedingIn,
       chargingAmperageForBuying,
@@ -78,16 +94,22 @@ export function createWiringHarness(
         queued.push({ atMs: clock.monotonicMs, command: item.command, item });
         queueSetter?.(item);
       },
-      lastSentAtMsByCommand: lastSentAtMsByCommand ?? (() => sendRecord),
+      unprovenWrites:
+        unprovenWrites ?? ((query, field) => unprovenWritesIn(harness.scheduler.dropTrustChains, query, field)),
+      requestSettingsReadback: () => {
+        readbackRequestsAtMs.push(clock.monotonicMs);
+        if (requestSettingsReadback) requestSettingsReadback();
+        else harness.scheduler = withSettingsPollDue(harness.scheduler);
+      },
       settingsReadbackAtMs,
       clockTick,
       monotonicNowMs: () => clock.monotonicMs,
       wallClockNowMs: () => wallClockMs(clock),
     });
-    return {
+    return Object.assign(harness, {
       clock,
       queued,
-      sendRecord,
+      readbackRequestsAtMs,
       wiring,
       dispose,
       setChargingAmperage,
@@ -98,7 +120,7 @@ export function createWiringHarness(
       setSolarWatts,
       setClockTick,
       clockTick,
-    };
+    });
   });
 }
 
@@ -108,9 +130,9 @@ export function advanceTo(harness: WiringHarness, atMs: number): void {
   harness.setClockTick(tick => tick + 1);
 }
 
-/** As if the session had just sent `command` (its exchange done now) */
+/** As if the session had just sent `command` (its exchange done now): its writes join the chains */
 export function recordSend(harness: WiringHarness, command: string): void {
-  harness.sendRecord[command] = harness.clock.monotonicMs;
+  harness.scheduler = afterSetterSent(harness.scheduler, command, [], harness.clock.monotonicMs, true);
 }
 
 /** A fresh hall sample (stamped with the current simulated wall clock) */
@@ -118,23 +140,23 @@ export function hallSample(harness: WiringHarness, amps: number): void {
   harness.setBatteryCurrent({ value: amps, time: wallClockMs(harness.clock) });
 }
 
+/** Like the session: the readback is credited to the write chains before the graph sees it */
 export function decodeBats(harness: WiringHarness, limitAmps: number | string): void {
-  harness.setLastDecodedRound({
-    command: "BATS",
-    wireCommand: "BATS",
-    fields: { "max._ac_charging_current": limitAmps },
-    decodedAt: wallClockMs(harness.clock),
-  });
+  const fields = { "max._ac_charging_current": limitAmps };
+  harness.scheduler = withSettingsReadback(harness.scheduler, "BATS", fields, harness.clock.monotonicMs);
+  harness.setLastDecodedRound({ command: "BATS", wireCommand: "BATS", fields, decodedAt: wallClockMs(harness.clock) });
 }
 
-/** Like the session: the settings store and the decoded round change in one batch */
+/** Like the session: credited to the chains, then the settings store and the decoded round change in one batch */
 export function decodeHecs(harness: WiringHarness, state: "enabled" | "disabled"): void {
+  const fields = { ac_charge_battery: state };
+  harness.scheduler = withSettingsReadback(harness.scheduler, "HECS", fields, harness.clock.monotonicMs);
   batch(() => {
     harness.setAcChargeBatteryState(state);
     harness.setLastDecodedRound({
       command: "HECS",
       wireCommand: "HECS",
-      fields: { ac_charge_battery: state },
+      fields,
       decodedAt: wallClockMs(harness.clock),
     });
   });

@@ -1,20 +1,19 @@
 /**
- * The buying setters against #48's real scheduler (schedulerCore.ts) and a modelled inverter, in
+ * The buying setters against the real scheduler (schedulerCore.ts) and a modelled inverter, in
  * simulated time (buyingSetterSessionSimulation.ts): what actually goes on the wire at a window end —
- * when EDB0 goes out and at what current, and that a cap or an EDB0 the inverter never applies is
- * re-sent a bounded number of times, never in a loop (the review of #63 measured 30 MUCHGC0100 sends
- * in 30 min and GS/PS polling paused 70 % of the time with an unbounded re-queue).
+ * when EDB0 goes out and at what current, that a cap or an EDB0 the inverter never applies is re-sent
+ * a bounded number of times, never in a loop (the review of #63 measured 30 MUCHGC0100 sends in 30 min
+ * and GS/PS polling paused 70 % of the time with an unbounded re-queue), and #65's slow commits.
  * Run from backend/ with:  yarn node src/buying/buyingSetterSession.selftest.ts
  */
 import process from "process";
 import { setOnErrorLog } from "../utilities/logging.ts";
+import { STEP_DOWN_EXTENSION_MS, STEP_DOWN_TIMEOUT_MS } from "./buyWindowEndStepDown.ts";
 import {
   ALTERNATE_CAP_AMPS,
   HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS,
   IDLE_AC_CHARGING_LIMIT_AMPS,
-  STEP_DOWN_EXTENSION_MS,
-  STEP_DOWN_TIMEOUT_MS,
-} from "./buyWindowEndStepDown.ts";
+} from "./buyWindowEndEvidence.ts";
 import { EDB0_RETRY_SPACING_MS, MAX_EDB0_RETRIES } from "./buyWindowEndRelease.ts";
 import { createSessionSimulation, runUntil, type SentSetter, sentCommands } from "./buyingSetterSessionSimulation.ts";
 
@@ -207,12 +206,14 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  // 10 A after 10 → 261 → 10 can't tell whether MUCHGC2610 is still to land: the alternate cap settles it
   check(
-    "window ending 11 s in at full current, HECS still 'disabled': EDB0 only once the cap is in effect",
+    "window ending 11 s in at full current, HECS still 'disabled': EDB0 only once the (alternate) cap is in effect",
     fullCurrentBeforeEnd &&
       hecsStillStale &&
+      sentCommands(simulation, "MUCHGC0090", 0).length === 1 &&
       edb0Sends.length === 1 &&
-      edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
+      edb0Sends[0]!.limitAmpsAtSend === ALTERNATE_CAP_AMPS &&
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS,
     `full current at the end: ${fullCurrentBeforeEnd}, HECS stale: ${hecsStillStale}; ` +
       describe([...sentCommands(simulation, "EDB1", 0), ...sentCommands(simulation, "MUCHGC2610", 0), ...edb0Sends])
@@ -243,6 +244,43 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS,
     describe(edb0Sends)
   );
+  simulation.harness.dispose();
+}
+
+{
+  // #65: commits take 45 s at the default quiet gap; the window ends, is re-entered at 5 s and ends again at
+  // 8 s. Under #63's fixed 12 s margin the 47 s re-check's 10 A released EDB0 as MUCHGC2610 landed (180 of
+  // 180 sweep runs at full current). Now nothing proves the cap until the gated MUCHGC0100 has landed — after
+  // its own confirms gave up — and the settings readback the step-down asks for then shows it.
+  const reportedErrors: string[] = [];
+  setOnErrorLog(args => reportedErrors.push(args.join(" ")));
+  const simulation = createSessionSimulation({
+    chargingAmperageForBuying: 261,
+    inverter: { ...nightWindowInverter, commitAfterWriteMs: 45_000 },
+  });
+  runUntil(simulation, 0);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, 5_000);
+  simulation.harness.setChargingAmperage(261);
+  runUntil(simulation, 8_000);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, THIRTY_MINUTES_MS);
+  const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  check(
+    "45 s commits, extended and re-ended: EDB0 once, with the cap in effect, inside the timeout, nothing paged",
+    edb0Sends.length === 1 &&
+      edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
+      edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
+      edb0Sends[0]!.atMs < 8_000 + STEP_DOWN_TIMEOUT_MS &&
+      simulation.harness.readbackRequestsAtMs.length === 1 &&
+      reportedErrors.length === 0,
+    `${describe(edb0Sends)}; readback requests at ${simulation.harness.readbackRequestsAtMs.join()}; ${reportedErrors.join(" | ").slice(0, 200)}`
+  );
+  check(
+    "…and the inverter ends with AC charging off at the 10 A cap",
+    !simulation.inverter.acChargingEnabled && simulation.inverter.limitAmps === IDLE_AC_CHARGING_LIMIT_AMPS
+  );
+  setOnErrorLog(undefined);
   simulation.harness.dispose();
 }
 

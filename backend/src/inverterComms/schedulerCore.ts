@@ -367,6 +367,11 @@ export function afterPollRound(
   };
 }
 
+/** A consumer needs fresh settings readbacks: the next poll round includes them, ahead of the interval */
+export function withSettingsPollDue(state: SchedulerState): SchedulerState {
+  return { ...state, lastSettingsPollAt: undefined };
+}
+
 /**
  * Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for
  * that query, and credit it to the writes it proves landed (fieldWriteChains.ts).

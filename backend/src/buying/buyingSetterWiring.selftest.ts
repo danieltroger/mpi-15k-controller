@@ -1,17 +1,15 @@
 /**
  * Reactive self-test of the buying setters (buyingSetterWiring.ts) under createRoot: what each tick
  * queues — above all that the window-end tick never queues EDB0, i.e. the hold is in force within that
- * tick (a hold lagging it by one microtask fails 8 of these checks) — plus the hall freshness and readback
- * memos and the bounded MUCHGC/EDB0 re-asks. The same graph against #48's real scheduler:
+ * tick (a hold lagging it by one microtask fails 12 of these checks) — plus the hall
+ * freshness, the bounded MUCHGC/EDB0 re-asks and the settings readback requests. The harness keeps the
+ * session's write chains with the real scheduler functions. The readback memos on their own:
+ * acChargingReadbacks.selftest.ts. The same graph against the real scheduler and a modelled inverter:
  * buyingSetterSession.selftest.ts.
  * Run from backend/ with:  yarn node src/buying/buyingSetterWiring.selftest.ts
  */
 import process from "process";
-import { createRoot, createSignal } from "solid-js";
-import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
-import type { UsbValues } from "../inverterComms/inverterComms.types.ts";
 import { setOnErrorLog } from "../utilities/logging.ts";
-import { createAcChargingReadbacks } from "./acChargingReadbacks.ts";
 import { freshHallAmps, HALL_READING_MAX_AGE_MS } from "./buyingSetterWiring.ts";
 import { STEP_DOWN_EXTENSION_MS, STEP_DOWN_TIMEOUT_MS } from "./buyWindowEndStepDown.ts";
 import { EDB0_RETRY_SPACING_MS } from "./buyWindowEndRelease.ts";
@@ -38,7 +36,9 @@ const failedChecks: string[] = [];
     endTick.join(" ")
   );
   check("…and the step-down holds", harness.wiring.holdsAcChargingOn());
-  const beforeConfirm = runWithHall(harness, 250, 12_250, atMs => (atMs < 6_000 ? 280 : 11));
+  advanceTo(harness, 500);
+  recordSend(harness, "MUCHGC0100");
+  const beforeConfirm = runWithHall(harness, 750, 12_250, atMs => (atMs < 6_500 ? 280 : 11));
   check(
     "no EDB0 at any tick before the cap is confirmed (hall already 11 A)",
     !beforeConfirm.some(entry => entry.command === "EDB0")
@@ -46,7 +46,7 @@ const failedChecks: string[] = [];
   advanceTo(harness, 12_500);
   const confirmTick = queuedDuring(harness, () => decodeBats(harness, 10));
   check(
-    "BATS 10 A with the hall settled → EDB0 queued in that tick",
+    "BATS 10 A proving the cap's write landed, the hall settled → EDB0 queued in that tick",
     confirmTick.join(" ") === "EDB0",
     confirmTick.join(" ")
   );
@@ -99,12 +99,28 @@ const failedChecks: string[] = [];
     !endTick.includes("EDB0") && !endTick.includes("EDB1") && harness.wiring.holdsAcChargingOn(),
     endTick.join(" ")
   );
-  const untilConfirm = runWithHall(harness, 5_250, 17_250, atMs => (atMs < 11_000 ? 270 : 11));
+  advanceTo(harness, 5_400);
+  recordSend(harness, "MUCHGC0100");
+  const untilConfirm = runWithHall(harness, 5_500, 17_250, atMs => (atMs < 11_400 ? 270 : 11));
   check("…none either until the cap is proven", !untilConfirm.some(entry => entry.command === "EDB0"));
+  // 10 A after 10 → 261 → 10 can't tell whether MUCHGC2610 is still to land: the alternate cap settles it
   advanceTo(harness, 17_400);
   decodeHecs(harness, "enabled");
   const confirmTick = queuedDuring(harness, () => decodeBats(harness, 10));
-  check("…EDB0 at the confirm 12.4 s after the end", confirmTick.join(" ") === "EDB0", confirmTick.join(" "));
+  check(
+    "…the cap's 10 A confirm can't rule out MUCHGC2610 → MUCHGC0090 queued, no EDB0",
+    confirmTick.join(" ") === "MUCHGC0090",
+    confirmTick.join(" ")
+  );
+  advanceTo(harness, 17_700);
+  recordSend(harness, "MUCHGC0090");
+  runWithHall(harness, 17_750, 29_500, atMs => (atMs < 23_700 ? 11 : 9));
+  const alternateConfirmTick = queuedDuring(harness, () => decodeBats(harness, 9));
+  check(
+    "…its 9 A confirm proves every earlier write landed → EDB0, 24.7 s after the end",
+    alternateConfirmTick.join(" ") === "EDB0",
+    alternateConfirmTick.join(" ")
+  );
   harness.dispose();
 }
 
@@ -119,6 +135,8 @@ const failedChecks: string[] = [];
   const harness = nightWindowAt261();
   harness.setChargingAmperage(0);
   runWithHall(harness, 250, 6_000, atMs => (atMs < 6_000 ? 280 : 11));
+  advanceTo(harness, 500);
+  recordSend(harness, "MUCHGC0100");
   // The hall stops updating after 6 s: by the confirm at 12.5 s its 11 A is stale
   for (let atMs = 6_250; atMs < 12_500; atMs += 250) advanceTo(harness, atMs);
   advanceTo(harness, 12_500);
@@ -137,106 +155,37 @@ const failedChecks: string[] = [];
 }
 
 {
-  // The readback memos on their own
-  createRoot(dispose => {
-    const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
-    const [acChargeBatteryState, setAcChargeBatteryState] = createSignal<UsbValues["ac_charge_battery"]>("enabled");
-    let nowMs = 0;
-    const { acChargingLimitReadback, acChargingReading } = createAcChargingReadbacks({
-      lastDecodedRound,
-      acChargeBatteryState,
-      monotonicNowMs: () => nowMs,
-      sessionAcChargingReadAtMs: () => undefined,
-    });
-    check("BATS memo: nothing before a BATS round", acChargingLimitReadback() === undefined);
-    check(
-      "HECS reading: state from the store, time unknown (-Infinity) before any HECS round",
-      acChargingReading()?.state === "enabled" && acChargingReading()?.observedAtMs === -Infinity
-    );
-    const withSessionTime = createAcChargingReadbacks({
-      lastDecodedRound,
-      acChargeBatteryState,
-      monotonicNowMs: () => nowMs,
-      sessionAcChargingReadAtMs: () => -5_000,
-    });
-    check(
-      "HECS reading: …or, if the session knows it, the time of its last HECS decode",
-      withSessionTime.acChargingReading()?.observedAtMs === -5_000
-    );
-    nowMs = 1_000;
-    setLastDecodedRound({
-      command: "BATS",
-      wireCommand: "BATS",
-      fields: { "max._ac_charging_current": 261 },
-      decodedAt: 0,
-    });
-    const first = acChargingLimitReadback();
-    check("BATS memo: amps + the monotonic time it was observed", first?.amps === 261 && first.observedAtMs === 1_000);
-    nowMs = 2_000;
-    setLastDecodedRound({ command: "GS", wireCommand: "GS", fields: { battery_voltage: 55 }, decodedAt: 0 });
-    check("BATS memo: a GS round keeps the very same readback", acChargingLimitReadback() === first);
-    setLastDecodedRound({
-      command: "BATS",
-      wireCommand: "BATS",
-      fields: { "max._ac_charging_current": "garbled" },
-      decodedAt: 0,
-    });
-    check("BATS memo: a non-numeric limit keeps the previous one (and warns)", acChargingLimitReadback() === first);
-    nowMs = 3_000;
-    setLastDecodedRound({
-      command: "HECS",
-      wireCommand: "HECS",
-      fields: { ac_charge_battery: "enabled" },
-      decodedAt: 0,
-    });
-    check("HECS reading: stamped by a HECS round", acChargingReading()?.observedAtMs === 3_000);
-    nowMs = 4_000;
-    setLastDecodedRound({
-      command: "HECS",
-      wireCommand: "HECS",
-      fields: { feed_power_to_utility: "enabled" },
-      decodedAt: 0,
-    });
-    check(
-      "HECS reading: a HECS round without the flag doesn't restamp it",
-      acChargingReading()?.observedAtMs === 3_000
-    );
-    setAcChargeBatteryState("disabled");
-    check("HECS reading: follows the store's state", acChargingReading()?.state === "disabled");
-    dispose();
-  });
-}
-
-{
   // The review's restart probe: feedWhenNoSolar (and this graph) restarts after an error while the
-  // session lives on. EDB1 went out at a window start 3 h ago, EDB0 at its end; the store says
-  // "disabled", and no HECS round comes for the next 125 s.
-  const sessionRecord = { EDB1: 1_000, MUCHGC2610: 1_100, MUCHGC0100: 3_600_000, EDB0: 3_615_000 };
+  // session lives on. EDB1 went out at a window start 3 h ago, EDB0 at its end, both long read back: the
+  // session's chains hold nothing unproven, the store says "disabled", and no HECS round comes for 125 s.
   const restartAtMs = 3 * 3_600_000;
-  const lastHecsDecodedAtMs = 3_627_500; // EDB0's own HECS confirm, long after EDB1
   const restarted = createWiringHarness(
     { chargingAmperageForBuying: undefined, acChargeBatteryState: "disabled", hallBatteryAmps: -40 },
     {
       clock: { monotonicMs: restartAtMs },
-      lastSentAtMsByCommand: () => sessionRecord,
-      settingsReadbackAtMs: query => (query === "HECS" ? lastHecsDecodedAtMs : undefined),
+      unprovenWrites: () => [],
+      settingsReadbackAtMs: query => (query === "HECS" ? 3_627_500 : undefined),
     }
   );
   runWithHall(restarted, restartAtMs, restartAtMs + 125_000, () => -40);
   check(
-    "graph restart, the session's last HECS decode after EDB1 → no spurious step-down, no timeout",
+    "graph restart, nothing unproven in the session's chains → no spurious step-down, no timeout",
     restarted.wiring.stepDownState().progress.phase === "idle" &&
-      !restarted.queued.some(entry => entry.atMs > restartAtMs),
+      !restarted.queued.some(entry => entry.atMs > restartAtMs) &&
+      restarted.readbackRequestsAtMs.length === 0,
     restarted.queued.map(entry => entry.command).join(" ")
   );
   restarted.dispose();
-  // …but if EDB1 went out after the session's last HECS decode (a window had just started), the
+  // …but if an EDB1 the session hasn't read back yet went out 2 s before (a window had just started), the
   // "disabled" may be racing it: the step-down starts, as it should
   const freshEnable = createWiringHarness(
     { chargingAmperageForBuying: undefined, acChargeBatteryState: "disabled", hallBatteryAmps: 150 },
     {
       clock: { monotonicMs: restartAtMs },
-      lastSentAtMsByCommand: () => ({ ...sessionRecord, EDB1: restartAtMs - 2_000, MUCHGC2610: restartAtMs - 1_700 }),
+      unprovenWrites: query =>
+        query === "HECS"
+          ? [{ value: "enabled", sentAtMs: restartAtMs - 2_000 }]
+          : [{ value: 261, sentAtMs: restartAtMs - 1_700 }],
       settingsReadbackAtMs: query => (query === "HECS" ? restartAtMs - 30_000 : undefined),
     }
   );
@@ -245,6 +194,30 @@ const failedChecks: string[] = [];
     freshEnable.wiring.holdsAcChargingOn()
   );
   freshEnable.dispose();
+}
+
+{
+  // A cap that commits after its confirm gave up: the hall shows it, BATS last read 261 A before it landed.
+  // The graph asks the session for a settings readback once, and it proves the cap.
+  const harness = nightWindowAt261();
+  harness.setChargingAmperage(0);
+  advanceTo(harness, 500);
+  recordSend(harness, "MUCHGC0100");
+  runWithHall(harness, 750, 42_250, () => 280);
+  advanceTo(harness, 42_500);
+  decodeBats(harness, 261);
+  runWithHall(harness, 42_750, 50_000, atMs => (atMs < 47_000 ? 280 : 11));
+  check(
+    "cap landed after its last confirm: one settings readback asked for, 3 s into the hall's settle",
+    harness.readbackRequestsAtMs.join() === "50000" && harness.wiring.holdsAcChargingOn(),
+    harness.readbackRequestsAtMs.join()
+  );
+  runWithHall(harness, 50_250, 59_750, () => 11);
+  check("…nothing more while it is open", harness.readbackRequestsAtMs.length === 1);
+  advanceTo(harness, 60_000);
+  const answerTick = queuedDuring(harness, () => decodeBats(harness, 10));
+  check("…its answer proves the cap → EDB0", answerTick.join(" ") === "EDB0", answerTick.join(" "));
+  harness.dispose();
 }
 
 {

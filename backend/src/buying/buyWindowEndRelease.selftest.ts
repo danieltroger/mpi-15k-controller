@@ -14,13 +14,16 @@ import {
   whileReleased,
 } from "./buyWindowEndRelease.ts";
 import {
+  batsAt,
   buyingFor,
   CONFIRM_AFTER_WRITE_MS,
+  endWindow,
   hecs,
+  hecsAt,
   lastEvent,
   nightBuying,
+  sentAt,
   stepAt,
-  windowEnd,
 } from "./buyWindowEndStepDownSimulation.ts";
 
 const failedChecks: string[] = [];
@@ -50,16 +53,17 @@ const failedChecks: string[] = [];
 {
   // EDB0 ACKed but never applied: HECS after the release keeps showing "enabled" (settings poll ~180 s)
   const simulation = buyingFor(nightBuying);
-  stepAt(simulation, 0, windowEnd);
-  stepAt(simulation, 6_000, { hallBatteryAmps: 11 });
-  stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
+  endWindow(simulation);
+  stepAt(simulation, 6_500, { hallBatteryAmps: 11 });
+  stepAt(simulation, CONFIRM_AFTER_WRITE_MS, batsAt(simulation, 10, CONFIRM_AFTER_WRITE_MS));
   const releasedAtMs = CONFIRM_AFTER_WRITE_MS;
+  stepAt(simulation, releasedAtMs + 300, sentAt(simulation, "EDB0", releasedAtMs + 300));
   // EDB0's confirm and its backoff re-check, both inside the retry spacing → no retry yet
-  stepAt(simulation, releasedAtMs + 12_500, { acChargingReadback: hecs("enabled", releasedAtMs + 12_500) });
-  stepAt(simulation, releasedAtMs + 42_500, { acChargingReadback: hecs("enabled", releasedAtMs + 42_500) });
+  stepAt(simulation, releasedAtMs + 12_500, hecsAt(simulation, "enabled", releasedAtMs + 12_500));
+  stepAt(simulation, releasedAtMs + 42_500, hecsAt(simulation, "enabled", releasedAtMs + 42_500));
   check("EDB0's own confirm + re-check showing 'enabled' → no retry yet", edb0RetryRequests(simulation.state) === 0);
   for (const atMs of [180_000, 360_000, 540_000, 720_000, 900_000]) {
-    stepAt(simulation, atMs, { acChargingReadback: hecs("enabled", atMs) });
+    stepAt(simulation, atMs, hecsAt(simulation, "enabled", atMs));
   }
   const retries = simulation.events
     .filter(recorded => recorded.event.kind === "edb0_retry")
@@ -78,7 +82,7 @@ const failedChecks: string[] = [];
       edb0RetryRequests(simulation.state) === MAX_EDB0_RETRIES &&
       !holdsAcChargingOn(simulation.state)
   );
-  stepAt(simulation, 950_000, { acChargingReadback: hecs("disabled", 950_000) });
+  stepAt(simulation, 950_000, hecsAt(simulation, "disabled", 950_000));
   check(
     "…a later 'disabled' still ends it cleanly",
     simulation.state.progress.phase === "idle" && edb0RetryRequests(simulation.state) === 0

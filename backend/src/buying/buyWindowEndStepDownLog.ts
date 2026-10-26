@@ -1,11 +1,6 @@
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import {
-  type AcChargingLimitReadback,
-  ALTERNATE_CAP_AMPS,
-  IDLE_AC_CHARGING_LIMIT_AMPS,
-  type LimitEvidence,
-  type StepDownEvent,
-} from "./buyWindowEndStepDown.ts";
+import type { LimitEvidence, StepDownEvent } from "./buyWindowEndStepDown.ts";
+import { ALTERNATE_CAP_AMPS, IDLE_AC_CHARGING_LIMIT_AMPS, SETTLED_FOR_MS } from "./buyWindowEndEvidence.ts";
 import { MAX_EDB0_RETRIES } from "./buyWindowEndRelease.ts";
 
 /** One log line per step-down transition, with its timing — the record to judge the step-down by */
@@ -31,6 +26,21 @@ export function logStepDownEvent(event: StepDownEvent): void {
         `BATS still shows ${formatAmps(event.limitReadbackAmps)} ${formatSeconds(event.afterMs)} in — re-queueing`,
         "MUCHGC0100 once (the session sends it no sooner than 60 s after the last one)"
       );
+    case "ambiguous_limit_readback":
+      return logLog(
+        prefix,
+        `BATS shows ${formatAmps(event.limitReadbackAmps)} ${formatSeconds(event.afterMs)} in, but that can't tell`,
+        `whether the unproven ${event.unprovenHigherLimitsAmps.map(formatAmps).join(", ")} write(s) landed or are`,
+        `still to come — sending the cap as ${ALTERNATE_CAP_AMPS} A (MUCHGC0090), which BATS can only show once`,
+        "every earlier write has landed"
+      );
+    case "readback_requested":
+      return logLog(
+        prefix,
+        `the hall has shown the cap in effect for ${formatSeconds(event.hallSettledForMs)}, but BATS doesn't prove it`,
+        `(${describeLimitReadback(event.limitReadbackAmps, event.limitEvidence)}) and the session won't read it again on`,
+        `its own — asking for a settings readback (request ${event.attempt}, ${formatSeconds(event.afterMs)} in)`
+      );
     case "released":
       return logLog(
         prefix,
@@ -50,7 +60,7 @@ export function logStepDownEvent(event: StepDownEvent): void {
         prefix,
         `after ${formatSeconds(event.afterMs)} the hall still shows ${formatAmps(event.hallBatteryAmps)}`,
         `(allowed ≤ ${formatAmps(event.allowedHallAmps)}) — the ${IDLE_AC_CHARGING_LIMIT_AMPS} A cap is not in effect.`,
-        `${describeLimitReadback(event.limitReadback, event.limitEvidence)}. Holding EDB0 back up to`,
+        `${describeLimitReadback(event.limitReadback?.amps, event.limitEvidence)}. Holding EDB0 back up to`,
         `${formatSeconds(event.extensionMs)} more and sending the cap again as ${ALTERNATE_CAP_AMPS} A (MUCHGC0090,`,
         "which a stale readback can't satisfy): EDB0 now would stop full current in one step"
       );
@@ -58,11 +68,21 @@ export function logStepDownEvent(event: StepDownEvent): void {
       const summary = [
         prefix,
         `the ${IDLE_AC_CHARGING_LIMIT_AMPS} A cap wasn't proven within ${formatSeconds(event.afterMs)} — sending EDB0 anyway.`,
-        `${describeLimitReadback(event.limitReadback, event.limitEvidence)};`,
+        `${describeLimitReadback(event.limitReadback?.amps, event.limitEvidence)};`,
         `hall ${formatAmps(event.hallBatteryAmps)} (allowed ≤ ${formatAmps(event.allowedHallAmps)})`,
       ];
-      if (!event.hallAboveAllowance) return warnLog(...summary);
-      return errorLog(...summary, "— EDB0 goes out with the cap not in effect (one-step stop at full current)");
+      if (event.hallAboveAllowance) {
+        return errorLog(...summary, "— EDB0 goes out with the cap not in effect (one-step stop at full current)");
+      }
+      const hallShowsCap = event.hallSettledForMs !== undefined && event.hallSettledForMs >= SETTLED_FOR_MS;
+      if (hallShowsCap && !event.higherLimitMayLand) {
+        return warnLog(
+          ...summary,
+          `— the hall has shown the cap in effect for ${formatSeconds(event.hallSettledForMs ?? 0)} and no higher-limit`,
+          "write can still land: BATS just wasn't read again after the cap committed"
+        );
+      }
+      return warnLog(...summary);
     }
     case "cancelled":
       return logLog(prefix, `cancelled ${formatSeconds(event.afterMs)} in: ${event.reason}`);
@@ -94,16 +114,16 @@ export function logStepDownEvent(event: StepDownEvent): void {
   }
 }
 
-function describeLimitReadback(readback: AcChargingLimitReadback | undefined, evidence: LimitEvidence): string {
+function describeLimitReadback(readbackAmps: number | undefined, evidence: LimitEvidence): string {
   switch (evidence) {
     case "none":
       return "No BATS limit readback";
     case "shows_higher_limit":
-      return `BATS still shows ${formatAmps(readback?.amps)}`;
-    case "predates_last_higher_limit_write":
-      return `BATS shows ${formatAmps(readback?.amps)}, but read before the last higher-limit write went out`;
+      return `BATS still shows ${formatAmps(readbackAmps)}`;
+    case "higher_limit_unproven":
+      return `BATS shows ${formatAmps(readbackAmps)}, but a higher-limit write no readback has proven landed may still commit`;
     case "shows_cap":
-      return `BATS shows ${formatAmps(readback?.amps)}, but the hall never settled for long enough past the last higher-limit write's commit margin to prove it`;
+      return `BATS shows ${formatAmps(readbackAmps)}, but the hall never stayed within the allowance for long enough to prove it in effect`;
   }
 }
 
