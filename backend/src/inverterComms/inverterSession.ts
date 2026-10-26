@@ -17,7 +17,7 @@
  * function declarations). Scheduling times are monotonic (performance.now()); only the
  * externally visible timestamps (round decodedAt, lastWriteAt) are wall-clock.
  */
-import { type Accessor, createEffect, createSignal, onCleanup, type Setter, untrack } from "solid-js";
+import { type Accessor, createEffect, createSignal, on, onCleanup, type Setter, untrack } from "solid-js";
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type {
   DecodedFields,
@@ -72,7 +72,7 @@ export function createInverterSession({
 }: {
   /** Cadence of the slow settings poll — config().usb_parameter_setting.poll_values_interval_seconds */
   poll_values_interval_seconds: Accessor<number>;
-  /** config().usb_parameter_setting.quiet_gap_after_write_ms — live: a change applies from the next write */
+  /** config().usb_parameter_setting.quiet_gap_after_write_ms — live, from the first write after any running confirm */
   quiet_gap_after_write_ms: Accessor<number>;
   /** Only ever called with rounds that passed the plausibility gate, and never after disposal */
   onDecodedRound: (round: DecodedRound) => void;
@@ -111,10 +111,14 @@ export function createInverterSession({
   };
   state.countersAtLastStatsLog = currentCounters(state);
   const statsTimer = setInterval(() => logStats(state), STATS_LOG_INTERVAL_MS);
-  createEffect(() => {
-    const configuredMs = quiet_gap_after_write_ms();
-    state.scheduler = schedulerWithQuietGapSetting(state.scheduler, configuredMs);
-  });
+  // Deferred: the initializer above already took (and, if needed, corrected) the boot value
+  createEffect(
+    on(
+      quiet_gap_after_write_ms,
+      configuredMs => (state.scheduler = schedulerWithQuietGapSetting(state.scheduler, configuredMs)),
+      { defer: true }
+    )
+  );
   void runPump(state);
 
   onCleanup(() => {
@@ -286,7 +290,9 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
       state.commitTracker,
       {
         command,
-        quietGapAfterWriteMs: state.scheduler.timing.quietGapAfterWriteMs,
+        // The gap the phase was armed with: a merged write keeps it, the starvation fallback replaces 0
+        quietGapAfterWriteMs:
+          state.scheduler.confirm?.quietGapAfterWriteMs ?? state.scheduler.timing.quietGapAfterWriteMs,
         ackLatencyMs: result.answeredAfterWriteMs,
         ackAttempts: result.attempts,
         ackedAtMs: sentAt,

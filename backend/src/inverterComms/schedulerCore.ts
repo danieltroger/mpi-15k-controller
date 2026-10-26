@@ -17,10 +17,10 @@ import {
   confirmStrategyFor,
   DEFAULT_SCHEDULER_TIMING,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
-  MAX_CONFIRM_ATTEMPTS,
   type ConfirmStrategy,
   type SchedulerTiming,
 } from "./schedulerTiming.ts";
+import { judgeConfirmRun, type ConfirmVerdicts } from "./confirmVerdicts.ts";
 
 export type QueuedSetterView = {
   command: string;
@@ -33,6 +33,12 @@ export type PendingReadbackCheck = SetterReadbackCheck & { writtenAtMs: number }
 
 export type ConfirmPhase = {
   strategy: ConfirmStrategy;
+  /**
+   * The gap the phase was armed with (0 = interleaved). Writes merging into the phase keep it and
+   * the strategy: a knob change mid-phase would otherwise cut a silent write's gap short, or move
+   * an interleaved write off its own give-up onto a schedule its gated identical copy outruns.
+   */
+  quietGapAfterWriteMs: number;
   /** When the next confirm run is due — silent: no traffic at all before it; interleaved: polls continue */
   dueAt: number;
   attemptsMade: number;
@@ -59,6 +65,11 @@ export type SchedulerState = {
   /** Start of the last round that included the settings queries */
   lastSettingsPollAt: number | undefined;
   latestSettingsReadbacks: Readonly<Partial<Record<SettingsQueryCommandName, SettingsReadback>>>;
+  /**
+   * An interleaved write gave up while the knob was 0: new phases use the silent fallback gap
+   * (STARVATION_FALLBACK_QUIET_GAP_MS) until the knob next changes
+   */
+  starvationFallback: boolean;
 };
 
 export type SchedulerDecision =
@@ -81,6 +92,7 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
     latestSettingsReadbacks: {},
+    starvationFallback: false,
   };
 }
 
@@ -183,7 +195,8 @@ export function afterSetterSent(
       ...checks.map(check => check.query),
     ]),
   ];
-  const strategy = confirmStrategyFor(state.timing);
+  const quietGapAfterWriteMs = state.confirm?.quietGapAfterWriteMs ?? quietGapForNewPhase(state);
+  const strategy = confirmStrategyFor(quietGapAfterWriteMs);
   // Every send may have changed its fields — ACKed, NAKed or unanswered alike (a NAK'd or lost
   // write can still have committed), so readbacks older than this can't vouch for them any more
   const lastWriteAtByReadbackField = { ...state.lastWriteAtByReadbackField };
@@ -201,13 +214,29 @@ export function afterSetterSent(
         ? { ...setter, notBefore: Math.max(setter.notBefore, nowMs + IDENTICAL_SETTER_MIN_INTERVAL_MS) }
         : setter
     ),
-    confirm: { strategy, dueAt: firstConfirmDueAt(state, strategy, nowMs), attemptsMade: 0, queries, checks },
+    confirm: {
+      strategy,
+      quietGapAfterWriteMs,
+      dueAt: firstConfirmDueAt(state, strategy, quietGapAfterWriteMs, nowMs),
+      attemptsMade: 0,
+      queries,
+      checks,
+    },
   };
 }
 
-function firstConfirmDueAt(state: SchedulerState, strategy: ConfirmStrategy, writtenAtMs: number): number {
+function quietGapForNewPhase(state: SchedulerState): number {
+  return state.starvationFallback ? state.timing.starvationFallbackQuietGapMs : state.timing.quietGapAfterWriteMs;
+}
+
+function firstConfirmDueAt(
+  state: SchedulerState,
+  strategy: ConfirmStrategy,
+  quietGapAfterWriteMs: number,
+  writtenAtMs: number
+): number {
   // Silent: a burst re-arms the silence from its LAST write
-  if (strategy === "silent") return writtenAtMs + state.timing.quietGapAfterWriteMs;
+  if (strategy === "silent") return writtenAtMs + quietGapAfterWriteMs;
   const firstDueForThisWrite = writtenAtMs + state.timing.firstInterleavedConfirmAfterWriteMs;
   // Interleaved: a running cadence keeps going, so a stream of writes to other fields can't keep
   // pushing an earlier write's confirm (and verdict) out
@@ -218,23 +247,17 @@ function firstConfirmDueAt(state: SchedulerState, strategy: ConfirmStrategy, wri
 
 /**
  * A live change of usb_parameter_setting.quiet_gap_after_write_ms (already through
- * effectiveQuietGapMs). Applies from the next write: a running phase keeps its strategy.
+ * effectiveQuietGapMs). Applies from the first write after any running phase, which keeps its gap
+ * and strategy. Ends a starvation fallback: changing the knob is the operator's call.
  */
 export function withQuietGapAfterWrite(state: SchedulerState, quietGapAfterWriteMs: number): SchedulerState {
-  return { ...state, timing: { ...state.timing, quietGapAfterWriteMs } };
+  return { ...state, timing: { ...state.timing, quietGapAfterWriteMs }, starvationFallback: false };
 }
 
-/**
- * Every check of the phase lands in exactly one list. Confirmed and given-up checks leave the
- * phase; when none is left pending (`retry` undefined) the phase is over.
- */
-export type ConfirmOutcome = {
-  /** The readback shows these applied */
-  confirmedChecks: readonly PendingReadbackCheck[];
-  /** Still the old value with no attempt left — the loud "never applied" */
-  gaveUpChecks: readonly PendingReadbackCheck[];
-  /** Still the old value, re-checked at retryAt */
-  retry: { pendingChecks: readonly PendingReadbackCheck[]; retryAt: number } | undefined;
+/** What one confirm run decided, plus whether its give-up started the starvation fallback */
+export type ConfirmOutcome = ConfirmVerdicts & {
+  /** Set when this run's give-up put later writes on the silent fallback gap */
+  starvationFallback: { quietGapAfterWriteMs: number } | undefined;
 };
 
 export function afterConfirmRun(
@@ -245,60 +268,36 @@ export function afterConfirmRun(
   const confirm = state.confirm;
   if (!confirm) {
     // Can't happen (only called after a run_confirms decision) — but if it does, don't invent state
-    return { state, result: { confirmedChecks: [], gaveUpChecks: [], retry: undefined } };
+    const nothing = { confirmedChecks: [], gaveUpChecks: [], notYetJudgedChecks: [], retry: undefined };
+    return { state, result: { ...nothing, starvationFallback: undefined } };
   }
-  const confirmedChecks = confirm.checks.filter(check => checkIsSatisfied(check, decodedByQuery));
-  const stillOldChecks = confirm.checks.filter(check => !checkIsSatisfied(check, decodedByQuery));
-  const attemptsMade = confirm.attemptsMade + 1;
-  const { gaveUpChecks, retry } =
-    confirm.strategy === "silent"
-      ? silentVerdicts(state.timing, stillOldChecks, attemptsMade, nowMs)
-      : interleavedVerdicts(state.timing, stillOldChecks, nowMs);
-  if (!retry) {
-    return { state: { ...state, confirm: undefined }, result: { confirmedChecks, gaveUpChecks, retry } };
-  }
-  return {
-    state: { ...state, confirm: { ...confirm, attemptsMade, dueAt: retry.retryAt, checks: retry.pendingChecks } },
-    result: { confirmedChecks, gaveUpChecks, retry },
+  const verdicts = judgeConfirmRun(confirm, state.timing, decodedByQuery, nowMs);
+  const startsStarvationFallback =
+    confirm.strategy === "interleaved" &&
+    verdicts.gaveUpChecks.length > 0 &&
+    state.timing.quietGapAfterWriteMs === 0 &&
+    !state.starvationFallback;
+  const result: ConfirmOutcome = {
+    ...verdicts,
+    starvationFallback: startsStarvationFallback
+      ? { quietGapAfterWriteMs: state.timing.starvationFallbackQuietGapMs }
+      : undefined,
   };
-}
-
-type StillOldVerdicts = Pick<ConfirmOutcome, "gaveUpChecks" | "retry">;
-
-/** One confirm after the quiet gap, one re-check after the silent backoff, then the whole phase gives up */
-function silentVerdicts(
-  timing: Readonly<SchedulerTiming>,
-  stillOldChecks: readonly PendingReadbackCheck[],
-  attemptsMade: number,
-  nowMs: number
-): StillOldVerdicts {
-  if (!stillOldChecks.length) return { gaveUpChecks: [], retry: undefined };
-  if (attemptsMade >= MAX_CONFIRM_ATTEMPTS) return { gaveUpChecks: stillOldChecks, retry: undefined };
-  return { gaveUpChecks: [], retry: { pendingChecks: stillOldChecks, retryAt: nowMs + timing.confirmBackoffMs } };
-}
-
-/**
- * Each check gives up at its own deadline (its write + the give-up window), so a burst merging a
- * later write into the phase can't postpone an earlier write's verdict past its identical-setter
- * gate. The last re-check lands on the earliest remaining deadline.
- */
-function interleavedVerdicts(
-  timing: Readonly<SchedulerTiming>,
-  stillOldChecks: readonly PendingReadbackCheck[],
-  nowMs: number
-): StillOldVerdicts {
-  const gaveUpChecks = stillOldChecks.filter(check => nowMs >= interleavedGiveUpAt(timing, check));
-  const pendingChecks = stillOldChecks.filter(check => nowMs < interleavedGiveUpAt(timing, check));
-  if (!pendingChecks.length) return { gaveUpChecks, retry: undefined };
-  const retryAt = Math.min(
-    nowMs + timing.interleavedConfirmIntervalMs,
-    ...pendingChecks.map(check => interleavedGiveUpAt(timing, check))
-  );
-  return { gaveUpChecks, retry: { pendingChecks, retryAt } };
-}
-
-function interleavedGiveUpAt(timing: Readonly<SchedulerTiming>, check: PendingReadbackCheck): number {
-  return check.writtenAtMs + timing.interleavedConfirmGiveUpAfterWriteMs;
+  const afterVerdicts = { ...state, starvationFallback: state.starvationFallback || startsStarvationFallback };
+  const retry = verdicts.retry;
+  if (!retry) return { state: { ...afterVerdicts, confirm: undefined }, result };
+  // Interleaved re-checks run only what the pending checks need (the refresh queries ran on the
+  // first run) — not BATS every 4 s for a GPMP write; the silent path keeps its full union
+  const queries =
+    confirm.strategy === "interleaved" ? [...new Set(retry.pendingChecks.map(check => check.query))] : confirm.queries;
+  const attemptsMade = confirm.attemptsMade + 1;
+  return {
+    state: {
+      ...afterVerdicts,
+      confirm: { ...confirm, attemptsMade, dueAt: retry.retryAt, checks: retry.pendingChecks, queries },
+    },
+    result,
+  };
 }
 
 export function afterPollRound(
