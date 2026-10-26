@@ -63,6 +63,13 @@ export const INTERLEAVED_CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
  */
 export const STARVATION_FALLBACK_QUIET_GAP_MS = QUIET_GAP_AFTER_WRITE_MS;
 /**
+ * Setters held behind a stale gap-0 phase wait for its last verdict, at most its newest check's
+ * give-up. If confirm runs keep failing (a consumer throwing on a settings readback), that verdict
+ * never comes, so the hold lapses this long after it was due: a broken readback must not hold
+ * control writes for good.
+ */
+export const STALE_HOLD_LAPSE_MARGIN_MS = 10_000;
+/**
  * For the confirm verdict, a write no readback has proven yet counts as landed (or as never
  * landing) this long after it was sent. Only an ambiguous readback needs it: after A→B→A with B
  * never seen, "A" could mean "nothing committed yet" forever (fieldWriteChains.ts). As long as the

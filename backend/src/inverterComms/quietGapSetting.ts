@@ -15,7 +15,7 @@ export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configur
   const quietGapMs = quietGapFromConfig(configuredMs);
   const previousMs = scheduler.timing.quietGapAfterWriteMs;
   if (quietGapMs === previousMs) return scheduler;
-  const changed = withQuietGapAfterWrite(scheduler, quietGapMs);
+  const schedulerAfterChange = withQuietGapAfterWrite(scheduler, quietGapMs);
   logLog(
     "Inverter quiet gap after write:",
     previousMs,
@@ -25,9 +25,11 @@ export function schedulerWithQuietGapSetting(scheduler: SchedulerState, configur
     quietGapMs > 0 ? "radio silence after each write" : "GS/PS polling continues through writes",
     "(applies from the first write after any running confirm phase)",
     ...(scheduler.starvationFallback ? ["— ends the starvation fallback"] : []),
-    ...(runningPhaseIsStale(changed) ? ["— new writes wait for the running gap-0 confirm phase to end (≤ 55 s)"] : [])
+    ...(runningPhaseIsStale(schedulerAfterChange)
+      ? ["— new writes wait for the running gap-0 confirm phase to end (≤ 55 s)"]
+      : [])
   );
-  return changed;
+  return schedulerAfterChange;
 }
 
 export function quietGapFromConfig(configuredMs: number): number {

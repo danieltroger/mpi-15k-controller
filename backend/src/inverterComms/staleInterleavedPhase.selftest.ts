@@ -55,8 +55,10 @@ const CHAIN_OF_WRITES = [
 ];
 
 // ---------- 1–2. a starved chain: the fallback (and a revert at 200 s) reach every later write ----------
-for (const revertAtMs of [seconds(200), undefined]) {
-  const label = revertAtMs === undefined ? "knob left at 0" : "operator reverts at 200 s";
+// The revert at 170 s lands while the fallback-stale phase still runs: the hold carries across the
+// hand-over of the stale reason from the fallback to the knob
+for (const revertAtMs of [seconds(170), undefined]) {
+  const label = revertAtMs === undefined ? "knob left at 0" : "operator reverts at 170 s";
   const events = revertAtMs === undefined ? CHAIN_OF_WRITES : [...CHAIN_OF_WRITES, knobChangeAt(revertAtMs, 12_000)];
   const steps = runScenario(label, events, seconds(400), EVERY_WRITE);
   const latched = firstRunWith(steps, "gaveUpChecks", "GPMP000550");

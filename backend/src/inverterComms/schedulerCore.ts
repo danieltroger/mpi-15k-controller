@@ -17,6 +17,7 @@ import {
   confirmStrategyFor,
   DEFAULT_SCHEDULER_TIMING,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
+  STALE_HOLD_LAPSE_MARGIN_MS,
   type ConfirmStrategy,
   type SchedulerTiming,
 } from "./schedulerTiming.ts";
@@ -119,7 +120,7 @@ export function decideNextAction(
   // readback shows) from landing when its identical-setter gate opens.
   const satisfiedSetter = state.queuedSetters.find(setter => readbackAlreadySatisfies(state, setter.command));
   if (satisfiedSetter) return { action: "drop_setter", command: satisfiedSetter.command };
-  const sendsHeld = runningPhaseIsStale(state);
+  const sendsHeld = setterSendsHeld(state, nowMs);
   const eligibleSetter = sendsHeld ? undefined : state.queuedSetters.find(setter => setter.notBefore <= nowMs);
   if (eligibleSetter) return { action: "send_setter", command: eligibleSetter.command };
   // A gated setter must still wake the pump when its gate opens, whatever else we wait on. Held
@@ -166,6 +167,16 @@ export function decideNextAction(
  */
 export function runningPhaseIsStale(state: SchedulerState): boolean {
   return state.confirm?.strategy === "interleaved" && quietGapForNewPhase(state) > 0;
+}
+
+/** Held while a stale gap-0 phase runs, until STALE_HOLD_LAPSE_MARGIN_MS past its last due verdict */
+function setterSendsHeld(state: SchedulerState, nowMs: number): boolean {
+  const confirm = state.confirm;
+  if (!confirm || !runningPhaseIsStale(state)) return false;
+  const lastVerdictDueAt = confirm.checks.length
+    ? Math.max(...confirm.checks.map(check => check.writtenAtMs + state.timing.interleavedConfirmGiveUpAfterWriteMs))
+    : confirm.dueAt;
+  return nowMs < lastVerdictDueAt + STALE_HOLD_LAPSE_MARGIN_MS;
 }
 
 /** Enqueue a control write, replacing any queued same-prefix one (a stale target must never land after a newer one). */
@@ -405,7 +416,7 @@ export function readbackAlreadySatisfies(state: SchedulerState, command: string)
  * satisfies: consumers queue desired state on every change, and those must not chop rounds short.
  */
 export function hasEligibleSetter(state: SchedulerState, nowMs: number): boolean {
-  if (runningPhaseIsStale(state)) return false;
+  if (setterSendsHeld(state, nowMs)) return false;
   return state.queuedSetters.some(
     setter => setter.notBefore <= nowMs && !readbackAlreadySatisfies(state, setter.command)
   );
