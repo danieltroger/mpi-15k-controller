@@ -1,0 +1,18 @@
+# Lets the controller (user and group `ubuntu`) start one temperature conversion for the whole 1-wire
+# bus by writing "trigger" to /sys/bus/w1/devices/w1_bus_master1/therm_bulk_read (#58). The kernel
+# creates that attribute as root 0644. Without this rule the controller falls back to per-probe w1_slave
+# reads, a 750 ms conversion each (~11 s per sweep instead of ~1 s), and logs a warning.
+#
+# Why the rule matches the probes rather than the bus master: w1_therm adds therm_bulk_read to the master
+# when the first DS18B20 attaches (and removes it when the last one detaches), and that sends no uevent.
+# Each probe's own "add" uevent goes out after its w1_therm setup, so the attribute exists by then. The
+# master's "add" comes before any probe has been found, when there is no file to change yet. Matching
+# every probe also re-applies the permissions whenever the bus drops all probes and finds them again.
+# That covers both an overlay loaded at boot (coldplug replays "add") and one the controller loads at
+# runtime with `sudo dtoverlay w1-gpio`.
+#
+# "change" lets `udevadm trigger --subsystem-match=w1` apply the rule on a running system. The probes'
+# `temperature` (0444) and `w1_slave` (0644) attributes are world-readable already.
+#
+# Install: see deploy/README.md ("1-wire bulk read permission").
+ACTION=="add|change", SUBSYSTEM=="w1", KERNEL=="28-*", TEST=="../therm_bulk_read", RUN+="/bin/chgrp ubuntu /sys%p/../therm_bulk_read", RUN+="/bin/chmod g+w /sys%p/../therm_bulk_read"
