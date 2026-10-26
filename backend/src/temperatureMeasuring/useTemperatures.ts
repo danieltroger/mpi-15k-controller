@@ -84,7 +84,7 @@ async function runSweepLoop({
         probes: untrack(() => probesToSweep(probeSignals(), thermometers())),
         state: sweepState,
         sysfs: nodeSysfsAccess,
-        logger: { log: logLog, warn: warnLog },
+        logger: { log: logLog, warn: warnLog, error: errorLog },
         devicesDirectory: ONE_WIRE_DEVICES_DIRECTORY,
         timing: DEFAULT_THERMOMETER_SWEEP_TIMING,
       });

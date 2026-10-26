@@ -21,6 +21,7 @@ import {
   type ThermometerSweepState,
 } from "./thermometerSweep.ts";
 import { checkPlausibility, parseTemperatureAttribute, parseW1SlaveText } from "./thermometerReadingParsing.ts";
+import { errorLogDedupeKey } from "../alerting/alertingLogic.ts";
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -61,7 +62,7 @@ type FakeKernel = {
   triggerWrites: string[];
 };
 
-type LoggedLine = { level: "log" | "warn"; text: string };
+type LoggedLine = { level: "log" | "warn" | "error"; text: string };
 
 const SWEEP_INTERVAL_MS = 10_000;
 const timing = DEFAULT_THERMOMETER_SWEEP_TIMING;
@@ -184,14 +185,35 @@ check("plausibility: NaN is rejected", checkPlausibility(NaN, 20).ok, false);
   check("polling: no warnings", warnings(lines), []);
 }
 
-// ——— the wait is bounded: a conversion that never reports done falls back for this sweep ———
+// ——— the wait is bounded: a conversion that never reports done falls back for this sweep. While the
+// kernel's flags still say "converting", w1_slave reads come back empty too (w1_slave_show has the same
+// guard as temperature_show), so that sweep gets no readings and logs every probe as failed. Unreachable
+// on 5.15, whose trigger write returns only after the conversion. ———
 {
-  const kernel = createFakeKernel([[cell, 19000]], { triggerWriteBlocksMs: 0, pendingStatusReads: Infinity });
+  const kernel = createFakeKernel(
+    [
+      [cell, 19000],
+      [outlet, 24000],
+    ],
+    { triggerWriteBlocksMs: 0, pendingStatusReads: Infinity }
+  );
   const lines: LoggedLine[] = [];
-  const sweep = await runSweep(kernel, createThermometerSweepState(), lines, [cell]);
+  const sweep = await runSweep(kernel, createThermometerSweepState(), lines, [cell, outlet]);
   check("bounded wait: falls back to w1_slave", sweep.method, "w1_slave");
   check("bounded wait: gives up at the limit", sweep.durationMs, timing.conversionWaitLimitMs);
-  check("bounded wait: still gets the value, via w1_slave", sweep.readings[0]?.value, 19);
+  check("bounded wait: no readings, w1_slave is empty while the conversion is pending", sweep.readings, []);
+  check(
+    "bounded wait: both probes logged as failed with an empty w1_slave read",
+    [cell, outlet].map(probe =>
+      lines.some(
+        line =>
+          line.level === "log" &&
+          line.text.includes(probe.thermometer_device_id) &&
+          line.text.includes("w1_slave: empty read")
+      )
+    ),
+    [true, true]
+  );
   check("bounded wait: one warning naming the timeout", warnings(lines).length, 1);
   check("bounded wait: the warning says why", warnings(lines)[0]?.includes("still pending 1000 ms"), true);
   check(
@@ -337,6 +359,22 @@ if (runningAsRoot) {
   check("85 °C via w1_slave: rejected too", [fallbackSweep.method, fallbackSweep.readings.length], ["w1_slave", 0]);
 }
 
+// ——— a probe stuck on its power-on value goes quiet under the guard, so it must page instead ———
+{
+  const kernel = createFakeKernel([[busBar, 85000]]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  for (let sweepIndex = 1; sweepIndex <= timing.probeFailurePageAfterSweeps; sweepIndex++) {
+    await runSweep(kernel, state, lines, [busBar]);
+    kernel.nowMs += SWEEP_INTERVAL_MS;
+  }
+  check(
+    "stuck at 85 °C: one page after 30 sweeps, naming the power-on value",
+    pages(lines).map(page => page.includes(busBar.label) && page.includes("85°C power-on value")),
+    [true]
+  );
+}
+
 // ——— garbage, per probe: the rest of the sweep is unaffected ———
 {
   const kernel = createFakeKernel([
@@ -382,7 +420,7 @@ if (runningAsRoot) {
   );
 }
 
-// ——— one probe gone for good: logged every sweep, warned once, recovery logged ———
+// ——— one probe gone for good: logged every sweep, paged once (errorLog → P2), recovery logged ———
 {
   const kernel = createFakeKernel([
     [cell, 21000],
@@ -391,22 +429,38 @@ if (runningAsRoot) {
   const state = createThermometerSweepState();
   const lines: LoggedLine[] = [];
   removeProbe(kernel, outlet.thermometer_device_id);
-  const warnCountsAfterSweep: number[] = [];
-  for (let sweepIndex = 1; sweepIndex <= timing.probeFailureWarnAfterSweeps + 1; sweepIndex++) {
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= timing.probeFailurePageAfterSweeps + 1; sweepIndex++) {
     const sweep = await runSweep(kernel, state, lines, [cell, outlet]);
     if (sweep.readings.length !== 1) check(`missing probe, sweep ${sweepIndex}: the other probe reads`, false, true);
-    warnCountsAfterSweep.push(warnings(lines).length);
+    pageCountsAfterSweep.push(pages(lines).length);
     kernel.nowMs += SWEEP_INTERVAL_MS;
   }
   check(
-    "missing probe: the warning comes once, on the 30th failed sweep",
-    [warnCountsAfterSweep[28], warnCountsAfterSweep[29], warnCountsAfterSweep[30]],
+    "missing probe: the page comes once, on the 30th failed sweep",
+    [pageCountsAfterSweep[28], pageCountsAfterSweep[29], pageCountsAfterSweep[30]],
     [0, 1, 1]
+  );
+  check("missing probe: paged, not merely warned", warnings(lines), []);
+  const firstPage = pages(lines)[0] ?? "";
+  check(
+    "missing probe: the page names the probe, the streak and the cause",
+    [outlet.thermometer_device_id, outlet.label, "30 sweeps", "ENOENT"].every(part => firstPage.includes(part)),
+    true
+  );
+  check(
+    "missing probe: the errorLog dedupe key differs per probe and stays put when the cause changes",
+    [
+      errorLogDedupeKey([firstPage]) ===
+        errorLogDedupeKey([firstPage.replace(outlet.thermometer_device_id, cell.thermometer_device_id)]),
+      errorLogDedupeKey([firstPage]) === errorLogDedupeKey([firstPage.replace(/ENOENT.*/, "CRC didn't match")]),
+    ],
+    [false, true]
   );
   check(
     "missing probe: every failure logged, with ENOENT",
     lines.filter(line => line.level === "log" && line.text.includes("ENOENT")).length,
-    timing.probeFailureWarnAfterSweeps + 1
+    timing.probeFailurePageAfterSweeps + 1
   );
   mkdirSync(path.join(kernel.devicesDirectory, outlet.thermometer_device_id));
   setProbeMillidegrees(kernel, outlet.thermometer_device_id, 22500);
@@ -515,9 +569,10 @@ async function fakeWriteText(kernel: FakeKernel, filePath: string, contents: str
     return;
   }
   writeStatus(kernel, "-1");
-  // While converting, `temperature` reads come back empty ("conversion in progress")
+  // While converting, both attributes read back empty ("Conversion in progress, retry later")
   for (const thermometerDeviceId of kernel.probeTexts.keys()) {
     writeProbeFile(kernel, thermometerDeviceId, "temperature", "");
+    writeProbeFile(kernel, thermometerDeviceId, "w1_slave", "");
   }
   kernel.nowMs += kernel.behaviour.triggerWriteBlocksMs;
   kernel.pendingStatusReadsLeft = kernel.behaviour.pendingStatusReads;
@@ -528,6 +583,7 @@ function completeConversion(kernel: FakeKernel) {
   writeStatus(kernel, kernel.behaviour.statusAfterConversion);
   for (const [thermometerDeviceId, texts] of kernel.probeTexts) {
     writeProbeFile(kernel, thermometerDeviceId, "temperature", texts.temperatureText);
+    writeProbeFile(kernel, thermometerDeviceId, "w1_slave", texts.w1SlaveText);
   }
 }
 
@@ -566,6 +622,7 @@ function capturingLogger(lines: LoggedLine[]): SweepLogger {
   return {
     log: (...details) => lines.push({ level: "log", text: details.map(String).join(" ") }),
     warn: (...details) => lines.push({ level: "warn", text: details.map(String).join(" ") }),
+    error: (...details) => lines.push({ level: "error", text: details.map(String).join(" ") }),
   };
 }
 
@@ -575,6 +632,10 @@ function countTriggerAttempts(kernel: FakeKernel) {
 
 function warnings(lines: LoggedLine[]) {
   return lines.filter(line => line.level === "warn").map(line => line.text);
+}
+
+function pages(lines: LoggedLine[]) {
+  return lines.filter(line => line.level === "error").map(line => line.text);
 }
 
 function stillUnavailableLines(lines: LoggedLine[]) {

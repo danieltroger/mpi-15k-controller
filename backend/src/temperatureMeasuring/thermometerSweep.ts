@@ -17,8 +17,8 @@ export type ThermometerSweepTiming = {
   statusPollIntervalMs: number;
   /** While the bulk path is down, how often a sweep tries it again before falling back */
   bulkRetryIntervalMs: number;
-  /** Consecutive failed sweeps after which one probe's failure streak gets a warning */
-  probeFailureWarnAfterSweeps: number;
+  /** Consecutive failed sweeps after which one probe's failure streak pages (logger.error) */
+  probeFailurePageAfterSweeps: number;
 };
 
 export const DEFAULT_THERMOMETER_SWEEP_TIMING: ThermometerSweepTiming = {
@@ -28,7 +28,7 @@ export const DEFAULT_THERMOMETER_SWEEP_TIMING: ThermometerSweepTiming = {
   statusPollIntervalMs: 50,
   bulkRetryIntervalMs: 60_000,
   // ~5 min at one sweep per 10 s
-  probeFailureWarnAfterSweeps: 30,
+  probeFailurePageAfterSweeps: 30,
 };
 
 export type ThermometerSweepState = {
@@ -41,7 +41,12 @@ export type ThermometerSweepState = {
   failureStreaks: Map<string, number>;
 };
 
-export type SweepLogger = { log: (...details: unknown[]) => void; warn: (...details: unknown[]) => void };
+/** `error` pages: production wires it to errorLog, which alerting forwards as a P2. */
+export type SweepLogger = {
+  log: (...details: unknown[]) => void;
+  warn: (...details: unknown[]) => void;
+  error: (...details: unknown[]) => void;
+};
 
 export type ThermometerSweepContext = {
   probes: ThermometerProbe[];
@@ -234,16 +239,20 @@ function recordProbeFailure(
   state.failureStreaks.set(probe.thermometer_device_id, failedSweeps);
   const probeName = `thermometer ${probe.thermometer_device_id} (${probe.label})`;
   logger.log(`Failed reading ${probeName}, ${failedSweeps} sweep(s) in a row: ${reason}`);
-  if (failedSweeps === timing.probeFailureWarnAfterSweeps) {
-    logger.warn(
-      `No reading from ${probeName} for ${failedSweeps} sweeps in a row, its last value is going stale. Latest failure: ${reason}`
+  if (failedSweeps === timing.probeFailurePageAfterSweeps) {
+    // A page, not a warning: temperatures-stale only watches the newest reading of all 14 probes, so one
+    // dark battery probe is invisible to it (cell_5 was dark for 40 min on 2026-10-17 with WARN lines only).
+    // A probe stuck on its 85 °C power-on value ends up here too, now that the guard rejects it every sweep.
+    // The probe id and label lead the message, so the errorLog dedupe key stays per probe.
+    logger.error(
+      `Thermometer ${probe.thermometer_device_id} (${probe.label}) has given no reading for ${failedSweeps} sweeps in a row, its last value is going stale. Latest failure: ${reason}`
     );
   }
 }
 
 function recordProbeSuccess({ state, logger, timing }: ThermometerSweepContext, probe: ThermometerProbe) {
   const failedSweeps = state.failureStreaks.get(probe.thermometer_device_id) ?? 0;
-  if (failedSweeps >= timing.probeFailureWarnAfterSweeps) {
+  if (failedSweeps >= timing.probeFailurePageAfterSweeps) {
     logger.log(
       `Thermometer ${probe.thermometer_device_id} (${probe.label}) reads again after ${failedSweeps} failed sweeps`
     );
