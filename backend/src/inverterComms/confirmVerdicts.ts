@@ -28,13 +28,16 @@ export function judgeConfirmRun(
   timing: Readonly<SchedulerTiming>,
   decodedByQuery: Partial<Record<SettingsQueryCommandName, DecodedFields>>,
   fieldWriteChains: FieldWriteChains,
-  nowMs: number
+  { runStartedAtMs, nowMs }: { runStartedAtMs: number; nowMs: number }
 ): ConfirmVerdicts {
   // A write merged into a running interleaved cadence can come up for a confirm right after it went
   // out. A readback that early says nothing about it: after 350→550→350 the pre-550 value would
-  // "confirm" the second 350 while the 550 is still on its way.
+  // "confirm" the second 350 while the 550 is still on its way. Judged against the run's START: a
+  // readback decoded early in a run that a slow later query drags out is still that early.
   const notYetJudgedChecks =
-    confirm.strategy === "interleaved" ? confirm.checks.filter(check => nowMs < firstJudgeableAt(timing, check)) : [];
+    confirm.strategy === "interleaved"
+      ? confirm.checks.filter(check => runStartedAtMs < firstJudgeableAt(timing, check))
+      : [];
   const judgedChecks = confirm.checks.filter(check => !notYetJudgedChecks.includes(check));
   // A readback showing the target but not provably from this write (A→B→A, B not yet seen) is
   // no better than a still-old one: re-checked, and given up on if it never resolves

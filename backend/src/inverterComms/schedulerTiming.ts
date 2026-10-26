@@ -132,7 +132,9 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
  *   no earlier than its own write + firstInterleavedConfirmAfterWriteMs and giving up at its own
  *   write + interleavedConfirmGiveUpAfterWriteMs
  * Fixed, with its quiet gap, when a write arms a phase: writes merging into a running phase keep
- * both, so a live knob change applies from the first write after that phase ends.
+ * both, so a live knob change applies from the first write after that phase ends. A gap-0 phase
+ * that a knob change or the starvation fallback has left behind takes no new writes at all
+ * (runningPhaseIsStale): they wait for it to end, at most 55 s.
  */
 export type ConfirmStrategy = "silent" | "interleaved";
 

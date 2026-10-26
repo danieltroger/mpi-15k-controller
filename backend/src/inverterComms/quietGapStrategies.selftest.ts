@@ -13,9 +13,12 @@ import {
   afterConfirmRun,
   afterSetterSent,
   decideNextAction,
+  hasEligibleSetter,
   readbackAlreadySatisfies,
+  runningPhaseIsStale,
   withQuietGapAfterWrite,
   withSettingsReadback,
+  withSetterQueued,
   type ConfirmOutcome,
   type SchedulerState,
 } from "./schedulerCore.ts";
@@ -366,10 +369,24 @@ check(
       state.confirm.dueAt === seconds(36)
   );
   state = withQuietGapAfterWrite(state, 3_000);
-  state = afterSetterSent(state, "EDB1", ["HECS"], seconds(31), true);
   check(
-    "knob → 3000: a write merging into the interleaved phase stays interleaved, on its own 6 s",
-    state.confirm?.strategy === "interleaved" && state.confirm.dueAt === seconds(36)
+    "knob → 3000 during a gap-0 phase: the phase runs on (still interleaved) but is stale",
+    state.confirm?.strategy === "interleaved" && runningPhaseIsStale(state)
+  );
+  state = withSetterQueued(state, "EDB1", "EDB", seconds(31));
+  const whileStale = decideNextAction(state, seconds(31), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "knob → 3000: a new write is held instead of joining the stale gap-0 phase",
+    whileStale.action !== "send_setter" && !hasEligibleSetter(state, seconds(31)),
+    JSON.stringify(whileStale)
+  );
+  const stillOldForEdg1 = { HECS: { battery_discharge_to_feed_grid_when_solar_input_loss: "disabled" } };
+  state = afterConfirmRun(state, stillOldForEdg1, seconds(85)).state;
+  const afterStalePhase = decideNextAction(state, seconds(85), SETTINGS_POLL_INTERVAL_MS);
+  check(
+    "knob → 3000: once the stale phase gives up (≤ 55 s), the held write goes out",
+    state.confirm === undefined && afterStalePhase.action === "send_setter" && afterStalePhase.command === "EDB1",
+    JSON.stringify(afterStalePhase)
   );
 }
 

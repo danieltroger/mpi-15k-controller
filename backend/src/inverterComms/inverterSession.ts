@@ -349,6 +349,7 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
 }
 
 async function runConfirms(state: SessionState, queries: readonly SettingsQueryCommandName[]): Promise<void> {
+  const runStartedAtMs = performance.now();
   const decodedByQuery: Partial<Record<SettingsQueryCommandName, DecodedFields>> = {};
   for (const query of queries) {
     if (state.disposed) return;
@@ -358,7 +359,7 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
   if (state.disposed) return;
   const strategy = state.scheduler.confirm?.strategy;
   const nowMs = performance.now();
-  const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, nowMs);
+  const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, nowMs, runStartedAtMs);
   state.scheduler = scheduler;
   if (!strategy) {
     // run_confirms is only ever decided from a confirm phase — reaching this is a scheduler bug
