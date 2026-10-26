@@ -4,7 +4,7 @@
  * see exactly what gets queued in each tick.
  */
 import { type Accessor, batch, createRoot, createSignal, type Setter } from "solid-js";
-import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
+import type { DecodedRound, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem, UsbValues } from "../inverterComms/inverterComms.types.ts";
 import { wireBuyingSetters } from "./buyingSetterWiring.ts";
 
@@ -44,11 +44,14 @@ export function createWiringHarness(
     clock = { monotonicMs: 0 },
     queueSetter,
     lastSentAtMsByCommand,
+    settingsReadbackAtMs = () => undefined,
   }: {
     clock?: SimulatedClock;
     queueSetter?: (item: SetterQueueItem) => void;
     /** A real (simulated) session's send record; without one, the harness's own sendRecord */
     lastSentAtMsByCommand?: () => Readonly<Record<string, number>>;
+    /** The session's settings-decode times; without one, none (a HECS of unknown age) */
+    settingsReadbackAtMs?: (query: SettingsQueryCommandName) => number | undefined;
   } = {}
 ): WiringHarness {
   const queued: WiringHarness["queued"] = [];
@@ -76,6 +79,7 @@ export function createWiringHarness(
         queueSetter?.(item);
       },
       lastSentAtMsByCommand: lastSentAtMsByCommand ?? (() => sendRecord),
+      settingsReadbackAtMs,
       clockTick,
       monotonicNowMs: () => clock.monotonicMs,
       wallClockNowMs: () => wallClockMs(clock),

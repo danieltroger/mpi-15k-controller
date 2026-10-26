@@ -1,6 +1,7 @@
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import {
   type AcChargingLimitReadback,
+  ALTERNATE_CAP_AMPS,
   IDLE_AC_CHARGING_LIMIT_AMPS,
   type LimitEvidence,
   type StepDownEvent,
@@ -28,7 +29,7 @@ export function logStepDownEvent(event: StepDownEvent): void {
       return warnLog(
         prefix,
         `BATS still shows ${formatAmps(event.limitReadbackAmps)} ${formatSeconds(event.afterMs)} in — re-queueing`,
-        `MUCHGC0100 (the session sends it no sooner than 60 s after the last one)`
+        "MUCHGC0100 once (the session sends it no sooner than 60 s after the last one)"
       );
     case "released":
       return logLog(
@@ -50,7 +51,8 @@ export function logStepDownEvent(event: StepDownEvent): void {
         `after ${formatSeconds(event.afterMs)} the hall still shows ${formatAmps(event.hallBatteryAmps)}`,
         `(allowed ≤ ${formatAmps(event.allowedHallAmps)}) — the ${IDLE_AC_CHARGING_LIMIT_AMPS} A cap is not in effect.`,
         `${describeLimitReadback(event.limitReadback, event.limitEvidence)}. Holding EDB0 back up to`,
-        `${formatSeconds(event.extensionMs)} more and re-asserting the cap: EDB0 now would stop full current in one step`
+        `${formatSeconds(event.extensionMs)} more and sending the cap again as ${ALTERNATE_CAP_AMPS} A (MUCHGC0090,`,
+        "which a stale readback can't satisfy): EDB0 now would stop full current in one step"
       );
     case "timed_out": {
       const summary = [

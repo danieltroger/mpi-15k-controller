@@ -146,11 +146,22 @@ const failedChecks: string[] = [];
       lastDecodedRound,
       acChargeBatteryState,
       monotonicNowMs: () => nowMs,
+      sessionAcChargingReadAtMs: () => undefined,
     });
     check("BATS memo: nothing before a BATS round", acChargingLimitReadback() === undefined);
     check(
       "HECS reading: state from the store, time unknown (-Infinity) before any HECS round",
       acChargingReading()?.state === "enabled" && acChargingReading()?.observedAtMs === -Infinity
+    );
+    const withSessionTime = createAcChargingReadbacks({
+      lastDecodedRound,
+      acChargeBatteryState,
+      monotonicNowMs: () => nowMs,
+      sessionAcChargingReadAtMs: () => -5_000,
+    });
+    check(
+      "HECS reading: …or, if the session knows it, the time of its last HECS decode",
+      withSessionTime.acChargingReading()?.observedAtMs === -5_000
     );
     nowMs = 1_000;
     setLastDecodedRound({ command: "BATS", fields: { "max._ac_charging_current": 261 }, decodedAt: 0 });
@@ -177,6 +188,46 @@ const failedChecks: string[] = [];
 }
 
 {
+  // The review's restart probe: feedWhenNoSolar (and this graph) restarts after an error while the
+  // session lives on. EDB1 went out at a window start 3 h ago, EDB0 at its end; the store says
+  // "disabled", and no HECS round comes for the next 125 s.
+  const sessionRecord = { EDB1: 1_000, MUCHGC2610: 1_100, MUCHGC0100: 3_600_000, EDB0: 3_615_000 };
+  const restartAtMs = 3 * 3_600_000;
+  const lastHecsDecodedAtMs = 3_627_500; // EDB0's own HECS confirm, long after EDB1
+  const restarted = createWiringHarness(
+    { chargingAmperageForBuying: undefined, acChargeBatteryState: "disabled", hallBatteryAmps: -40 },
+    {
+      clock: { monotonicMs: restartAtMs },
+      lastSentAtMsByCommand: () => sessionRecord,
+      settingsReadbackAtMs: query => (query === "HECS" ? lastHecsDecodedAtMs : undefined),
+    }
+  );
+  runWithHall(restarted, restartAtMs, restartAtMs + 125_000, () => -40);
+  check(
+    "graph restart, the session's last HECS decode after EDB1 → no spurious step-down, no timeout",
+    restarted.wiring.stepDownState().progress.phase === "idle" &&
+      !restarted.queued.some(entry => entry.atMs > restartAtMs),
+    restarted.queued.map(entry => entry.command).join(" ")
+  );
+  restarted.dispose();
+  // …but if EDB1 went out after the session's last HECS decode (a window had just started), the
+  // "disabled" may be racing it: the step-down starts, as it should
+  const freshEnable = createWiringHarness(
+    { chargingAmperageForBuying: undefined, acChargeBatteryState: "disabled", hallBatteryAmps: 150 },
+    {
+      clock: { monotonicMs: restartAtMs },
+      lastSentAtMsByCommand: () => ({ ...sessionRecord, EDB1: restartAtMs - 2_000, MUCHGC2610: restartAtMs - 1_700 }),
+      settingsReadbackAtMs: query => (query === "HECS" ? restartAtMs - 30_000 : undefined),
+    }
+  );
+  check(
+    "graph restart 2 s after an EDB1 the session hasn't read back → the step-down holds",
+    freshEnable.wiring.holdsAcChargingOn()
+  );
+  freshEnable.dispose();
+}
+
+{
   // The bounded re-asks: a cap the inverter never applies, then an EDB0 it never applies
   const reportedErrors: string[] = [];
   setOnErrorLog(args => reportedErrors.push(args.join(" ")));
@@ -190,31 +241,30 @@ const failedChecks: string[] = [];
   );
   advanceTo(harness, 42_500);
   check("…a second 261 A readback queues nothing", queuedDuring(harness, () => decodeBats(harness, 261)).length === 0);
-  // The hall still at 280 A at the timeout: the cap is demonstrably not in effect → hold on, page
+  // The hall still at 280 A at the timeout: the cap is demonstrably not in effect → hold on, page, and
+  // send the cap again as MUCHGC0090 at once
   const untilTimeout = runWithHall(harness, 42_750, STEP_DOWN_TIMEOUT_MS + 2_000, () => 280);
   check(
-    "…the timeout with the hall at 280 A queues no EDB0: the hold is extended, and it pages",
-    untilTimeout.length === 0 &&
+    "…the timeout with the hall at 280 A queues the alternate cap, not EDB0: the hold is extended, and it pages",
+    untilTimeout.map(entry => `${entry.command}@${entry.atMs}`).join(" ") === `MUCHGC0090@${STEP_DOWN_TIMEOUT_MS}` &&
       harness.wiring.holdsAcChargingOn() &&
       reportedErrors.filter(text => text.includes("the 10 A cap is not in effect")).length === 1,
     untilTimeout.map(entry => `${entry.command}@${entry.atMs}`).join(" ")
   );
-  advanceTo(harness, 180_000);
+  advanceTo(harness, 150_000);
   check(
-    "…the extension's 261 A readback re-asserts the cap once more",
-    queuedDuring(harness, () => decodeBats(harness, 261)).join(" ") === "MUCHGC0100"
+    "…a 261 A readback in the extension queues nothing (MUCHGC0100 would replace the alternate cap)",
+    queuedDuring(harness, () => decodeBats(harness, 261)).length === 0
   );
-  advanceTo(harness, 200_000);
-  check("…and only once", queuedDuring(harness, () => decodeBats(harness, 261)).length === 0);
   const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
-  const untilExtendedDeadline = runWithHall(harness, 200_250, extendedDeadlineMs + 2_000, () => 280);
+  const untilExtendedDeadline = runWithHall(harness, 150_250, extendedDeadlineMs + 2_000, () => 280);
   check(
     "…EDB0 only at the extended deadline, paging that it stops full current",
     untilExtendedDeadline.map(entry => `${entry.command}@${entry.atMs}`).join(" ") === `EDB0@${extendedDeadlineMs}` &&
       reportedErrors.filter(text => text.includes("one-step stop at full current")).length === 1,
     untilExtendedDeadline.map(entry => `${entry.command}@${entry.atMs}`).join(" ")
   );
-  advanceTo(harness, 320_000);
+  advanceTo(harness, 200_000);
   check(
     "…readbacks after the release queue no MUCHGC",
     queuedDuring(harness, () => decodeBats(harness, 261)).length === 0

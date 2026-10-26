@@ -85,6 +85,7 @@ export function createSessionSimulation({
       clock,
       queueSetter: item => queueIntoSession(session, clock, item),
       lastSentAtMsByCommand: () => session.scheduler.lastSentAtByCommand,
+      settingsReadbackAtMs: query => session.scheduler.latestSettingsReadbacks[query]?.decodedAtMs,
     }
   );
   decodeHecs(harness, inverter.acChargingEnabled ? "enabled" : "disabled");

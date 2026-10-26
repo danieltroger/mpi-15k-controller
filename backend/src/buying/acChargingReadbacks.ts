@@ -17,16 +17,20 @@ const HECS_AC_CHARGING_FIELD = "ac_charge_battery";
  * off the decoded rounds so the inverter comms module stays untouched; stamped on the step-down's
  * monotonic clock in the batch the round was decoded in. The HECS state itself comes from the
  * settings store, which outlives this graph (feedWhenNoSolar restarts after an error): until the next
- * HECS round its time is unknown, -Infinity, i.e. too old to rule anything out.
+ * HECS round its time is the session's own record of the last HECS decode, the same clock (-Infinity
+ * without one: too old to rule anything out).
  */
 export function createAcChargingReadbacks({
   lastDecodedRound,
   acChargeBatteryState,
   monotonicNowMs,
+  sessionAcChargingReadAtMs,
 }: {
   lastDecodedRound: Accessor<DecodedRound | undefined>;
   acChargeBatteryState: Accessor<UsbValues["ac_charge_battery"]>;
   monotonicNowMs: () => number;
+  /** When the session last decoded HECS (non-reactive) — the age of a store value from before this graph */
+  sessionAcChargingReadAtMs: () => number | undefined;
 }) {
   const acChargingLimitReadback = createMemo<AcChargingLimitReadback | undefined>(previous => {
     const round = lastDecodedRound();
@@ -54,7 +58,7 @@ export function createAcChargingReadbacks({
   const acChargingReading = createMemo<AcChargingReading | undefined>(() => {
     const state = acChargeBatteryState();
     if (!state) return undefined;
-    return { state, observedAtMs: acChargingObservedAtMs() ?? -Infinity };
+    return { state, observedAtMs: acChargingObservedAtMs() ?? sessionAcChargingReadAtMs() ?? -Infinity };
   });
 
   return { acChargingLimitReadback, acChargingReading };

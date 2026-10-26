@@ -3,7 +3,7 @@
  * timelines of input changes. Timelines follow the native PI17 session (#48): a write commits ~6 s
  * after it goes out, its BATS confirm is decoded after the 12 s quiet gap, a failed confirm re-checks
  * after 30 s more, and an identical setter is re-sent no sooner than 60 s after the last one. Sends
- * are the session's record (`lastAboveIdleLimitSentAtMs`, `lastAcChargingEnableSentAtMs`): the ACK time.
+ * are the session's record (`sentAtMsByCommand`): the time each command's exchange completed.
  */
 import {
   type AcChargingReading,
@@ -26,8 +26,7 @@ export const nightBuying: BuyWindowEndInputs = {
   gridChargingWanted: true,
   acChargingReadback: hecs("enabled", -600_000),
   limitReadback: { amps: 261, observedAtMs: -600_000 },
-  lastAboveIdleLimitSentAtMs: -600_000,
-  lastAcChargingEnableSentAtMs: -600_000,
+  sentAtMsByCommand: { EDB1: -600_000, MUCHGC2610: -600_000, GPMP015000: -600_000 },
   hallBatteryAmps: 280,
   solarWatts: 0,
   batteryVoltage: 55,
@@ -41,6 +40,16 @@ export const QUIET_GAP_AFTER_WRITE_MS = 12_000;
 export const CONFIRM_AFTER_WRITE_MS = 500 + QUIET_GAP_AFTER_WRITE_MS;
 /** #48's identical-setter gate: the same command string goes out again no sooner than this */
 export const IDENTICAL_SETTER_GATE_MS = 60_000;
+
+/** The input change of the session finishing a send of `command` at `atMs` */
+export function sent(simulation: Simulation, command: string, atMs: number): Partial<BuyWindowEndInputs> {
+  return { sentAtMsByCommand: { ...simulation.inputs.sentAtMsByCommand, [command]: atMs } };
+}
+
+/** A send record with `command` sent at `atMs` on top of `inputs`' */
+export function withSend(inputs: BuyWindowEndInputs, command: string, atMs: number): BuyWindowEndInputs {
+  return { ...inputs, sentAtMsByCommand: { ...inputs.sentAtMsByCommand, [command]: atMs } };
+}
 
 /** A HECS "AC charge battery" readback observed at `observedAtMs` */
 export function hecs(state: AcChargingReading["state"], observedAtMs: number): AcChargingReading {
@@ -63,8 +72,7 @@ export function bootedWithHallAt(hallBatteryAmps: number): Simulation {
       gridChargingWanted: false,
       acChargingReadback: undefined,
       limitReadback: undefined,
-      lastAboveIdleLimitSentAtMs: undefined,
-      lastAcChargingEnableSentAtMs: undefined,
+      sentAtMsByCommand: {},
       hallBatteryAmps,
       solarWatts: 0,
       batteryVoltage: 55,

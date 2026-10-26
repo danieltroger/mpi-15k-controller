@@ -51,6 +51,7 @@ export function useInverterValues(config: Accessor<Config>) {
     queueSetter: session.queueSetter,
     lastWriteAt: session.lastWriteAt,
     lastSentAtMsByCommand: session.lastSentAtMsByCommand,
+    settingsReadbackAtMs: session.settingsReadbackAtMs,
     serialIsOpen: session.serialIsOpen,
   };
 }

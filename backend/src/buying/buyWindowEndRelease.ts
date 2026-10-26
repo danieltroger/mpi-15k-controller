@@ -8,7 +8,7 @@ import type {
   BuyWindowEndStepDownState,
   StepDownEvent,
   StepDownProgress,
-} from "./buyWindowEndStepDown.ts";
+} from "./buyWindowEndStepDown.types.ts";
 
 /**
  * After EDB0 is released, a HECS readback that still shows AC charging enabled this long after the last

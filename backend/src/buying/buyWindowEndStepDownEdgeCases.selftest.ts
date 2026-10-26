@@ -7,7 +7,12 @@
  * Run from backend/ with:  yarn node src/buying/buyWindowEndStepDownEdgeCases.selftest.ts
  */
 import process from "process";
-import { holdsAcChargingOn, SETTLED_FOR_MS, STEP_DOWN_TIMEOUT_MS } from "./buyWindowEndStepDown.ts";
+import {
+  alternateCapRequests,
+  holdsAcChargingOn,
+  SETTLED_FOR_MS,
+  STEP_DOWN_TIMEOUT_MS,
+} from "./buyWindowEndStepDown.ts";
 import {
   bootedWithHallAt,
   buyingFor,
@@ -21,8 +26,10 @@ import {
   lastEvent,
   nightBuying,
   QUIET_GAP_AFTER_WRITE_MS,
+  sent,
   stepAt,
   windowEnd,
+  withSend,
 } from "./buyWindowEndStepDownSimulation.ts";
 
 const failedChecks: string[] = [];
@@ -32,8 +39,7 @@ const preWindow = {
   gridChargingWanted: false,
   acChargingReadback: hecs("disabled", -30_000),
   limitReadback: { amps: 10, observedAtMs: -30_000 },
-  lastAboveIdleLimitSentAtMs: undefined,
-  lastAcChargingEnableSentAtMs: undefined,
+  sentAtMsByCommand: {},
   hallBatteryAmps: -3,
 };
 
@@ -52,7 +58,7 @@ const preWindow = {
       lastEvent(simulation, "cancelled")?.reason === "grid charging wanted again" &&
       !holdsAcChargingOn(simulation.state)
   );
-  stepAt(simulation, 5_800, { lastAboveIdleLimitSentAtMs: 5_800 });
+  stepAt(simulation, 5_800, sent(simulation, "MUCHGC2610", 5_800));
   stepAt(simulation, 6_500, { hallBatteryAmps: 11 });
   stepAt(simulation, 11_800, { hallBatteryAmps: 280 });
   stepAt(simulation, 17_800, { limitReadback: { amps: 261, observedAtMs: 17_800 } });
@@ -83,7 +89,7 @@ const preWindow = {
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, 5_000, { gridChargingWanted: true });
-  stepAt(simulation, 5_300, { lastAboveIdleLimitSentAtMs: 5_300 });
+  stepAt(simulation, 5_300, sent(simulation, "MUCHGC2610", 5_300));
   stepAt(simulation, 6_000, { hallBatteryAmps: 11, limitReadback: { amps: 10, observedAtMs: 6_000 } });
   stepAt(simulation, 8_000, windowEnd);
   stepAt(simulation, 10_000, { limitReadback: { amps: 10, observedAtMs: 10_000 } });
@@ -116,7 +122,7 @@ const preWindow = {
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, 5_000, { gridChargingWanted: true });
-  stepAt(simulation, 5_300, { lastAboveIdleLimitSentAtMs: 5_300 });
+  stepAt(simulation, 5_300, sent(simulation, "MUCHGC2610", 5_300));
   stepAt(simulation, 8_000, windowEnd);
   stepAt(simulation, 12_250, { limitReadback: { amps: 261, observedAtMs: 12_250 } });
   stepAt(simulation, 12_750, { hallBatteryAmps: 11 });
@@ -126,22 +132,28 @@ const preWindow = {
   }));
   stepAt(simulation, 8_000 + STEP_DOWN_TIMEOUT_MS, {});
   check(
-    "gap-0 ABA: BATS shows 10 A but MUCHGC2610's late commit puts 280 A on the hall → held, and extended at the timeout",
+    "gap-0 ABA: BATS shows 10 A but MUCHGC2610's late commit puts 280 A on the hall → held, extended at the timeout",
     heldAtFullCurrent &&
       lastEvent(simulation, "released") === undefined &&
       lastEvent(simulation, "hold_extended")?.afterMs === STEP_DOWN_TIMEOUT_MS &&
+      alternateCapRequests(simulation.state) === 1 &&
       holdsAcChargingOn(simulation.state)
   );
-  // The next settings poll reads the real 261 A: the extension's re-assertion gets the cap sent again
-  stepAt(simulation, 194_000, { limitReadback: { amps: 261, observedAtMs: 194_000 } });
-  const reassertedInExtension = lastEvent(simulation, "limit_reasserted")?.afterMs === 194_000 - 8_000;
-  holdsAtEveryStep(simulation, 194_250, 206_500, atMs => ({ hallBatteryAmps: atMs < 206_000 ? 280 : 11 }));
-  stepAt(simulation, 206_500, { limitReadback: { amps: 10, observedAtMs: 206_500 } });
-  stepAt(simulation, 209_000, {});
+  // The alternate cap needs no settings poll: MUCHGC0090 goes out at once (no stale readback satisfies
+  // it), commits ~12 s later, and the interleaved re-checks read 9 A
+  const extendedAtMs = 8_000 + STEP_DOWN_TIMEOUT_MS;
+  stepAt(simulation, extendedAtMs + 300, sent(simulation, "MUCHGC0090", extendedAtMs + 300));
+  stepAt(simulation, extendedAtMs + 6_300, { limitReadback: { amps: 261, observedAtMs: extendedAtMs + 6_300 } });
+  stepAt(simulation, extendedAtMs + 10_300, { limitReadback: { amps: 261, observedAtMs: extendedAtMs + 10_300 } });
+  stepAt(simulation, extendedAtMs + 12_500, { hallBatteryAmps: 9 });
+  stepAt(simulation, extendedAtMs + 14_300, { limitReadback: { amps: 9, observedAtMs: extendedAtMs + 14_300 } });
+  const heldUntilSettled = holdsAtEveryStep(simulation, extendedAtMs + 14_500, extendedAtMs + 15_250, () => ({}));
+  stepAt(simulation, extendedAtMs + 15_500, {});
   check(
-    "…the extension's re-assertion lands, and the step-down releases on its own proof — not at full current",
-    reassertedInExtension &&
-      lastEvent(simulation, "released")?.afterMs === 209_000 - 8_000 &&
+    "…the alternate cap lands, and the step-down releases on its own proof ~15 s into the extension — not at full current",
+    heldUntilSettled &&
+      lastEvent(simulation, "released")?.afterMs === STEP_DOWN_TIMEOUT_MS + 15_500 &&
+      lastEvent(simulation, "released")?.hallBatteryAmps === 9 &&
       lastEvent(simulation, "timed_out") === undefined
   );
 }
@@ -152,8 +164,8 @@ const preWindow = {
   // ~12 s). Without the margin this was a one-step stop at full current.
   const simulation = buyingFor(preWindow);
   stepAt(simulation, 0, { gridChargingWanted: true });
-  stepAt(simulation, 300, { lastAcChargingEnableSentAtMs: 300 });
-  stepAt(simulation, 600, { lastAboveIdleLimitSentAtMs: 600 });
+  stepAt(simulation, 300, sent(simulation, "EDB1", 300));
+  stepAt(simulation, 600, sent(simulation, "MUCHGC2610", 600));
   stepAt(simulation, 4_000, { hallBatteryAmps: 150 });
   stepAt(simulation, 5_000, windowEnd);
   check(
@@ -179,8 +191,8 @@ const preWindow = {
   // release comes 3 s past MUCHGC2610's commit horizon (12.6 s), not at the timeout
   const gapZero = buyingFor(preWindow);
   stepAt(gapZero, 0, { gridChargingWanted: true });
-  stepAt(gapZero, 300, { lastAcChargingEnableSentAtMs: 300 });
-  stepAt(gapZero, 600, { lastAboveIdleLimitSentAtMs: 600 });
+  stepAt(gapZero, 300, sent(gapZero, "EDB1", 300));
+  stepAt(gapZero, 600, sent(gapZero, "MUCHGC2610", 600));
   stepAt(gapZero, 4_000, { hallBatteryAmps: 150 });
   stepAt(gapZero, 5_000, windowEnd);
   stepAt(gapZero, 11_400, { hallBatteryAmps: 11 });
@@ -196,7 +208,7 @@ const preWindow = {
 {
   // The planner shrinks the running window to end now, 3 s after an in-window MUCHGC2550: the shared
   // confirm at +12.5 s still shows 255 A (MUCHGC0100 not committed yet), the retry at +42.5 s shows 10 A
-  const simulation = buyingFor({ ...nightBuying, lastAboveIdleLimitSentAtMs: -2_700 });
+  const simulation = buyingFor(withSend(nightBuying, "MUCHGC2550", -2_700));
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 255, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
   const heldUntilRetry = holdsAtEveryStep(simulation, 12_750, 42_250, atMs => ({
@@ -220,7 +232,7 @@ const preWindow = {
     acChargingReadback: hecs("enabled", -600_000),
   });
   stepAt(simulation, 100_300, { limitReadback: { amps: 10, observedAtMs: 100_300 } });
-  stepAt(simulation, 100_600, { lastAboveIdleLimitSentAtMs: 100_600 });
+  stepAt(simulation, 100_600, sent(simulation, "MUCHGC2610", 100_600));
   stepAt(simulation, 105_000, { ...windowEnd, hallBatteryAmps: 11 });
   stepAt(simulation, 110_000, {});
   check(
@@ -242,7 +254,7 @@ const preWindow = {
   );
   // The new window's MUCHGC2500 goes out; EDB0 had gone out but its commit never showed, so the window
   // ends with HECS still "enabled"
-  stepAt(simulation, 15_300, { lastAboveIdleLimitSentAtMs: 15_300 });
+  stepAt(simulation, 15_300, sent(simulation, "MUCHGC2500", 15_300));
   stepAt(simulation, 40_000, windowEnd);
   check(
     "…and its own end steps down again",
@@ -255,8 +267,8 @@ const preWindow = {
   // HECS readback newer than the release may end it — the stale one would end it at once and restart it
   const simulation = buyingFor(preWindow);
   stepAt(simulation, 0, { gridChargingWanted: true });
-  stepAt(simulation, 300, { lastAcChargingEnableSentAtMs: 300 });
-  stepAt(simulation, 600, { lastAboveIdleLimitSentAtMs: 600 });
+  stepAt(simulation, 300, sent(simulation, "EDB1", 300));
+  stepAt(simulation, 600, sent(simulation, "MUCHGC2610", 600));
   stepAt(simulation, 5_000, { ...windowEnd, hallBatteryAmps: 11 });
   stepAt(simulation, 17_400, { limitReadback: { amps: 10, observedAtMs: 17_400 } });
   const restartedOnStaleHecs = heldAtAnyStep(simulation, 17_500, 29_000, () => ({}));

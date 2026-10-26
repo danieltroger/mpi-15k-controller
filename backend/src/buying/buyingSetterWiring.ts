@@ -1,12 +1,13 @@
 import { type Accessor, createEffect, createMemo, untrack } from "solid-js";
-import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
+import type { DecodedRound, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem, UsbValues } from "../inverterComms/inverterComms.types.ts";
 import {
   acChargingLimitReassertions,
+  ALTERNATE_CAP_AMPS,
+  alternateCapRequests,
   type BuyWindowEndStepDownState,
   holdsAcChargingOn,
   initialBuyWindowEndStepDownState,
-  lastRelevantSends,
   stepBuyWindowEndStepDown,
   wantedAcChargingLimitAmps,
 } from "./buyWindowEndStepDown.ts";
@@ -31,6 +32,8 @@ export type BuyingSetterEnvironment = {
   queueSetter: (item: SetterQueueItem) => void;
   /** The session's record of when each command string last went out, on the monotonic clock */
   lastSentAtMsByCommand: () => Readonly<Record<string, number>>;
+  /** When the session last decoded a settings query, on the same clock */
+  settingsReadbackAtMs: (query: SettingsQueryCommandName) => number | undefined;
   /** Changes at least every few seconds (useNow), so time-based transitions fire without sensor updates */
   clockTick: Accessor<number>;
   /** The step-down's clock (performance.now() in production) */
@@ -48,7 +51,10 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   const { stillFeedingIn, chargingAmperageForBuying, queueSetter } = environment;
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
   const wantedLimitAmps = createMemo(() => wantedAcChargingLimitAmps(shouldBuy(), chargingAmperageForBuying()));
-  const { acChargingLimitReadback, acChargingReading } = createAcChargingReadbacks(environment);
+  const { acChargingLimitReadback, acChargingReading } = createAcChargingReadbacks({
+    ...environment,
+    sessionAcChargingReadAtMs: () => environment.settingsReadbackAtMs("HECS"),
+  });
   // The flag's value only — a new HECS round with the same value must not re-run the EDB effect
   const acChargingState = createMemo(() => acChargingReading()?.state);
   const currentlyBuying = createMemo(() => acChargingState() !== "disabled");
@@ -62,8 +68,8 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
       previous,
       {
         gridChargingWanted: !!chargingAmperageForBuying(),
-        // Not reactive: read afresh on every evaluation (each hall sample, readback and clock tick)
-        ...lastRelevantSends(environment.lastSentAtMsByCommand()),
+        // Not reactive, and the session's own object (no copy): read afresh on every evaluation
+        sentAtMsByCommand: environment.lastSentAtMsByCommand(),
         acChargingReadback: acChargingReading(),
         limitReadback: acChargingLimitReadback(),
         hallBatteryAmps: freshHallAmps(environment.batteryCurrentAmps(), environment.wallClockNowMs()),
@@ -77,6 +83,7 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   }, initialBuyWindowEndStepDownState());
   const holdsAcCharging = createMemo(() => holdsAcChargingOn(stepDownState()));
   const limitReassertions = createMemo(() => acChargingLimitReassertions(stepDownState()));
+  const alternateCaps = createMemo(() => alternateCapRequests(stepDownState()));
   const edb0Retries = createMemo(() => edb0RetryRequests(stepDownState()));
 
   createEffect(() => {
@@ -103,6 +110,11 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
     const reassertions = limitReassertions();
     if (reassertions > previousReassertions) queueAcChargingLimit(queueSetter, untrack(wantedLimitAmps));
     return reassertions;
+  }, 0);
+  createEffect<number>(previousRequests => {
+    const requests = alternateCaps();
+    if (requests > previousRequests) queueAcChargingLimit(queueSetter, ALTERNATE_CAP_AMPS);
+    return requests;
   }, 0);
   createEffect<number>(previousRetries => {
     const retries = edb0Retries();

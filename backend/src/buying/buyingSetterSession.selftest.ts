@@ -9,6 +9,7 @@
 import process from "process";
 import { setOnErrorLog } from "../utilities/logging.ts";
 import {
+  ALTERNATE_CAP_AMPS,
   HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS,
   IDLE_AC_CHARGING_LIMIT_AMPS,
   STEP_DOWN_EXTENSION_MS,
@@ -47,28 +48,30 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
-  // The cap is ACKed but never applied (the review's requeueLoop.ts): bounded re-sends; the hall at 261 A
-  // at the timeout extends the hold once (paging), then EDB0 goes out regardless (paging again)
+  // No cap the inverter will apply (the review's requeueLoop.ts, MUCHGC0090 ignored too): bounded re-sends;
+  // the hall at 261 A at the timeout extends the hold (paging), then EDB0 goes out regardless (paging again)
   const reportedErrors: string[] = [];
   setOnErrorLog(args => reportedErrors.push(args.join(" ")));
   const simulation = createSessionSimulation({
     chargingAmperageForBuying: 261,
-    inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100"]) },
+    inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100", "MUCHGC0090"]) },
   });
   runUntil(simulation, 0);
   simulation.pollingPausedMs = 0;
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
-  const capSends = sentCommands(simulation, "MUCHGC0100", 0);
+  const capSends = [...sentCommands(simulation, "MUCHGC0100", 0), ...sentCommands(simulation, "MUCHGC0090", 0)];
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
   check(
-    "never-applied cap: MUCHGC0100 out at most 3 times, all inside the extended hold, then never again",
-    capSends.length <= 3 && capSends.every(sent => sent.atMs <= extendedDeadlineMs),
+    "never-applied cap: MUCHGC0100 twice + MUCHGC0090 once, all inside the extended hold, then never again",
+    capSends.length === 3 &&
+      sentCommands(simulation, "MUCHGC0090", 0).length === 1 &&
+      capSends.every(sent => sent.atMs <= extendedDeadlineMs),
     describe(capSends)
   );
   check(
-    "…EDB0 once, at the extended deadline (~300 s)",
+    "…EDB0 once, at the extended deadline (~180 s)",
     edb0Sends.length === 1 &&
       edb0Sends[0]!.atMs >= extendedDeadlineMs &&
       edb0Sends[0]!.atMs <= extendedDeadlineMs + 3_000,
@@ -87,6 +90,35 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
     pausedShare < 0.1,
     `${(pausedShare * 100).toFixed(1)} %`
   );
+  simulation.harness.dispose();
+}
+
+{
+  // The inverter ignores MUCHGC0100 but applies another cap value: the extension's MUCHGC0090 ends the
+  // full-current hold on the step-down's own proof, without a full-current EDB0
+  const reportedErrors: string[] = [];
+  setOnErrorLog(args => reportedErrors.push(args.join(" ")));
+  const simulation = createSessionSimulation({
+    chargingAmperageForBuying: 261,
+    inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100"]) },
+  });
+  runUntil(simulation, 0);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, THIRTY_MINUTES_MS);
+  const alternateCapSends = sentCommands(simulation, "MUCHGC0090", 0);
+  const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  check(
+    "alternate cap applies: MUCHGC0090 at the timeout, EDB0 once ~15 s later at 9 A — paged once, no full-current stop",
+    alternateCapSends.length === 1 &&
+      alternateCapSends[0]!.atMs >= STEP_DOWN_TIMEOUT_MS &&
+      edb0Sends.length === 1 &&
+      edb0Sends[0]!.atMs < STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS &&
+      edb0Sends[0]!.limitAmpsAtSend === ALTERNATE_CAP_AMPS &&
+      edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
+      reportedErrors.filter(text => text.includes("one-step stop at full current")).length === 0,
+    describe([...alternateCapSends, ...edb0Sends])
+  );
+  setOnErrorLog(undefined);
   simulation.harness.dispose();
 }
 
