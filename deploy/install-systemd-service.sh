@@ -15,6 +15,9 @@
 # OOM-kill protection, start at boot ordered after network-online. The controller was
 # previously launched from /etc/rc.local with no respawn — if migrating an old box,
 # remove/comment that line, or the two instances will fight over the inverter's USB port.
+#
+# Also installs deploy/99-w1-therm-bulk-read.rules, the udev rule that lets the controller
+# trigger one temperature conversion for the whole 1-wire bus (see deploy/README.md).
 set -euo pipefail
 
 SERVICE_NAME=mpi-15k-controller
@@ -23,6 +26,8 @@ REPO_DIR=${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 LOG_FILE=${LOG_FILE:-/var/log/${SERVICE_NAME}.log}
 YARN_BIN=${YARN_BIN:-$(command -v yarn || echo /usr/bin/yarn)}
 UNIT_PATH=/etc/systemd/system/${SERVICE_NAME}.service
+UDEV_RULE_NAME=99-w1-therm-bulk-read.rules
+UDEV_RULE_PATH=/etc/udev/rules.d/${UDEV_RULE_NAME}
 
 generate_unit() {
   cat <<EOF
@@ -97,6 +102,26 @@ systemctl is-active --quiet "${SERVICE_NAME}" && was_active=1
 # retired mpp-solar user unit (which the old controller drove via `systemctl --user`, hence the
 # lingering this script used to enable) must stay disabled — two writers on one serial port
 # interleave garbage.
+
+# 1-wire bulk read (#58): the rule makes therm_bulk_read writable for group ubuntu. Without it the
+# controller still works, on per-probe reads (~11 s per sweep instead of ~1 s), and warns once per outage.
+if [[ " $(id -nG "${SERVICE_USER}") " != *" ubuntu "* ]]; then
+  echo "WARNING: ${SERVICE_USER} is not in group ubuntu, the group deploy/${UDEV_RULE_NAME} gives" >&2
+  echo "write access to therm_bulk_read. Change the group in the rule, or the controller stays on" >&2
+  echo "slow per-probe 1-wire reads." >&2
+fi
+if cmp -s "${REPO_DIR}/deploy/${UDEV_RULE_NAME}" "${UDEV_RULE_PATH}"; then
+  echo "${UDEV_RULE_PATH} already up to date."
+else
+  sudo install -m 0644 "${REPO_DIR}/deploy/${UDEV_RULE_NAME}" "${UDEV_RULE_PATH}"
+  echo "Wrote ${UDEV_RULE_PATH}"
+  sudo udevadm control --reload-rules
+  # Applies the rule to the probes attached right now. It only re-sends their uevents; the bus is untouched.
+  sudo udevadm trigger --subsystem-match=w1 --action=change
+  sudo udevadm settle
+fi
+ls -l /sys/bus/w1/devices/w1_bus_master1/therm_bulk_read 2>/dev/null ||
+  echo "(no 1-wire probes attached yet: the rule applies when they attach)"
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SERVICE_NAME}"

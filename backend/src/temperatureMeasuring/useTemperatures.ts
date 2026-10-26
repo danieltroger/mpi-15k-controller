@@ -1,145 +1,114 @@
 import {
   type Accessor,
-  createComputed,
+  batch,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
   mapArray,
   onCleanup,
+  type Setter,
   untrack,
 } from "solid-js";
-import { promises as fs } from "fs";
-import { exec } from "../utilities/exec.ts";
-import { logLog, warnLog } from "../utilities/logging.ts";
-import { rand, wait } from "../vendor/depictUtilishared.ts";
+import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
+import { wait } from "../vendor/depictUtilishared.ts";
 import type { Config } from "../config/config.types.ts";
+import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
+import { enableOneWireBus, ONE_WIRE_DEVICES_DIRECTORY } from "./oneWireBus.ts";
+import { nodeSysfsAccess } from "./sysfsAccess.ts";
+import {
+  createThermometerSweepState,
+  DEFAULT_THERMOMETER_SWEEP_TIMING,
+  sweepThermometers,
+  type ThermometerProbe,
+} from "./thermometerSweep.ts";
 
-export type ThermometerValue = { value: number; time: number; thermometer_device_id: string; label: string };
+/**
+ * A sweep starts every 10 s. A bulk sweep takes ~1 s: the trigger write blocks for the 750 ms conversion,
+ * then 14 scratchpad reads take ~15 ms each. The w1_slave fallback takes ~11 s, so its sweeps run back to back.
+ * 10 s keeps each probe on about the cadence it had when every read ran its own conversion (one probe every
+ * ~0.8 s, so each probe every ~11 s). MQTT/Influx volume, Grafana and the stale-temperature alert see the same
+ * rhythm as before, only now all 14 values land together.
+ */
+const SWEEP_INTERVAL_MS = 10_000;
 
-export function useTemperatures(get_config: Accessor<Config>) {
-  const [thermometersEnabled] = createResource(async () => {
-    // If already initialised, don't try again as it will throw
-    if (!(await hasSensorFolder())) {
-      const { stderr, stdout } = await exec("sudo dtoverlay w1-gpio gpiopin=4 pullup=0");
-      if (stdout || stderr) {
-        logLog("Enabling thermometers returned", { stdout, stderr });
-      }
-    }
-    // Only start reading thermometers once we have enabled them
+type ProbeSignal = {
+  thermometerDeviceId: string;
+  reading: Accessor<TemperatureReadingBroadcast | undefined>;
+  setReading: Setter<TemperatureReadingBroadcast | undefined>;
+};
+
+/** Every configured thermometer's latest accepted reading, keyed by device id, swept over the 1-wire bus. */
+export function useTemperatures(getConfig: Accessor<Config>) {
+  const [busEnabled] = createResource(async () => {
+    await enableOneWireBus(Object.keys(untrack(getConfig).thermometers));
     return true;
   });
-  const thermometers = createMemo(() => get_config().thermometers);
-  const thermometer_ids = createMemo(() =>
-    thermometersEnabled() ? (JSON.parse(JSON.stringify(Object.keys(thermometers()))) as string[]) : []
-  );
-
-  const thermometer_values = mapArray(thermometer_ids, thermometer_device_id =>
-    read_thermometer({
-      thermometer_device_id: thermometer_device_id,
-      label: createMemo(() => thermometers()[thermometer_device_id]),
+  const thermometers = createMemo(() => getConfig().thermometers);
+  const thermometerIds = createMemo(() => (busEnabled() ? Object.keys(thermometers()) : []));
+  const probeSignals = createMemo(
+    mapArray(thermometerIds, (thermometerDeviceId): ProbeSignal => {
+      const [reading, setReading] = createSignal<TemperatureReadingBroadcast>();
+      return { thermometerDeviceId, reading, setReading };
     })
   );
+  const temperatures = createMemo(() =>
+    Object.fromEntries(probeSignals().map(probe => [probe.thermometerDeviceId, probe.reading] as const))
+  );
 
-  const temperatures = createMemo(() => Object.fromEntries(thermometer_values()));
+  createEffect(() => {
+    if (!busEnabled()) return;
+    const loopControl = { stopped: false };
+    onCleanup(() => (loopControl.stopped = true));
+    void runSweepLoop({ loopControl, probeSignals, thermometers });
+  });
 
   return temperatures;
 }
 
-function read_thermometer({
-  thermometer_device_id,
-  label,
+async function runSweepLoop({
+  loopControl,
+  probeSignals,
+  thermometers,
 }: {
-  thermometer_device_id: string;
-  label: Accessor<string>;
+  loopControl: { stopped: boolean };
+  probeSignals: Accessor<ProbeSignal[]>;
+  thermometers: Accessor<Config["thermometers"]>;
 }) {
-  const [get_value, set_value] = createSignal<ThermometerValue>();
-  const [get_fails, set_fails] = createSignal(0);
-
-  createResource(async () => {
-    let gotCleanedUp = false;
-
-    onCleanup(() => (gotCleanedUp = true));
-
-    logLog("Starting reading of thermometer", thermometer_device_id, untrack(label));
-    while (!gotCleanedUp) {
-      const fails = untrack(get_fails);
-      if (fails > 0) {
-        await wait(rand(1000, 5000));
-      } else if (fails > 10) {
-        await wait(rand(10_000, 30_000));
-      }
-      try {
-        const value = await get_thermometer_value({ thermometer_device_id, label });
-        set_value(value);
-        set_fails(0);
-      } catch (e) {
-        logLog(`Failed reading thermometer ${thermometer_device_id} (${untrack(label)}):`, e);
-        set_fails(prev => prev + 1);
-      }
+  const sweepState = createThermometerSweepState();
+  logLog("Starting thermometer sweeps every", SWEEP_INTERVAL_MS / 1000, "s");
+  while (!loopControl.stopped) {
+    const sweepStartedAtMs = Date.now();
+    try {
+      const sweep = await sweepThermometers({
+        probes: untrack(() => probesToSweep(probeSignals(), thermometers())),
+        state: sweepState,
+        sysfs: nodeSysfsAccess,
+        logger: { log: logLog, warn: warnLog },
+        devicesDirectory: ONE_WIRE_DEVICES_DIRECTORY,
+        timing: DEFAULT_THERMOMETER_SWEEP_TIMING,
+      });
+      if (!loopControl.stopped) publishReadings(untrack(probeSignals), sweep.readings);
+    } catch (error) {
+      errorLog("Thermometer sweep threw although it handles sysfs failures itself, retrying next interval", error);
     }
-    logLog("Stopping reading of thermometer", thermometer_device_id, untrack(label));
-  });
-
-  createComputed(async () => {
-    const fails = get_fails();
-    if (fails < 100) return;
-    warnLog(
-      `Over 100 fails (${fails}) for thermometer ${thermometer_device_id} (${untrack(
-        label
-      )}), please implement a way to restart thermometers`
-    );
-    logLog("Waiting 60s before resetting, for now");
-    await wait(rand(50_000, 80_000));
-    logLog("Resetting thermometer");
-    set_fails(0);
-  });
-
-  return [thermometer_device_id, get_value] as const;
+    await wait(Math.max(0, SWEEP_INTERVAL_MS - (Date.now() - sweepStartedAtMs)));
+  }
+  logLog("Stopped thermometer sweeps");
 }
 
-async function get_thermometer_value({
-  thermometer_device_id,
-  label,
-}: {
-  thermometer_device_id: string;
-  label: Accessor<string>;
-}) {
-  const handle = await fs.open("/sys/bus/w1/devices/" + thermometer_device_id + "/w1_slave", "r");
-  const read_contents = await handle.readFile({
-    // example output: '84 01 55 05 7f a5 a5 66 f5 : crc=f5 YES\n84 01 55 05 7f a5 a5 66 f5 t=24250\n'
-    encoding: "utf8",
-  });
-  await handle.close();
-  const [line1, line2] = (read_contents || "").split("\n");
-  const crc_line = line1?.split("crc=");
-  const wanted_part = crc_line?.[crc_line?.length - 1];
-  if (wanted_part?.split(" ")?.pop() !== "YES") {
-    throw new Error(`CRC didn't match for thermometer ${thermometer_device_id} (${untrack(label)}): ` + read_contents);
-  }
-  const temperature = +line2?.split("t=")?.pop()! / 1000;
-  if (temperature < -30 || temperature > 90 || isNaN(temperature)) {
-    throw new Error(
-      `Temperature out of range for thermometer ${thermometer_device_id} (${untrack(label)}): ` + temperature + "°C"
-    );
-  }
-  return {
-    value: temperature,
-    time: +new Date(),
-    thermometer_device_id: thermometer_device_id,
-    label: untrack(label),
-  } as ThermometerValue;
+function probesToSweep(probeSignals: ProbeSignal[], thermometers: Config["thermometers"]): ThermometerProbe[] {
+  return probeSignals.map(probe => ({
+    thermometer_device_id: probe.thermometerDeviceId,
+    label: thermometers[probe.thermometerDeviceId],
+  }));
 }
 
-/**
- * Asynchronously checks if there's any folder starting with `28-` in `/sys/bus/w1/devices/`.
- * @returns {Promise<boolean>} A promise that resolves to true if such a folder exists, otherwise false.
- */
-async function hasSensorFolder(): Promise<boolean> {
-  try {
-    const dirPath = "/sys/bus/w1/devices/";
-    const files = await fs.readdir(dirPath);
-    return files.some(file => file.startsWith("28-"));
-  } catch (e) {
-    return false;
-  }
+function publishReadings(probeSignals: ProbeSignal[], readings: TemperatureReadingBroadcast[]) {
+  const setterByDeviceId = new Map(probeSignals.map(probe => [probe.thermometerDeviceId, probe.setReading]));
+  // One batch per sweep, so the ws broadcast and the alert memos recompute once rather than once per probe.
+  // A probe removed from the config during the sweep has no setter any more, and its reading is dropped.
+  batch(() => {
+    for (const reading of readings) setterByDeviceId.get(reading.thermometer_device_id)?.(reading);
+  });
 }
