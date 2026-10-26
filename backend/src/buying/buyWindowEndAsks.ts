@@ -5,6 +5,10 @@
  * step-down's new count; the reactive graph acts on every increase (buyingSetterWiring.ts). The state
  * machine: buyWindowEndStepDown.ts.
  */
+import {
+  MAX_QUIET_GAP_AFTER_WRITE_MS,
+  SETTINGS_READBACK_REQUEST_LIFETIME_MS,
+} from "../inverterComms/schedulerTiming.ts";
 import { ambiguousHigherLimitsAmps, IDLE_AC_CHARGING_LIMIT_AMPS, SETTLED_FOR_MS } from "./buyWindowEndEvidence.ts";
 import type {
   AcChargingLimitReadback,
@@ -27,6 +31,12 @@ export const MAX_LIMIT_REASSERTIONS = 1;
  * dozen before the timeout.
  */
 export const READBACK_REQUEST_INTERVAL_MS = 10_000;
+/**
+ * A write's own confirm reads BATS within the longest quiet gap of it, here with a request interval's
+ * margin — or never: a NAKed or unanswered write arms no check, and MUCHGC's confirm refreshes nothing
+ * else (#70's review: a NAKed MUCHGC0090 left the step-down to time out blind)
+ */
+export const OWN_CONFIRM_DUE_WITHIN_MS = MAX_QUIET_GAP_AFTER_WRITE_MS + READBACK_REQUEST_INTERVAL_MS;
 
 /** A new BATS readback during the step-down that still shows a higher limit re-asserts the cap (bounded) */
 export function nextLimitReassertions(
@@ -80,9 +90,9 @@ export function nextAlternateCapRequests(
  * (180–300 s), as its confirm saw the old value and gives up — a commit that outlasted the confirm. So the
  * step-down asks for one at once if the latest readback predates what the hall shows (it can't have seen
  * it), else once it is READBACK_REQUEST_INTERVAL_MS old, and again whenever the readback answering the
- * last request is that old without proving the cap. One request at a time: the session takes it at its
- * next poll round, which a silent confirm phase holds off up to 42 s. A readback older than a write is
- * left to that write's own confirm.
+ * last request is that old without proving the cap. One request at a time: the session keeps it until
+ * BATS decodes, past a silent confirm phase, for SETTINGS_READBACK_REQUEST_LIFETIME_MS at most. A
+ * readback older than a write is left to that write's own confirm while one can still come.
  */
 export function nextReadbackRequests(
   progress: SteppingDown,
@@ -99,9 +109,18 @@ export function nextReadbackRequests(
     return unchanged;
   }
   const readback = inputs.limitReadback;
-  if (readback && inputs.unprovenLimitWrites.some(write => write.sentAtMs >= readback.observedAtMs)) return unchanged;
+  const ownConfirmStillDue = inputs.unprovenLimitWrites.some(
+    write =>
+      readback !== undefined &&
+      write.sentAtMs >= readback.observedAtMs &&
+      nowMs - write.sentAtMs < OWN_CONFIRM_DUE_WITHIN_MS
+  );
+  if (ownConfirmStillDue) return unchanged;
   const lastRequestAtMs = progress.lastReadbackRequestAtMs;
-  const requestStillOpen = lastRequestAtMs !== undefined && !(readback && readback.observedAtMs > lastRequestAtMs);
+  const requestStillOpen =
+    lastRequestAtMs !== undefined &&
+    !(readback && readback.observedAtMs > lastRequestAtMs) &&
+    nowMs - lastRequestAtMs < SETTINGS_READBACK_REQUEST_LIFETIME_MS;
   if (requestStillOpen) return unchanged;
   const hallSettledSinceMs = nowMs - hallSettledForMs;
   const readbackSinceHallSettledAtMs =

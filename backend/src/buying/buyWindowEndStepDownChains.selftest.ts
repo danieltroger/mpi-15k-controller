@@ -7,13 +7,15 @@
  */
 import process from "process";
 import { unprovenWritesIn } from "../inverterComms/fieldWriteChains.ts";
+import { SETTINGS_READBACK_REQUEST_LIFETIME_MS } from "../inverterComms/schedulerTiming.ts";
 import { BATS_AC_CHARGING_LIMIT_FIELD } from "./acChargingReadbacks.ts";
-import { READBACK_REQUEST_INTERVAL_MS } from "./buyWindowEndAsks.ts";
+import { OWN_CONFIRM_DUE_WITHIN_MS, READBACK_REQUEST_INTERVAL_MS } from "./buyWindowEndAsks.ts";
 import { ambiguousHigherLimitsAmps, enableMayLand, limitEvidenceOf, SETTLED_FOR_MS } from "./buyWindowEndEvidence.ts";
 import { holdsAcChargingOn, settingsReadbackRequests } from "./buyWindowEndStepDown.ts";
 import {
   batsAt,
   buyingFor,
+  CAP_SENT_AFTER_END_MS,
   endWindow,
   hecsAt,
   holdsAtEveryStep,
@@ -154,6 +156,28 @@ check(
   check(
     "…open until a readback answers it; asked again 10 s after that answer still shows 261 A",
     whileOpen === 1 && afterAnswer === 1 && settingsReadbackRequests(simulation.state) === 2
+  );
+
+  // A write's own confirm is only waited for while one can still come: a NAKed or unanswered cap arms none
+  const unanswered = buyingFor({ ...nightBuying, hallBatteryAmps: 4 });
+  endWindow(unanswered);
+  const ownConfirmDeadlineMs = CAP_SENT_AFTER_END_MS + OWN_CONFIRM_DUE_WITHIN_MS;
+  holdsAtEveryStep(unanswered, 750, ownConfirmDeadlineMs - 250, () => ({}));
+  const whileOwnConfirmDue = settingsReadbackRequests(unanswered.state);
+  stepAt(unanswered, ownConfirmDeadlineMs, {});
+  check(
+    "a cap that got no answer: no request while its confirm could still come, one 25 s after it went out",
+    whileOwnConfirmDue === 0 && settingsReadbackRequests(unanswered.state) === 1
+  );
+  // The session keeps a request for SETTINGS_READBACK_REQUEST_LIFETIME_MS at most: one nothing answered by
+  // then (BATS failing) is asked again, not waited on until the deadline
+  const lapsesAtMs = ownConfirmDeadlineMs + SETTINGS_READBACK_REQUEST_LIFETIME_MS;
+  holdsAtEveryStep(unanswered, ownConfirmDeadlineMs + 250, lapsesAtMs - 250, () => ({}));
+  const whileRequestOpen = settingsReadbackRequests(unanswered.state);
+  stepAt(unanswered, lapsesAtMs, {});
+  check(
+    "…an unanswered request is asked again once the session has dropped it, not before",
+    whileRequestOpen === 1 && settingsReadbackRequests(unanswered.state) === 2
   );
 
   const fullCurrent = buyingFor(nightBuying);

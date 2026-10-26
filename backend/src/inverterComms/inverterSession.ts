@@ -42,7 +42,7 @@ import {
   decideNextAction,
   hasEligibleSetter,
   initialSchedulerState,
-  withSettingsPollDue,
+  withSettingsReadbackRequested,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
@@ -166,11 +166,13 @@ export function createInverterSession({
       state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
     },
     /**
-     * Read GPMP + HECS + BATS on the next poll round (after any silent confirm phase), ahead of
-     * poll_values_interval_seconds — for a consumer whose proof waits on a readback nothing else will take
+     * Read GPMP + HECS + BATS on the next poll rounds (after any silent confirm phase) until `query` has
+     * decoded, ahead of poll_values_interval_seconds, for at most SETTINGS_READBACK_REQUEST_LIFETIME_MS —
+     * for a consumer whose proof waits on a readback nothing else will take. Nothing here bounds how often
+     * it is called: each call slows GS/PS by a settings round or more, so callers must bound their asking.
      */
-    requestSettingsReadback: () => {
-      state.scheduler = withSettingsPollDue(state.scheduler);
+    requestSettingsReadback: (query: SettingsQueryCommandName) => {
+      state.scheduler = withSettingsReadbackRequested(state.scheduler, query, performance.now());
     },
     /** When the last control write went out — the signal behind the quiet-gap poll suppression */
     lastWriteAt,

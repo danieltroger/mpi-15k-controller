@@ -17,6 +17,7 @@ import {
   confirmStrategyFor,
   DEFAULT_SCHEDULER_TIMING,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
+  SETTINGS_READBACK_REQUEST_LIFETIME_MS,
   STALE_HOLD_LAPSE_MARGIN_MS,
   type ConfirmStrategy,
   type SchedulerTiming,
@@ -29,6 +30,12 @@ import {
   readbackFieldKey,
   type FieldWriteChains,
 } from "./fieldWriteChains.ts";
+import {
+  settingsReadbackRequested,
+  type SettingsReadbackRequests,
+  withReadbackAnswered,
+  withReadbackRequested,
+} from "./settingsReadbackRequests.ts";
 
 export type QueuedSetterView = {
   command: string;
@@ -77,6 +84,8 @@ export type SchedulerState = {
   /** Start of the last round that included the settings queries */
   lastSettingsPollAt: number | undefined;
   latestSettingsReadbacks: Readonly<Partial<Record<SettingsQueryCommandName, SettingsReadback>>>;
+  /** Readbacks consumers asked for, open until their query decodes (settingsReadbackRequests.ts) */
+  settingsReadbackRequests: SettingsReadbackRequests;
   /**
    * An interleaved write gave up while the knob was 0: new phases use the silent fallback gap
    * (STARVATION_FALLBACK_QUIET_GAP_MS) until the knob next changes
@@ -106,6 +115,7 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
     latestSettingsReadbacks: {},
+    settingsReadbackRequests: {},
     starvationFallback: false,
   };
 }
@@ -149,7 +159,9 @@ export function decideNextAction(
   const nextPollDueAt = state.lastPollRoundEndedAt === undefined ? 0 : state.lastPollRoundEndedAt + gapAfterLastRound;
   if (nowMs >= nextPollDueAt) {
     const includeSettingsPoll =
-      state.lastSettingsPollAt === undefined || nowMs - state.lastSettingsPollAt >= settingsPollIntervalMs;
+      state.lastSettingsPollAt === undefined ||
+      nowMs - state.lastSettingsPollAt >= settingsPollIntervalMs ||
+      settingsReadbackRequested(state.settingsReadbackRequests, nowMs, SETTINGS_READBACK_REQUEST_LIFETIME_MS);
     return { action: "poll_round", includeSettingsPoll };
   }
   return {
@@ -367,9 +379,13 @@ export function afterPollRound(
   };
 }
 
-/** A consumer needs fresh settings readbacks: the next poll round includes them, ahead of the interval */
-export function withSettingsPollDue(state: SchedulerState): SchedulerState {
-  return { ...state, lastSettingsPollAt: undefined };
+/** A consumer needs `query` read ahead of the interval: poll rounds include the settings until it decodes */
+export function withSettingsReadbackRequested(
+  state: SchedulerState,
+  query: SettingsQueryCommandName,
+  nowMs: number
+): SchedulerState {
+  return { ...state, settingsReadbackRequests: withReadbackRequested(state.settingsReadbackRequests, query, nowMs) };
 }
 
 /**
@@ -386,6 +402,7 @@ export function withSettingsReadback(
   return {
     ...state,
     latestSettingsReadbacks: { ...state.latestSettingsReadbacks, [query]: { fields, decodedAtMs: nowMs } },
+    settingsReadbackRequests: withReadbackAnswered(state.settingsReadbackRequests, query),
     fieldWriteChains: chainsAfterReadback(state.fieldWriteChains, query, fields, nowMs, writeCommitWindowMs),
     dropTrustChains: chainsAfterReadback(state.dropTrustChains, query, fields, nowMs, dropTrustCommitWindowMs),
   };

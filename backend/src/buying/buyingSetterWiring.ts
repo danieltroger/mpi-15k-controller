@@ -39,8 +39,8 @@ export type BuyingSetterEnvironment = {
   queueSetter: (item: SetterQueueItem) => void;
   /** The session's writes to a readback field no readback has proven landed yet, sent on the monotonic clock */
   unprovenWrites: (query: SettingsQueryCommandName, field: string) => readonly FieldWrite[];
-  /** Asks the session to read the settings queries on its next poll round */
-  requestSettingsReadback: () => void;
+  /** Asks the session to read the settings queries until `query` has decoded (bounded by the caller) */
+  requestSettingsReadback: (query: SettingsQueryCommandName) => void;
   /** When the session last decoded a settings query, on the same clock */
   settingsReadbackAtMs: (query: SettingsQueryCommandName) => number | undefined;
   /** Changes at least every few seconds (useNow), so time-based transitions fire without sensor updates */
@@ -134,7 +134,7 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   }, 0);
   createEffect<number>(previousRequests => {
     const requests = readbackRequests();
-    if (requests > previousRequests) environment.requestSettingsReadback();
+    if (requests > previousRequests) environment.requestSettingsReadback("BATS");
     return requests;
   }, 0);
 

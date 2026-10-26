@@ -15,7 +15,7 @@ import {
   decideNextAction,
   initialSchedulerState,
   type SchedulerState,
-  withSettingsPollDue,
+  withSettingsReadbackRequested,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
@@ -94,8 +94,8 @@ export function createSessionSimulation({
       queueSetter: item => queueIntoSession(session, clock, item),
       // As the session exposes them: the drop-trust chains
       unprovenWrites: (query, field) => unprovenWritesIn(session.scheduler.dropTrustChains, query, field),
-      requestSettingsReadback: () => {
-        session.scheduler = withSettingsPollDue(session.scheduler);
+      requestSettingsReadback: query => {
+        session.scheduler = withSettingsReadbackRequested(session.scheduler, query, clock.monotonicMs);
       },
       settingsReadbackAtMs: query => session.scheduler.latestSettingsReadbacks[query]?.decodedAtMs,
     }

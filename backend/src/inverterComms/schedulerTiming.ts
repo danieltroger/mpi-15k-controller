@@ -91,6 +91,14 @@ export const WRITE_COMMIT_WINDOW_MS = CONFIRM_BACKOFF_MS;
 export const DROP_TRUST_COMMIT_WINDOW_MS = 3 * WRITE_COMMIT_WINDOW_MS;
 
 /**
+ * A consumer's settings readback request (settingsReadbackRequests.ts) makes every poll round a settings
+ * round until its query decodes, for at most this long: past the longest stretch a silent confirm phase
+ * holds polling off (a 15 s gap, its confirm, the 30 s backoff and the re-check), so silence can't use it
+ * up, yet bounded, so a query that keeps failing doesn't slow GS/PS for good.
+ */
+export const SETTINGS_READBACK_REQUEST_LIFETIME_MS = 60_000;
+
+/**
  * Gap between the END of one background GS+PS round and the start of the next: rounds run
  * back-to-back. At 2400 baud the two responses (~117 + ~112 B) are ≈1 s of wire time, so a round
  * takes ≈1.1 s — the cadence the retired mpp-solar daemon achieved (~51 rounds/min, measured in

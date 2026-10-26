@@ -284,6 +284,34 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.harness.dispose();
 }
 
+for (const commitAfterWriteMs of [6_000, 12_000]) {
+  // #70's review: a firmware that NAKs MUCHGC0090. Extended and re-ended at the default gap, the ambiguity's
+  // alternate cap is NAKed, its fallback MUCHGC0100 waits on the 60 s gate, and a NAKed write gets no
+  // confirm — deferring to it blocked every readback request, 119 of 180 sweep runs timed out blind
+  const simulation = createSessionSimulation({
+    chargingAmperageForBuying: 261,
+    inverter: { ...nightWindowInverter, commitAfterWriteMs, rejects: new Set(["MUCHGC0090"]) },
+  });
+  runUntil(simulation, 0);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, 5_000);
+  simulation.harness.setChargingAmperage(261);
+  runUntil(simulation, 8_000);
+  simulation.harness.setChargingAmperage(0);
+  runUntil(simulation, THIRTY_MINUTES_MS);
+  const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  check(
+    `MUCHGC0090 NAKed, ${commitAfterWriteMs / 1000} s commits, extended and re-ended: EDB0 once, cap in effect, before the timeout`,
+    sentCommands(simulation, "MUCHGC0090", 0).length === 1 &&
+      edb0Sends.length === 1 &&
+      edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
+      edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
+      edb0Sends[0]!.atMs < 8_000 + STEP_DOWN_TIMEOUT_MS,
+    `${describe([...sentCommands(simulation, "MUCHGC0090", 0), ...edb0Sends])}; readback requests at ${simulation.harness.readbackRequestsAtMs.join()}`
+  );
+  simulation.harness.dispose();
+}
+
 if (failedChecks.length) {
   console.error(`\n${failedChecks.length} check(s) FAILED:`, failedChecks.join("; "));
   process.exit(1);

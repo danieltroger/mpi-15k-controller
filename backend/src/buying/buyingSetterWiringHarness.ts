@@ -13,7 +13,7 @@ import {
   afterSetterSent,
   initialSchedulerState,
   type SchedulerState,
-  withSettingsPollDue,
+  withSettingsReadbackRequested,
   withSettingsReadback,
 } from "../inverterComms/schedulerCore.ts";
 import { wireBuyingSetters } from "./buyingSetterWiring.ts";
@@ -61,8 +61,8 @@ export function createWiringHarness(
   }: {
     clock?: SimulatedClock;
     queueSetter?: (item: SetterQueueItem) => void;
-    /** A real (simulated) session's readback request; without one, the harness marks its own poll due */
-    requestSettingsReadback?: () => void;
+    /** A real (simulated) session's readback request; without one, the harness records it in its own scheduler */
+    requestSettingsReadback?: (query: SettingsQueryCommandName) => void;
     /** A real (simulated) session's write chains; without one, the harness's own (see recordSend) */
     unprovenWrites?: (query: SettingsQueryCommandName, field: string) => readonly FieldWrite[];
     /** The session's settings-decode times; without one, none (a HECS of unknown age) */
@@ -96,10 +96,10 @@ export function createWiringHarness(
       },
       unprovenWrites:
         unprovenWrites ?? ((query, field) => unprovenWritesIn(harness.scheduler.dropTrustChains, query, field)),
-      requestSettingsReadback: () => {
+      requestSettingsReadback: query => {
         readbackRequestsAtMs.push(clock.monotonicMs);
-        if (requestSettingsReadback) requestSettingsReadback();
-        else harness.scheduler = withSettingsPollDue(harness.scheduler);
+        if (requestSettingsReadback) requestSettingsReadback(query);
+        else harness.scheduler = withSettingsReadbackRequested(harness.scheduler, query, clock.monotonicMs);
       },
       settingsReadbackAtMs,
       clockTick,
