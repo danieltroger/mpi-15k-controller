@@ -1,0 +1,27 @@
+# sshx (https://sshx.io): a web terminal on the pi as user ubuntu, reachable without the tunnels.
+# sshx-session.sh starts sshx, POSTs each new session link to SSHX_PUBLISH_URL (from the host-local
+# /etc/remote-access/remote.env), and exits when the server has dropped the session, so systemd
+# starts a fresh one. Installed by deploy/install-remote-access.sh; see deploy/README.md.
+#
+# Terminals opened in sshx run inside this unit: restarting or stopping it ends them and everything
+# started from them, nohup'd or not, because systemd stops the whole cgroup. Start anything that must
+# outlive the session with `sudo systemd-run`, or from an ssh login.
+[Unit]
+Description=sshx web terminal (publishes each new session link)
+Documentation=https://github.com/danieltroger/mpi-15k-controller/blob/main/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=ubuntu
+# Terminals start here. The rc.local launch started them in /tmp.
+WorkingDirectory=~
+EnvironmentFile=/etc/remote-access/remote.env
+ExecStart=/usr/local/lib/remote-access/sshx-session.sh
+# Every restart is a new session with a new link, which the script publishes.
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

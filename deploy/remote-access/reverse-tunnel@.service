@@ -1,0 +1,40 @@
+# One reverse SSH tunnel from the pi to the tunnel host, kept up by autossh, one instance per port:
+#   reverse-tunnel@ssh    remote :6022 -> pi sshd :22
+#   reverse-tunnel@ws     remote :7777 -> controller ws :9321
+#   reverse-tunnel@mqtt   remote :1883 -> mosquitto :1883
+# The forward comes from /etc/remote-access/tunnel-<instance>.env (deploy/remote-access/tunnel-*.env).
+# The remote login and ssh port come from /etc/remote-access/remote.env, which is host-local because
+# this repo is public. Installed by deploy/install-remote-access.sh; see deploy/README.md.
+[Unit]
+Description=Reverse SSH tunnel %i (autossh)
+Documentation=https://github.com/danieltroger/mpi-15k-controller/blob/main/deploy/README.md
+# Unlike the controller, a tunnel can't do anything without the network, so waiting for it is fine.
+Wants=network-online.target
+After=network-online.target
+# This is the remote way in: never stop restarting.
+StartLimitIntervalSec=0
+
+[Service]
+User=ubuntu
+EnvironmentFile=/etc/remote-access/remote.env
+EnvironmentFile=/etc/remote-access/tunnel-%i.env
+# Keep retrying even when the very first connection fails, e.g. when the pi boots before the
+# router has internet again. Without it autossh gives up if ssh fails within its first 30 s.
+Environment=AUTOSSH_GATETIME=0
+# With -M 0 this only caps autossh's backoff between failed attempts. The default of 600 s lets
+# the gap grow to 10 minutes about an hour into an outage; 60 s keeps it at a minute.
+Environment=AUTOSSH_POLL=60
+# -M 0: no autossh monitor ports. ServerAlive makes ssh exit after ~90 s without replies from the
+# remote, and autossh starts a new one. ExitOnForwardFailure makes ssh exit when the remote port is
+# still held (e.g. by the remote's half of a session that died with a power cut) instead of staying
+# up without the forward; autossh then retries until the port is free. BatchMode fails instead of
+# waiting for a password or host-key prompt nobody can answer.
+ExecStart=/usr/bin/autossh -M 0 -N \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes \
+    -i /home/ubuntu/.ssh/id_ed25519 -p ${TUNNEL_REMOTE_PORT} -R ${TUNNEL_FORWARD} ${TUNNEL_REMOTE_LOGIN}
+# autossh restarts ssh itself; this is for autossh exiting (it does when ssh exits with status 0).
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
