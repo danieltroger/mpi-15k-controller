@@ -38,6 +38,15 @@ export const default_config: Config = {
     solar_forecast_week_min_ratio: 0.65,
     solar_forecast_week_max_ratio: 1.5,
     solar_forecast_week_max_error_share: 0.55,
+    // The inverter's own Fault mode is unambiguous (and every answer passes the plausibility gate),
+    // so unlike the inferred stuck alert it pages: Fault mode never occurred outside a real latch
+    // in 2.5 years of cloud history (F12 ×1 episode, F14 ×3, F57 ×1). Bypass occurred only with the
+    // battery disconnected; the 2026-02 blips lasted under 6 min, the 2024-08 one 7.6 h.
+    inverter_fault_mode_p1: true,
+    inverter_fault_mode_p1_after_seconds: 60,
+    inverter_fault_code_p2: true,
+    inverter_bypass_p2: true,
+    inverter_bypass_p2_after_seconds: 120,
     error_log_p2: true,
     trading_guard_p2: false,
     digest_p3: true,

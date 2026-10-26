@@ -54,6 +54,7 @@ function isPersistedEpisode(value: unknown): value is PersistedInverterStuckEpis
     typeof candidate.raised_at_ms === "number" &&
     (candidate.onset_ms === undefined || typeof candidate.onset_ms === "number") &&
     typeof candidate.escalated === "boolean" &&
+    (candidate.escalation_sent_as_p2 === undefined || typeof candidate.escalation_sent_as_p2 === "boolean") &&
     typeof onsets === "object" &&
     onsets !== null &&
     Object.entries(onsets).every(

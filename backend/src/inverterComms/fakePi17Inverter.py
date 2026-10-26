@@ -23,6 +23,13 @@ Like the real firmware, every CRC byte that would be 0x0A/0x0D/0x28 is sent as t
 live at the second cutover attempt, 2026-10-25; 0x00 is not bumped), so ~2.3 % of all frames
 exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC theirs.
 
+The status queries answer like this inverter answered the WiFi datalogger in October 2026: MOD
+05 (Hybrid), CFS 12,00 (the latest fault before the incident), WS all clear, HFS00 the real fault
+12 record, and a NAK for slots 01-08 (what an empty slot answers is unknown, so the fake declines).
+EDB0 (AC charging off: the end of a buy window) latches fault 14 the way 2026-10-21 did: MOD 04,
+CFS 14,00 (slot 00 again, as the real firmware kept it), battery 0 A and Idle/Idle in GS/PS. The
+latch commits like any other write, on the commit timing below.
+
 Commit behaviour for the quiet-gap experiment harness (quietGapExperiment.pty.selftest.ts), the
 two readings of the July 2026 evidence:
   --commit-delay-s S        every write commits S seconds after it arrives, whatever the traffic
@@ -57,7 +64,17 @@ PS_TOKENS = "00080,00085,,+00008,-00175,-00054,-00237,00223,00076,00189,00488,00
 BATS_TOKENS = "3000,0580,0580,0000,060,0530,0400,0510,0460,0522,0,,,0,0530,000,0100,0375".split(",")
 GS_INNER_TEMPERATURE_INDEX = 21
 GS_BATTERY_VOLTAGE_INDEX = 4
+GS_BATTERY_CURRENT_INDEX = 6
 PS_SOLAR_POWER_2_INDEX = 1
+PS_BATTERY_DIRECTION_INDEX = 19
+PS_DC_AC_DIRECTION_INDEX = 20
+# The datalogger's raw uploads, 2026-10-23..25 (fault_forensics.md section 3.2)
+MOD_HYBRID = "05"
+MOD_FAULT = "04"
+CFS_BEFORE_LATCH = "12,00"
+CFS_AFTER_LATCH = "14,00"
+WS_ALL_CLEAR = ",".join(["0"] * 23)
+HFS00_RECORD = "00,12,759900560005,04,05850,00012,00080,02313,2296,2298,4996,0410,7599,+0309,2294,2300,4996,0115,00045,00138,00001,029,046,000,000"
 
 
 def crc16_xmodem(data):
@@ -112,6 +129,7 @@ class FakeInverter:
         self.max_ac_charging_tenths = 100
         # priority, then EDA..EDG (solar charge, AC charge, feed utility, discharge loads x2, feed grid x2), reserved
         self.hecs_tokens = ["00", "1", "0", "1", "1", "1", "1", "1", "0"]
+        self.fault_14_latched = False
         self.held_first_edf = None
         self.pending_commits = []  # (apply_at, description, apply_fn)
         self.queued = []  # responses: dict(start_at, chunks, role, answering, serial, kind, sent)
@@ -130,6 +148,8 @@ class FakeInverter:
         serial = self.next_serial()
         tokens = list(GS_TOKENS)
         tokens[GS_INNER_TEMPERATURE_INDEX] = "%03d" % (serial % 100)
+        if self.fault_14_latched:
+            tokens[GS_BATTERY_CURRENT_INDEX] = "+00000"
         if battery_voltage_token:
             tokens[GS_BATTERY_VOLTAGE_INDEX] = battery_voltage_token
         if force_mixed_crc:
@@ -159,7 +179,20 @@ class FakeInverter:
         serial = self.next_serial()
         tokens = list(PS_TOKENS)
         tokens[PS_SOLAR_POWER_2_INDEX] = "%05d" % serial
+        if self.fault_14_latched:
+            tokens[PS_BATTERY_DIRECTION_INDEX] = "0"
+            tokens[PS_DC_AC_DIRECTION_INDEX] = "0"
         return data_frame(",".join(tokens)), serial
+
+    def status_frame(self, command):
+        """MOD/CFS/WS answer with data; an HFS slot other than 00 declines (None = send a NAK)"""
+        if command == "MOD":
+            return data_frame(MOD_FAULT if self.fault_14_latched else MOD_HYBRID)
+        if command == "CFS":
+            return data_frame(CFS_AFTER_LATCH if self.fault_14_latched else CFS_BEFORE_LATCH)
+        if command == "WS":
+            return data_frame(WS_ALL_CLEAR)
+        return data_frame(HFS00_RECORD) if command == "HFS00" else None
 
     def settings_frame(self, command):
         if command == "GPMP":
@@ -299,6 +332,14 @@ class FakeInverter:
         elif command in ("GPMP", "HECS", "BATS"):
             frame, serial = self.settings_frame(command)
             self.queue(frame, command, command, "answer", serial)
+        elif command in ("MOD", "CFS", "WS") or (command.startswith("HFS0") and len(command) == 5):
+            frame = self.status_frame(command)
+            if frame is None:
+                self.queue(NAK, "NAK", command, "declined", None)
+                # A declined slot answers in a setter's shape: the engine must leave the line quiet after it
+                self.next_command_follows_anomaly = True
+            else:
+                self.queue(frame, command, command, "answer", None)
         else:
             emit("unknown_query", command=command)
 
@@ -329,7 +370,9 @@ class FakeInverter:
 
     def schedule_commit(self, command):
         apply_at = time.monotonic() + max(self.commit_delay_s, self.commit_needs_quiet_s)
-        if command.startswith("ED") and len(command) == 4:
+        if command == "EDB0":
+            self.pending_commits.append((apply_at, command, self.end_buy_window_into_fault_14))
+        elif command.startswith("ED") and len(command) == 4:
             token_index = ord(command[2]) - ord("A") + 1
             value = command[3]
             self.pending_commits.append((apply_at, command, lambda: self.hecs_tokens.__setitem__(token_index, value)))
@@ -342,6 +385,11 @@ class FakeInverter:
         elif command.startswith("MUCHGC"):
             amps_tenths = int(command[6:])
             self.pending_commits.append((apply_at, command, lambda: setattr(self, "max_ac_charging_tenths", amps_tenths)))
+
+    def end_buy_window_into_fault_14(self):
+        self.hecs_tokens[2] = "0"
+        self.fault_14_latched = True
+        emit("fault_14_latched")
 
     def fault_done(self, fault):
         self.faults_remaining.discard(fault)

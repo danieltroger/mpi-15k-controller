@@ -28,6 +28,8 @@ import {
   sustainMinutesForRule,
 } from "./inverterStuckAlertPolicy.ts";
 import { loadOpenEpisode, saveOpenEpisode } from "./inverterStuckEpisodeStore.ts";
+import { describeActiveInverterFault, type InverterEpisodePaging } from "./inverterFaultAlertPolicy.ts";
+import type { InverterOperatingStatus } from "../inverterComms/inverterStatus.types.ts";
 import {
   addTrailingSample,
   createTrailingMeanWindow,
@@ -58,6 +60,10 @@ export function startInverterStuckAlerts(ctx: {
   currentBatteryPower: Accessor<CurrentBatteryPowerBroadcast | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
   acChargingEnabledOnInverter: Accessor<boolean>;
+  /** What the inverter says about itself: the alert quotes its fault code while it reports Fault mode */
+  inverterStatus: Accessor<InverterOperatingStatus>;
+  /** Shared with the fault-mode alert: one P1 per episode */
+  paging: InverterEpisodePaging;
   inGracePeriod: () => boolean;
 }) {
   const hallWindow = createTrailingMeanWindow(HALL_SMOOTHING_WINDOW_MS);
@@ -66,10 +72,12 @@ export function startInverterStuckAlerts(ctx: {
     if (reading) addTrailingSample(hallWindow, reading);
   });
 
+  const persistedEpisode = loadOpenEpisode();
   let tickState: TickState = {
-    alert: restoreEpisode(loadOpenEpisode()),
+    alert: restoreEpisode(persistedEpisode),
     hallBlindSinceMs: undefined,
     hallBlindWarned: false,
+    escalationSentAsP2: persistedEpisode?.escalation_sent_as_p2 ?? false,
   };
   if (tickState.alert.raisedAtMs !== undefined) {
     logLog(
@@ -81,7 +89,11 @@ export function startInverterStuckAlerts(ctx: {
     // A throw out of a timer callback is an uncaught exception, i.e. a controller restart
     try {
       tickState = evaluationTick(ctx, hallWindow, tickState);
-      saveOpenEpisode(persistableEpisode(tickState.alert));
+      ctx.paging.stuckP1Open =
+        tickState.alert.escalated && tickState.alert.raisedAtMs !== undefined && !tickState.escalationSentAsP2;
+      const episode = persistableEpisode(tickState.alert);
+      // The downgrade is part of the episode: restored without it, the fault alert would claim a stuck P1 that never went out
+      saveOpenEpisode(episode && { ...episode, escalation_sent_as_p2: tickState.escalationSentAsP2 });
     } catch (error) {
       errorLog("Inverter-stuck alert evaluation failed, retrying next tick", error);
     }
@@ -94,6 +106,8 @@ type TickState = {
   /** Start of the current streak without a fresh hall reading while the inverter talks */
   hallBlindSinceMs: number | undefined;
   hallBlindWarned: boolean;
+  /** The episode's escalation went out as P2 because the fault-mode P1 had already paged */
+  escalationSentAsP2: boolean;
 };
 
 function evaluationTick(
@@ -102,17 +116,32 @@ function evaluationTick(
   previous: TickState
 ): TickState {
   const alerting = untrack(ctx.config).alerting;
-  if (!alerting.inverter_stuck_p2) return { ...previous, alert: INVERTER_STUCK_IDLE_STATE };
+  if (!alerting.inverter_stuck_p2) return { ...previous, alert: INVERTER_STUCK_IDLE_STATE, escalationSentAsP2: false };
   if (ctx.inGracePeriod()) return previous;
   const nowMs = Date.now();
   const snapshot = untrack(() => takeSnapshot(ctx, hallWindow, nowMs));
   const evaluations = evaluateInverterStuckRules(snapshot);
   const { state, action } = stepInverterStuckAlert(previous.alert, evaluations, nowMs, alerting);
   logRuleTransitions({ previousState: previous.alert, state, evaluations, nowMs, settings: alerting });
+  // The fault-mode P1 already rang through Do Not Disturb for this latch: a second page adds nothing
+  const sendEscalationAsP2 = action === "escalate_p1" && ctx.paging.faultModeP1Open;
   if (action) {
-    raiseForAction({ manager: ctx.manager, action, previousState: previous.alert, state, evaluations, nowMs });
+    raiseForAction({
+      manager: ctx.manager,
+      action,
+      previousState: previous.alert,
+      state,
+      evaluations,
+      nowMs,
+      activeFaultSentence: describeActiveInverterFault(untrack(ctx.inverterStatus), nowMs),
+      sendEscalationAsP2,
+    });
   }
-  return { alert: state, ...trackHallBlindness(previous, hallBlindWhileInverterTalks(snapshot), nowMs) };
+  return {
+    alert: state,
+    ...trackHallBlindness(previous, hallBlindWhileInverterTalks(snapshot), nowMs),
+    escalationSentAsP2: state.raisedAtMs === undefined ? false : previous.escalationSentAsP2 || sendEscalationAsP2,
+  };
 }
 
 /**
@@ -166,8 +195,10 @@ function raiseForAction(params: {
   state: InverterStuckAlertState;
   evaluations: Record<InverterStuckRuleId, RuleEvaluation>;
   nowMs: number;
+  activeFaultSentence: string | undefined;
+  sendEscalationAsP2: boolean;
 }) {
-  const { manager, action, previousState, state, evaluations, nowMs } = params;
+  const { manager, action, previousState, state, evaluations, nowMs, activeFaultSentence, sendEscalationAsP2 } = params;
   if (action === "resolve") {
     void manager
       .raise({
@@ -179,10 +210,18 @@ function raiseForAction(params: {
       .catch(error => errorLog("Inverter stuck: raising the resolve notice failed", error));
     return;
   }
-  const severity = action === "escalate_p1" ? "P1" : "P2";
+  const severity = action === "escalate_p1" && !sendEscalationAsP2 ? "P1" : "P2";
   const key = inverterStuckAlertKey(state);
+  const described = describeInverterStuckAlert(
+    state,
+    evaluations,
+    nowMs,
+    action === "escalate_p1" ? "P1" : "P2",
+    activeFaultSentence
+  );
+  const downgradeNote = sendEscalationAsP2 ? " (Sent as P2: the fault-mode P1 already paged for this.)" : "";
   void manager
-    .raise({ key, severity, ...describeInverterStuckAlert(state, evaluations, nowMs, severity) })
+    .raise({ key, severity, title: described.title, message: described.message + downgradeNote })
     .then(record => {
       // The policy now believes the family knows; say so loudly in the log if they don't
       if (record.delivery === "cooldown" || record.delivery === "rate_capped") {

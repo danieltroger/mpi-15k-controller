@@ -2,8 +2,9 @@
  * Feeds solid-js reactivity directly from the native serial decoder: one store with every GS/PS
  * field under its historical mpp-solar name (value + timestamp — the exact shape the old
  * MQTT-subscription store had, so every consumer including the staleness alerting is untouched),
- * one store with the settings readbacks (GPMP/HECS/BATS) under the legacy CLI keys, and a
- * per-decoded-response signal the one-way MQTT/Influx publisher hangs off.
+ * one store with the settings readbacks (GPMP/HECS/BATS) under the legacy CLI keys, the inverter's
+ * operating status (MOD/CFS/WS/HFS, useInverterStatus.ts), and a per-decoded-response signal the
+ * one-way MQTT/Influx publisher hangs off.
  */
 import { type Accessor, batch, createMemo, createSignal } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
@@ -13,6 +14,7 @@ import { type RawMQTTValues, validateMessage } from "../mqttValues/rawValuesSche
 import type { DecodedRound } from "./pi17Protocol.types.ts";
 import type { UsbValues } from "./inverterComms.types.ts";
 import { createInverterSession } from "./inverterSession.ts";
+import { createInverterStatusTracker } from "./useInverterStatus.ts";
 
 export type InverterValuesStore = Partial<{
   [key in keyof RawMQTTValues]: { value: RawMQTTValues[key]; time: number };
@@ -22,6 +24,8 @@ export function useInverterValues(config: Accessor<Config>) {
   const [inverterValues, setInverterValues] = createStore<InverterValuesStore>({});
   const [$usbValues, setUsbValues] = createStore<UsbValues>({});
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
+  // Rounds only arrive once the device is open (after stty's await), by when `session` is assigned
+  const statusTracker = createInverterStatusTracker(queries => session.requestStatusQueries(queries));
 
   // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts), and the
   // quiet gap comes live from config
@@ -33,6 +37,7 @@ export function useInverterValues(config: Accessor<Config>) {
       // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.
       batch(() => {
         applyRoundToStores(round, setInverterValues, setUsbValues);
+        statusTracker.trackRound(round);
         setLastDecodedRound(round);
       }),
   });
@@ -41,6 +46,8 @@ export function useInverterValues(config: Accessor<Config>) {
     inverterValues,
     $usbValues,
     lastDecodedRound,
+    /** MOD / CFS / WS / HFS as the inverter last reported them (useInverterStatus.ts) */
+    inverterStatus: statusTracker.inverterStatus,
     queueSetter: session.queueSetter,
     lastWriteAt: session.lastWriteAt,
     serialIsOpen: session.serialIsOpen,

@@ -44,10 +44,13 @@ const TOTAL_POWER = [inclusiveRange(-60_000, 60_000)];
 const TEMPERATURE = [inclusiveRange(-40, 150)];
 /** 16S LiFePO4: 2.5 V/cell = 40 V is below the BMS cut-off, 3.875 V/cell = 62 V above any charge setting */
 const PACK_VOLTAGE = [inclusiveRange(40, 62)];
+const FAULT_CODE = [inclusiveRange(0, 99)];
+const FAULT_RECORD_SLOT = [inclusiveRange(0, 8)];
 
 /**
- * Every numeric GS/PS field and every settings field a control loop consumes (the selftest
- * enforces the coverage). Settings fields nothing reads are deliberately not gated.
+ * Every numeric GS/PS field, every settings field a control loop consumes and every numeric status
+ * field an alert reads (the selftest enforces the coverage). Settings fields nothing reads are
+ * deliberately not gated.
  */
 export const PLAUSIBLE_NUMERIC_RANGES: Readonly<Record<string, readonly InclusiveRange[]>> = {
   // GS
@@ -99,6 +102,13 @@ export const PLAUSIBLE_NUMERIC_RANGES: Readonly<Record<string, readonly Inclusiv
   battery_floating_charge_voltage: PACK_VOLTAGE,
   "max._ac_charging_current": [inclusiveRange(0, 400)],
   battery_maximum_charge_current: [inclusiveRange(0, 400)],
+  // Status (CFS / HFS): two-digit fault codes and the nine flash slots 0–8. A false code would
+  // page "new fault" (P2) or name the wrong fault in the fault-mode P1. MOD and the WS flags are
+  // keyed/option fields, gated by the invalid-option check below.
+  latest_fault_code: FAULT_CODE,
+  latest_fault_record_id: FAULT_RECORD_SLOT,
+  fault_record_id: FAULT_RECORD_SLOT,
+  fault_record_fault_code: FAULT_CODE,
 };
 
 /**

@@ -164,6 +164,27 @@ export type AlertingConfig = {
   solar_forecast_week_max_ratio: number;
   /** …or the summed daily misses exceed this share of the week's forecast (min 35 kWh) */
   solar_forecast_week_max_error_share: number;
+  /**
+   * P1 when the inverter itself reports Fault mode (PI17 MOD = 04) — the 2026-10-21 fault 14 latch
+   * it held for 59 h. The page names the fault code and the power-cycle procedure. The episode
+   * survives controller restarts within cooldown_minutes of its last reading (no second page);
+   * after a longer downtime it pages again.
+   */
+  inverter_fault_mode_p1: boolean;
+  /**
+   * … once Fault mode has been read for this long (MOD is read once a minute, and at once when the
+   * battery goes idle: at 60 s the page comes ~1.5 min after the fault, at most ~2.5 min)
+   */
+  inverter_fault_mode_p1_after_seconds: number;
+  /**
+   * P2 when the inverter records a new fault code (PI17 CFS changes) that isn't already paged as
+   * Fault mode — e.g. one it recovered from by itself
+   */
+  inverter_fault_code_p2: boolean;
+  /** P2 when the inverter sits in Bypass mode (house straight on the grid, no backup) with the grid present … */
+  inverter_bypass_p2: boolean;
+  /** … for at least this long */
+  inverter_bypass_p2_after_seconds: number;
   /** Forward every errorLog() as a deduped P2 */
   error_log_p2: boolean;
   /**

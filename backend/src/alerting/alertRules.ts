@@ -10,6 +10,9 @@ import { formatSekForAlert, round1, thresholdState } from "./alertingLogic.ts";
 import { startInverterStuckAlerts } from "./inverterStuckAlerts.ts";
 import type { OverheatSellStopSignals } from "../feeding/overheatSellStop.ts";
 import { startOverheatSellStopAlerts } from "./overheatSellStopAlerts.ts";
+import { startInverterFaultAlerts } from "./inverterFaultAlerts.ts";
+import type { InverterEpisodePaging } from "./inverterFaultAlertPolicy.ts";
+import type { InverterOperatingStatus } from "../inverterComms/inverterStatus.types.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
 
 /**
@@ -35,6 +38,8 @@ export function startAlertRules(ctx: {
   chargingAmperageForBuying: Accessor<number | undefined>;
   /** HECS readback: the inverter confirmed AC charging is enabled */
   acChargingEnabledOnInverter: Accessor<boolean>;
+  /** The inverter's own MOD/CFS/WS report (inverterComms/useInverterStatus.ts) */
+  inverterStatus: Accessor<InverterOperatingStatus>;
 }) {
   const bootedAtMs = Date.now();
   const alerting = createMemo(() => ctx.config().alerting);
@@ -207,7 +212,17 @@ export function startAlertRules(ctx: {
   }, 15_000);
   onCleanup(() => clearInterval(pollTimer));
 
-  // ——— stuck inverter: DC side latched off behind normal-looking telemetry (2026-10-21, 59 h) ———
+  // ——— the inverter's own Fault / Bypass mode and new fault codes, and the stuck inverter: the
+  // DC side latched off behind normal-looking telemetry (2026-10-21, 59 h). Both see one latch, so
+  // they share who has paged for it. ———
+  const inverterEpisodePaging: InverterEpisodePaging = { faultModeP1Open: false, stuckP1Open: false };
+  startInverterFaultAlerts({
+    config: ctx.config,
+    manager: ctx.manager,
+    inverterStatus: ctx.inverterStatus,
+    mqttValues: ctx.mqttValues,
+    paging: inverterEpisodePaging,
+  });
   startInverterStuckAlerts({
     config: ctx.config,
     manager: ctx.manager,
@@ -216,6 +231,8 @@ export function startAlertRules(ctx: {
     currentBatteryPower: ctx.currentBatteryPower,
     chargingAmperageForBuying: ctx.chargingAmperageForBuying,
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter,
+    inverterStatus: ctx.inverterStatus,
+    paging: inverterEpisodePaging,
     inGracePeriod,
   });
 

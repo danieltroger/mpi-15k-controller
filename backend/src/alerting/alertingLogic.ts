@@ -120,6 +120,14 @@ export function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * What a human has to do about a latched inverter: PI17 has no fault-reset command, and LON0 would
+ * cut the pi's own power. The switching order is the owner's dad's procedure, the one that works
+ * on this installation.
+ */
+export const INVERTER_POWER_CYCLE_PROCEDURE =
+  "Check the LCD fault code, then power-cycle the inverter: switch off the battery, the utility (grid) and the PV; then switch on the battery, the PV and the utility.";
+
 export function formatSekForAlert(sek: number): string {
   return `${sek > 0 ? "+" : ""}${round1(sek)} SEK`;
 }

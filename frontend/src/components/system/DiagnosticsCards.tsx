@@ -11,6 +11,8 @@ import {
 import type { CurrentBatteryPowerBroadcast, MqttValue } from "../../../../backend/src/sharedTypes";
 import type { Config } from "../../../../backend/src/config/config.types";
 import type { LedgerAnchor } from "../../../../backend/src/battery/ahLedger.types";
+import { DiagRow } from "./DiagRow";
+import { InverterStatusCard } from "./InverterStatusCard";
 import "./DiagnosticsCards.scss";
 
 /**
@@ -21,18 +23,10 @@ import "./DiagnosticsCards.scss";
 export function DiagnosticsCards() {
   return (
     <div class="diag__grid">
+      <InverterStatusCard />
       <SocLedgers />
       <CurrentSensors />
       <NoBuyDebug />
-    </div>
-  );
-}
-
-function DiagRow(props: { label: string; value: string; title?: string }) {
-  return (
-    <div class="diag__row" title={props.title}>
-      <span class="diag__label">{props.label}</span>
-      <span class="diag__value">{props.value}</span>
     </div>
   );
 }

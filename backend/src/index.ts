@@ -151,7 +151,7 @@ function main() {
                     const { chargingAmperageForBuying } = useShouldBuyPower({ config });
 
                     const { mqttValues } = useFromMqttProvider();
-                    const { $usbValues } = useInverterComms();
+                    const { $usbValues, inverterStatus } = useInverterComms();
                     const alertManager = createAlertManager(config);
                     catchError(
                       () =>
@@ -166,6 +166,7 @@ function main() {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                           chargingAmperageForBuying,
                           acChargingEnabledOnInverter: () => $usbValues.ac_charge_battery === "enabled",
+                          inverterStatus,
                         }),
                       // Alerting going down must never take the controller with it — and this failure
                       // is itself worth a push, which the errorLog hook provides.
@@ -266,6 +267,7 @@ function main() {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                           spotPrices: latestSpotPrices,
                           recentAlerts: alertManager.recentAlerts,
+                          inverterStatus,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,
                           currentBatteryPower: currentPower,
