@@ -494,7 +494,8 @@ if (runningAsRoot) {
   check("missing probe back: streak cleared", state.failureStreaks.size, 0);
 }
 
-// ——— at a 300 s interval one failed sweep is already 5 min of silence: the page waits for the third ———
+// ——— at the 60 s maximum with a 1 min delay, one failed sweep is already past the delay: the page waits for
+// the third failed sweep, whichever of the two comes later ———
 {
   const kernel = createFakeKernel([
     [cell, 21000],
@@ -502,18 +503,18 @@ if (runningAsRoot) {
   ]);
   const state = createThermometerSweepState();
   const lines: LoggedLine[] = [];
-  await runSweep(kernel, state, lines, [cell, outlet]);
+  await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(1));
   removeProbe(kernel, outlet.thermometer_device_id);
   const pageCountsAfterSweep: number[] = [];
   for (let sweepIndex = 1; sweepIndex <= 4; sweepIndex++) {
-    advanceToNextSweepStart(kernel, 300_000);
-    await runSweep(kernel, state, lines, [cell, outlet]);
+    advanceToNextSweepStart(kernel, 60_000);
+    await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(1));
     pageCountsAfterSweep.push(pages(lines).length);
   }
-  check("300 s interval: paged once, on the 3rd failed sweep", pageCountsAfterSweep, [0, 0, 1, 1]);
+  check("60 s interval, 1 min delay: paged once, on the 3rd failed sweep", pageCountsAfterSweep, [0, 0, 1, 1]);
   check(
-    "300 s interval: the page says how long the probe has been silent",
-    pages(lines)[0]?.includes("none for 15.0 min (3 sweeps in a row)"),
+    "60 s interval, 1 min delay: the page says how long the probe has been silent",
+    pages(lines)[0]?.includes("none for 3.0 min (3 sweeps in a row)"),
     true
   );
 }

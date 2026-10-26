@@ -3,8 +3,9 @@
  * useThermometerSweepSettings, as in production) and a simulated clock: start-to-start pacing, a live change of
  * temperature_saving.thermometer_sweep_interval_seconds re-measuring the running wait, 0 and intervals shorter
  * than a sweep running back to back without ever overlapping, a timer turn between sweeps even when a sweep
- * settles at once, the back-off after an empty or throwing sweep, corrected values, and stopping. The settings'
- * bounds and warnings are in thermometerSweepSettings.selftest.ts. Run from backend/ with:
+ * settles at once, the back-off after an empty or throwing sweep, corrected values, a wall clock stepped back
+ * mid-wait, and stopping. The settings' bounds and warnings are in thermometerSweepSettings.selftest.ts. Run from
+ * backend/ with:
  *   yarn node src/temperatureMeasuring/thermometerSweepLoop.selftest.ts
  */
 import process from "process";
@@ -13,7 +14,7 @@ import { default_config } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
 import type { SweepLogger, ThermometerSweepResult } from "./thermometerSweep.ts";
-import { type SweepClock, startThermometerSweepLoop } from "./thermometerSweepLoop.ts";
+import { type SweepClock, startThermometerSweepLoop, SYSTEM_SWEEP_CLOCK } from "./thermometerSweepLoop.ts";
 import { useThermometerSweepSettings } from "./useThermometerSweepSettings.ts";
 
 let failures = 0;
@@ -29,10 +30,13 @@ function check(name: string, actual: unknown, expected: unknown) {
 
 type LoggedLine = { level: "log" | "warn" | "error"; text: string };
 
-type FakeTimer = { fireAtMs: number; onFire: () => void; cancelled: boolean };
+type FakeTimer = { fireAtMonotonicMs: number; onFire: () => void; cancelled: boolean };
 
+/** Two clocks, as on the pi: timers and the loop run on the monotonic one, readings are stamped with the wall one */
 type FakeTimeline = {
-  nowMs: number;
+  monotonicMs: number;
+  /** Moves with the monotonic clock, except when a test steps it */
+  wallMs: number;
   pendingTimers: FakeTimer[];
   /** Timers the loop itself set, i.e. its waits between sweeps */
   loopTimersSet: number;
@@ -44,16 +48,20 @@ type FakeSweepBehaviour = { durationMs: number; probesRead: number; throws: bool
 type LoopHarness = {
   timeline: FakeTimeline;
   sweepBehaviour: FakeSweepBehaviour;
+  /** On the monotonic clock */
   sweepStartsMs: number[];
   sweepsInFlight: number;
   maxSweepsInFlight: number;
-  publishedSweeps: number;
+  /** The wall-clock time of each published sweep's first reading */
+  publishedReadingTimesMs: number[];
   lines: LoggedLine[];
   setConfig: Setter<Config>;
   stop: () => void;
 };
 
 const TYPICAL_BULK_SWEEP_MS = 1150;
+const WALL_CLOCK_START_MS = Date.UTC(2026, 9, 26, 12);
+const hourMs = 3_600_000;
 
 // ——— 10 s start to start, then live changes re-measure the running wait ———
 {
@@ -61,7 +69,7 @@ const TYPICAL_BULK_SWEEP_MS = 1150;
   check("start: logged with its cadence", harness.lines[0]?.text, "Starting thermometer sweeps every 10 s");
   await advanceTo(harness.timeline, 25_000);
   check("10 s: measured start to start", harness.sweepStartsMs, [0, 10_000, 20_000]);
-  check("10 s: every sweep published", harness.publishedSweeps, 3);
+  check("10 s: every sweep published", harness.publishedReadingTimesMs.length, 3);
 
   // At 25 s, waiting for the sweep due at 30 s
   setConfiguredInterval(harness, 30);
@@ -79,13 +87,13 @@ const TYPICAL_BULK_SWEEP_MS = 1150;
     true
   );
 
-  // At 100 s the next sweep is due at 110 s; at 300 s it moves to 380 s, and back down to 5 s mid-wait
-  setConfiguredInterval(harness, 300);
+  // At 100 s the next sweep is due at 110 s; at 60 s it moves to 140 s, and back down to 5 s mid-wait
+  setConfiguredInterval(harness, 60);
   await advanceTo(harness.timeline, 120_000);
   setConfiguredInterval(harness, 5);
   await advanceTo(harness.timeline, 131_000);
   check(
-    "300 → 5 s mid-wait: sweeps at once instead of sitting out the 300 s wait, then every 5 s",
+    "60 → 5 s mid-wait: sweeps at once instead of sitting out the 60 s wait, then every 5 s",
     harness.sweepStartsMs.slice(5),
     [120_000, 125_000, 130_000]
   );
@@ -176,7 +184,7 @@ const TYPICAL_BULK_SWEEP_MS = 1150;
   harness.stop();
 }
 
-// ——— bad values reach the loop corrected: a fallback to 10 s, a clamp to 300 s, each warned once ———
+// ——— bad values reach the loop corrected: a fallback to 10 s, a clamp to 60 s, each warned once ———
 {
   const harness = startHarness("ten", { durationMs: TYPICAL_BULK_SWEEP_MS, probesRead: 14, throws: false });
   await advanceTo(harness.timeline, 15_000);
@@ -186,24 +194,56 @@ const TYPICAL_BULK_SWEEP_MS = 1150;
   check("bad value: warned once, an unrelated config write doesn't repeat it", warnings(harness), [
     'temperature_saving.thermometer_sweep_interval_seconds: "ten" is not a non-negative number of seconds, using the default 10 s',
   ]);
-  setConfiguredInterval(harness, 1000);
-  await advanceTo(harness.timeline, 700_000);
+  setConfiguredInterval(harness, 300);
+  await advanceTo(harness.timeline, 200_000);
   check(
-    "too long: clamped to 300 s, warned once",
+    "too long: clamped to 60 s, warned once",
     [harness.sweepStartsMs.slice(2), warnings(harness).length],
-    [[310_000, 610_000], 2]
+    [[70_000, 130_000, 190_000], 2]
   );
   harness.stop();
 }
 
+// ——— a wall clock stepped back mid-wait (an NTP step, `date -s`) doesn't hold the sweeps off: the loop runs on
+// the monotonic clock, and only the readings' timestamps follow the wall clock (#73 review) ———
+{
+  const harness = startHarness(10, { durationMs: TYPICAL_BULK_SWEEP_MS, probesRead: 14, throws: false });
+  await advanceTo(harness.timeline, 15_000);
+  harness.timeline.wallMs -= hourMs;
+  await advanceTo(harness.timeline, 45_000);
+  check(
+    "wall clock 1 h back at 15 s: the sweeps carry on every 10 s",
+    harness.sweepStartsMs,
+    [0, 10_000, 20_000, 30_000, 40_000]
+  );
+  check(
+    "wall clock 1 h back at 15 s: the readings carry the stepped wall-clock time",
+    harness.publishedReadingTimesMs.map(readAtMs => readAtMs - WALL_CLOCK_START_MS),
+    [1150, 11_150, 21_150 - hourMs, 31_150 - hourMs, 41_150 - hourMs]
+  );
+  harness.stop();
+}
+{
+  const realDateNow = Date.now;
+  const loopClockBeforeStep = SYSTEM_SWEEP_CLOCK.nowMs();
+  Date.now = () => realDateNow() - hourMs;
+  const loopClockAfterStep = SYSTEM_SWEEP_CLOCK.nowMs();
+  Date.now = realDateNow;
+  check(
+    "production clock: a wall clock stepped back doesn't move the loop's clock back",
+    loopClockAfterStep >= loopClockBeforeStep,
+    true
+  );
+}
+
 // ——— stopping: mid-wait ends the wait; mid-sweep drops that sweep's readings ———
 {
-  const harness = startHarness(300, { durationMs: TYPICAL_BULK_SWEEP_MS, probesRead: 14, throws: false });
+  const harness = startHarness(60, { durationMs: TYPICAL_BULK_SWEEP_MS, probesRead: 14, throws: false });
   await advanceTo(harness.timeline, 15_000);
   harness.stop();
   await settle();
   check(
-    "stopped mid-wait: logged, the 300 s wait ended rather than left pending",
+    "stopped mid-wait: logged, the 60 s wait ended rather than left pending",
     [harness.lines.at(-1)?.text, liveTimers(harness.timeline).length],
     ["Stopped thermometer sweeps", 0]
   );
@@ -216,7 +256,7 @@ const TYPICAL_BULK_SWEEP_MS = 1150;
   await advanceTo(slowSweep.timeline, 60_000);
   check(
     "stopped mid-sweep: that sweep finishes but isn't published, and none follows",
-    [slowSweep.sweepStartsMs, slowSweep.publishedSweeps, slowSweep.lines.at(-1)?.text],
+    [slowSweep.sweepStartsMs, slowSweep.publishedReadingTimesMs.length, slowSweep.lines.at(-1)?.text],
     [[0], 0, "Stopped thermometer sweeps"]
   );
 }
@@ -228,7 +268,7 @@ if (failures) {
 console.log("\nall thermometer sweep loop checks passed");
 
 function startHarness(configuredIntervalSeconds: unknown, sweepBehaviour: FakeSweepBehaviour): LoopHarness {
-  const timeline: FakeTimeline = { nowMs: 0, pendingTimers: [], loopTimersSet: 0 };
+  const timeline: FakeTimeline = { monotonicMs: 0, wallMs: WALL_CLOCK_START_MS, pendingTimers: [], loopTimersSet: 0 };
   return createRoot(dispose => {
     const [config, setConfig] = createSignal<Config>(withSweepInterval(default_config, configuredIntervalSeconds));
     const harness: LoopHarness = {
@@ -237,7 +277,7 @@ function startHarness(configuredIntervalSeconds: unknown, sweepBehaviour: FakeSw
       sweepStartsMs: [],
       sweepsInFlight: 0,
       maxSweepsInFlight: 0,
-      publishedSweeps: 0,
+      publishedReadingTimesMs: [],
       lines: [],
       setConfig,
       stop: dispose,
@@ -246,7 +286,7 @@ function startHarness(configuredIntervalSeconds: unknown, sweepBehaviour: FakeSw
     startThermometerSweepLoop({
       intervalSeconds: useThermometerSweepSettings(config, logger).thermometer_sweep_interval_seconds,
       sweep: () => fakeSweep(harness),
-      publish: () => harness.publishedSweeps++,
+      publish: sweep => harness.publishedReadingTimesMs.push(sweep.readings[0]?.time ?? Number.NaN),
       clock: loopClock(timeline),
       logger,
     });
@@ -271,7 +311,7 @@ function withSweepInterval(config: Config, configuredIntervalSeconds: unknown): 
 
 async function fakeSweep(harness: LoopHarness): Promise<ThermometerSweepResult> {
   const { durationMs, probesRead, throws } = harness.sweepBehaviour;
-  harness.sweepStartsMs.push(harness.timeline.nowMs);
+  harness.sweepStartsMs.push(harness.timeline.monotonicMs);
   // Sweeps chained without a timer turn would spin in promise callbacks and hang this test: stop the loop
   // instead, so the checks fail
   if (harness.sweepStartsMs.length - harness.timeline.loopTimersSet > 100) harness.stop();
@@ -281,7 +321,7 @@ async function fakeSweep(harness: LoopHarness): Promise<ThermometerSweepResult> 
   harness.sweepsInFlight--;
   if (throws) throw new Error("injected sweep failure");
   const readings = Array.from({ length: probesRead }, (_slot, probeIndex) =>
-    fakeReading(probeIndex, harness.timeline.nowMs)
+    fakeReading(probeIndex, harness.timeline.wallMs)
   );
   return { method: "bulk", readings, durationMs };
 }
@@ -292,7 +332,7 @@ function fakeReading(probeIndex: number, readAtMs: number): TemperatureReadingBr
 
 function loopClock(timeline: FakeTimeline): SweepClock {
   return {
-    nowMs: () => timeline.nowMs,
+    nowMs: () => timeline.monotonicMs,
     setTimer: (delayMs, onFire) => {
       timeline.loopTimersSet++;
       return scheduleFakeTimer(timeline, delayMs, onFire);
@@ -301,24 +341,28 @@ function loopClock(timeline: FakeTimeline): SweepClock {
 }
 
 function scheduleFakeTimer(timeline: FakeTimeline, delayMs: number, onFire: () => void) {
-  const timer: FakeTimer = { fireAtMs: timeline.nowMs + delayMs, onFire, cancelled: false };
+  const timer: FakeTimer = { fireAtMonotonicMs: timeline.monotonicMs + delayMs, onFire, cancelled: false };
   timeline.pendingTimers.push(timer);
   return () => {
     timer.cancelled = true;
   };
 }
 
-/** Fires every timer due up to `targetMs` in time order (ties in the order they were set), then sets the clock there */
+/** Fires every timer due up to `targetMs` in time order (ties in the order they were set), then sets the clocks there */
 async function advanceTo(timeline: FakeTimeline, targetMs: number) {
   await settle();
   for (let firedTimers = 0; ; firedTimers++) {
     // A loop that keeps setting timers at the current instant would hang the test instead of failing it
-    if (firedTimers > 100_000) throw new Error(`Timers keep firing at ${timeline.nowMs} ms without time passing`);
-    const dueTimer = liveTimers(timeline).find(timer => timer.fireAtMs <= targetMs && isEarliest(timeline, timer));
+    if (firedTimers > 100_000) {
+      throw new Error(`Timers keep firing at ${timeline.monotonicMs} ms without time passing`);
+    }
+    const dueTimer = liveTimers(timeline).find(
+      timer => timer.fireAtMonotonicMs <= targetMs && isEarliest(timeline, timer)
+    );
     if (!dueTimer) break;
     await fireTimer(timeline, dueTimer);
   }
-  timeline.nowMs = targetMs;
+  moveClocksTo(timeline, targetMs);
   await settle();
 }
 
@@ -330,9 +374,16 @@ async function fireNextTimer(timeline: FakeTimeline) {
 
 async function fireTimer(timeline: FakeTimeline, timer: FakeTimer) {
   timeline.pendingTimers.splice(timeline.pendingTimers.indexOf(timer), 1);
-  timeline.nowMs = Math.max(timeline.nowMs, timer.fireAtMs);
+  moveClocksTo(timeline, timer.fireAtMonotonicMs);
   timer.onFire();
   await settle();
+}
+
+/** Both clocks advance together; never backwards */
+function moveClocksTo(timeline: FakeTimeline, monotonicMs: number) {
+  const elapsedMs = Math.max(0, monotonicMs - timeline.monotonicMs);
+  timeline.monotonicMs += elapsedMs;
+  timeline.wallMs += elapsedMs;
 }
 
 function liveTimers(timeline: FakeTimeline) {
@@ -340,7 +391,7 @@ function liveTimers(timeline: FakeTimeline) {
 }
 
 function isEarliest(timeline: FakeTimeline, candidate: FakeTimer) {
-  return liveTimers(timeline).every(timer => timer.fireAtMs >= candidate.fireAtMs);
+  return liveTimers(timeline).every(timer => timer.fireAtMonotonicMs >= candidate.fireAtMonotonicMs);
 }
 
 /** Lets every pending promise callback run: setImmediate only fires once the microtask queue is empty */

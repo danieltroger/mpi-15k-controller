@@ -20,9 +20,11 @@ export type EffectiveSetting = {
 export const THERMOMETER_SWEEP_SETTING_BOUNDS = {
   // The default keeps each probe on about the cadence it had when every read ran its own conversion (one probe
   // every ~0.8 s, so each probe every ~11 s): MQTT/Influx volume and Grafana see the rhythm they saw before #69.
-  // 0 is back to back. The battery and cooling-outlet alerts act on the newest reading, so they lag by up to
-  // one interval: 5 min is small next to the ~80 min warning the outlet P2 would have given on 2025-06-30.
-  thermometer_sweep_interval_seconds: { defaultValue: 10, min: 0, max: 300, unit: "s" },
+  // 0 is back to back. The battery P1 (45 °C on a cell or bus bar) acts on the newest reading with no freshness
+  // check, so a sweep interval makes it late by up to that interval: 60 s keeps it at most ~1 min late, where a
+  // loose bus-bar joint at ~290 A could matter. A dark probe (whose cell the P1 can't see) pages after the silent
+  // delay or 3 failed sweeps, whichever is later, so at 60 s after 3 min at most at the default delay.
+  thermometer_sweep_interval_seconds: { defaultValue: 10, min: 0, max: 60, unit: "s" },
   // Under a minute, a probe throwing a run of CRC errors would page. Past an hour, a dark battery probe is no
   // early warning any more: it hides the cell it watches (cell_5 was dark 40 min on 2026-10-17 unnoticed).
   thermometer_silent_page_after_minutes: { defaultValue: 5, min: 1, max: 60, unit: "min" },

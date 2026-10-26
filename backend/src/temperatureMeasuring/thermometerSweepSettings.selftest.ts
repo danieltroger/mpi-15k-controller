@@ -65,18 +65,21 @@ check(
   [10, 5, 60]
 );
 
-// ——— sweep interval: 0 (back to back) up to 300 s ———
+// ——— sweep interval: 0 (back to back) up to 60 s, so the battery P1 is at most ~1 min late ———
 check(
   "interval: the default, 0 (back to back), a fraction and the maximum are kept",
-  [10, 0, 2.5, 300].map(configured =>
+  [10, 0, 2.5, 60].map(configured =>
     effectiveThermometerSweepSetting("thermometer_sweep_interval_seconds", configured)
   ),
-  [{ value: 10 }, { value: 0 }, { value: 2.5 }, { value: 300 }]
+  [{ value: 10 }, { value: 0 }, { value: 2.5 }, { value: 60 }]
 );
 check(
-  "interval: above the maximum clamps to it, with the reason",
-  effectiveThermometerSweepSetting("thermometer_sweep_interval_seconds", 301),
-  { value: 300, correction: "301 s exceeds the 300 s maximum, using the maximum" }
+  "interval: above the 60 s maximum clamps to it, with the reason",
+  [61, 300].map(configured => effectiveThermometerSweepSetting("thermometer_sweep_interval_seconds", configured)),
+  [
+    { value: 60, correction: "61 s exceeds the 60 s maximum, using the maximum" },
+    { value: 60, correction: "300 s exceeds the 60 s maximum, using the maximum" },
+  ]
 );
 check(
   "interval: negative falls back to the default, with the reason",
@@ -159,9 +162,14 @@ check(
   10 * minuteMs
 );
 check(
-  "stale limit: at 300 s it stretches to three intervals",
-  temperatureStaleAfterMs(10 * minuteMs, { thermometer_sweep_interval_seconds: 300 }),
-  15 * minuteMs
+  "stale limit: at the 60 s maximum the configured 10 min still stands",
+  temperatureStaleAfterMs(10 * minuteMs, { thermometer_sweep_interval_seconds: 60 }),
+  10 * minuteMs
+);
+check(
+  "stale limit: a 1 min limit at 60 s stretches to three intervals",
+  temperatureStaleAfterMs(minuteMs, { thermometer_sweep_interval_seconds: 60 }),
+  3 * minuteMs
 );
 check(
   "stale limit: back to back, a 1 min limit stands",
@@ -171,7 +179,7 @@ check(
 check(
   "stale limit: an out-of-range interval counts as its clamped value",
   temperatureStaleAfterMs(minuteMs, { thermometer_sweep_interval_seconds: 1000 }),
-  15 * minuteMs
+  3 * minuteMs
 );
 check(
   "stale limit: no config yet (the dashboard before it arrives) counts as the default interval",

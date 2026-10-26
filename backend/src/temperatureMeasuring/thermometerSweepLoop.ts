@@ -4,6 +4,11 @@ import { THERMOMETER_SWEEP_SETTING_BOUNDS } from "./thermometerSweepSettings.ts"
 
 /** The timers the loop waits on: setTimeout in production, a simulated clock in the selftest */
 export type SweepClock = {
+  /**
+   * Monotonic. The loop only measures durations, and every wake-up checks whether the next sweep is due: on the
+   * wall clock, a step back would hold the sweeps off for the length of the step (#73 review), and nothing would
+   * page meanwhile. Readings keep their wall-clock timestamps (nodeSysfsAccess.nowMs).
+   */
   nowMs: () => number;
   /** Calls `onFire` after `delayMs`, on a later timer turn even at 0 (never synchronously); returns a cancel */
   setTimer: (delayMs: number, onFire: () => void) => () => void;
@@ -20,7 +25,7 @@ export type ThermometerSweepLoopOptions = {
 };
 
 export const SYSTEM_SWEEP_CLOCK: SweepClock = {
-  nowMs: () => Date.now(),
+  nowMs: () => performance.now(),
   setTimer: (delayMs, onFire) => {
     const timer = setTimeout(onFire, delayMs);
     return () => clearTimeout(timer);
@@ -46,8 +51,8 @@ const EMPTY_SWEEP_BACKOFF_MS = THERMOMETER_SWEEP_SETTING_BOUNDS.thermometer_swee
  * Sweeps the thermometers every temperature_saving.thermometer_sweep_interval_seconds, measured start to start,
  * until the calling owner is disposed. Sweeps never overlap: one async loop awaits each sweep before it starts
  * the next, so a sweep that runs longer than the interval (always the case at 0) is followed by the next one as
- * soon as it ends. The interval is live: a change re-measures the running wait at once, so going from 300 s to
- * 10 s doesn't sit out the old wait.
+ * soon as it ends. The interval is live: a change re-measures the running wait at once, so going from 60 s to
+ * 5 s doesn't sit out the old wait.
  */
 export function startThermometerSweepLoop(loopOptions: ThermometerSweepLoopOptions) {
   const control: SweepLoopControl = { stopped: false, endWaitEarly: undefined };
