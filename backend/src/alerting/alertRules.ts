@@ -14,6 +14,7 @@ import { startInverterFaultAlerts } from "./inverterFaultAlerts.ts";
 import type { InverterEpisodePaging } from "./inverterFaultAlertPolicy.ts";
 import type { InverterOperatingStatus } from "../inverterComms/inverterStatus.types.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
+import { temperatureStaleAfterMs } from "../temperatureMeasuring/thermometerSweepInterval.ts";
 
 /**
  * The watchers: each rule reads signals that already drive the rest of the controller and turns
@@ -191,8 +192,12 @@ export function startAlertRules(ctx: {
 
     const readings = untrack(() => Object.values(ctx.temperatures()).map(reading => reading()));
     const newestTempMs = Math.max(0, ...readings.map(reading => reading?.time ?? 0));
+    const temperaturesStaleAfterMs = temperatureStaleAfterMs(
+      limits.stale_temperatures_p2_minutes * 60_000,
+      untrack(ctx.config).temperature_saving
+    );
     staleTemperaturesAlert.update(
-      newestTempMs === 0 ? undefined : nowMs - newestTempMs > limits.stale_temperatures_p2_minutes * 60_000,
+      newestTempMs === 0 ? undefined : nowMs - newestTempMs > temperaturesStaleAfterMs,
       "Thermometers silent",
       () => `No temperature updates for ${Math.round((nowMs - newestTempMs) / 60_000)} min`
     );

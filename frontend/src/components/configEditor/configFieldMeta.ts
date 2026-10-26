@@ -1,4 +1,5 @@
 import type { Config } from "../../../../backend/src/config/config.types";
+import { MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS } from "../../../../backend/src/temperatureMeasuring/thermometerSweepInterval";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -507,7 +508,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["alerting", "stale_temperatures_p2_minutes"],
         "Stale thermometers P2",
-        "P2 when every thermometer has been silent for this long.",
+        "P2 when every thermometer has been silent for this long. Never sooner than three thermometer sweep intervals (Thermometers → Sweep interval), so slow sweeps can't trip it.",
         { unit: "min" }
       ),
       f(
@@ -941,7 +942,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
   {
     id: "thermometers",
     title: "Thermometers",
-    description: "Names for the 1-wire temperature sensors and where their history goes.",
+    description: "Names for the 1-wire temperature sensors, how often they're read and where their history goes.",
     rootKeys: ["thermometers", "temperature_saving"],
     fields: [
       f(
@@ -959,6 +960,12 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
             newEntryValue: () => "",
           },
         }
+      ),
+      f(
+        ["temperature_saving", "thermometer_sweep_interval_seconds"],
+        "Sweep interval",
+        `How often all thermometers are read, from the start of one sweep to the start of the next. A sweep runs one 12-bit conversion on every probe at once (~0.75 s) and then reads all of them, about 1.2 s in total, so 0 or anything shorter than that sweeps back to back: each sweep starts as soon as the previous one ends, and they never overlap. Without the bulk read, every probe converts on its own and a sweep takes ~11 s. Shorter means fresher temperatures and quicker temperature alerts, but more InfluxDB rows (one per probe per sweep) and more MQTT and live-page traffic, and near-continuous conversions warm each probe by a few tenths of a degree. Longer delays the battery and cooling-outlet alerts by up to one interval, and Stale thermometers waits at least three intervals. A single probe that stops reading still pages after 5 min (and at least 3 failed sweeps). Applies from the next sweep. 0–${MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS} s, default 10.`,
+        { unit: "s", min: 0, max: MAX_THERMOMETER_SWEEP_INTERVAL_SECONDS, step: 1 }
       ),
       f(["temperature_saving", "database"], "History database", "InfluxDB database temperature history is written to."),
       f(["temperature_saving", "table"], "History table", "InfluxDB table temperature history is written to."),

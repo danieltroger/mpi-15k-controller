@@ -131,7 +131,10 @@ export type AlertingConfig = {
   charging_battery_temp_p1_celsius: number;
   /** P2 when no mqtt value has updated for this long (inverter USB daemon dead) */
   stale_mqtt_p2_minutes: number;
-  /** P2 when every thermometer has been silent for this long */
+  /**
+   * P2 when every thermometer has been silent for this long; never sooner than three
+   * temperature_saving.thermometer_sweep_interval_seconds, so slow sweeps can't trip it
+   */
   stale_temperatures_p2_minutes: number;
   /** Grid counts as down when ac_input_voltage_r sits below this … */
   grid_out_below_volts: number;
@@ -204,6 +207,18 @@ export type AlertingConfig = {
   max_errorlog_pushes_per_hour: number;
   /** No staleness alerts this soon after boot — sensors come up in their own time */
   startup_grace_seconds: number;
+};
+
+export type TemperatureSavingConfig = {
+  database: string;
+  table: string;
+  /**
+   * Start-to-start time between two sweeps of the 1-wire thermometers (one bulk conversion, then
+   * every probe read: ~1.2 s). 0, or anything shorter than a sweep, sweeps back to back; sweeps
+   * never overlap. At most 300. Live: applies from the next sweep, a running wait is re-measured.
+   * See temperatureMeasuring/thermometerSweepInterval.ts.
+   */
+  thermometer_sweep_interval_seconds: number;
 };
 
 export type Config = {
@@ -353,10 +368,7 @@ export type Config = {
   start_bulk_charge_voltage: number;
   thermometers: { [key: string]: string };
   mqtt_host: string;
-  temperature_saving: {
-    database: string;
-    table: string;
-  };
+  temperature_saving: TemperatureSavingConfig;
   feed_from_battery_when_no_solar: {
     feed_below_available_power: number;
     feed_amount_watts: number;

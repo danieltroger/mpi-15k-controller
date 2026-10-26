@@ -17,8 +17,10 @@ export type ThermometerSweepTiming = {
   statusPollIntervalMs: number;
   /** While the bulk path is down, how often a sweep tries it again before falling back */
   bulkRetryIntervalMs: number;
-  /** Consecutive failed sweeps after which one probe's failure streak pages (logger.error) */
-  probeFailurePageAfterSweeps: number;
+  /** How long one probe may go without an accepted reading before it pages (logger.error)… */
+  probeSilencePageAfterMs: number;
+  /** …once it has also failed this many sweeps in a row, so one failed sweep at a long interval doesn't page */
+  probeSilencePageMinFailedSweeps: number;
 };
 
 export const DEFAULT_THERMOMETER_SWEEP_TIMING: ThermometerSweepTiming = {
@@ -27,8 +29,10 @@ export const DEFAULT_THERMOMETER_SWEEP_TIMING: ThermometerSweepTiming = {
   conversionWaitLimitMs: 1000,
   statusPollIntervalMs: 50,
   bulkRetryIntervalMs: 60_000,
-  // ~5 min at one sweep per 10 s
-  probeFailurePageAfterSweeps: 30,
+  // 30 sweeps at the default 10 s interval. Timed rather than counted since the interval is a setting:
+  // 30 back-to-back sweeps take 35 s, 30 sweeps at 300 s take 2.5 h.
+  probeSilencePageAfterMs: 5 * 60_000,
+  probeSilencePageMinFailedSweeps: 3,
 };
 
 export type ThermometerSweepState = {
@@ -36,9 +40,19 @@ export type ThermometerSweepState = {
   bulkOutage: BulkReadOutage | undefined;
   /** Whether the log has said yet that bulk reads work */
   bulkAnnounced: boolean;
-  lastAcceptedCelsius: Map<string, number>;
-  /** Consecutive failed sweeps per probe (device id), absent while the probe reads fine */
-  failureStreaks: Map<string, number>;
+  /** Each probe's (device id) latest accepted reading: the 85 °C guard compares with it, a silence is timed from it */
+  lastAccepted: Map<string, AcceptedReading>;
+  /** Per probe (device id), absent while the probe reads fine */
+  failureStreaks: Map<string, ProbeFailureStreak>;
+};
+
+type AcceptedReading = { celsius: number; atMs: number };
+
+type ProbeFailureStreak = {
+  failedSweeps: number;
+  /** The probe's last accepted reading, or the streak's first failure if it hasn't read since startup */
+  silentSinceMs: number;
+  paged: boolean;
 };
 
 /** `error` pages: production wires it to errorLog, which alerting forwards as a P2. */
@@ -106,7 +120,7 @@ export async function sweepThermometers(context: ThermometerSweepContext): Promi
 }
 
 export function createThermometerSweepState(): ThermometerSweepState {
-  return { bulkOutage: undefined, bulkAnnounced: false, lastAcceptedCelsius: new Map(), failureStreaks: new Map() };
+  return { bulkOutage: undefined, bulkAnnounced: false, lastAccepted: new Map(), failureStreaks: new Map() };
 }
 
 /** Bulk-converts unless the bulk path is down and its retry isn't due; logs the outage's start, cause changes and end. */
@@ -204,10 +218,11 @@ async function readProbe(
     return undefined;
   }
   recordProbeSuccess(context, probe);
-  context.state.lastAcceptedCelsius.set(probe.thermometer_device_id, check.celsius);
+  const readAtMs = context.sysfs.nowMs();
+  context.state.lastAccepted.set(probe.thermometer_device_id, { celsius: check.celsius, atMs: readAtMs });
   return {
     value: check.celsius,
-    time: context.sysfs.nowMs(),
+    time: readAtMs,
     thermometer_device_id: probe.thermometer_device_id,
     label: probe.label,
   };
@@ -227,34 +242,48 @@ async function readAndCheckAttribute(
   const parsed =
     attribute === "temperature" ? parseTemperatureAttribute(attributeText) : parseW1SlaveText(attributeText);
   if (!parsed.ok) return parsed;
-  return checkPlausibility(parsed.celsius, state.lastAcceptedCelsius.get(thermometerDeviceId));
+  return checkPlausibility(parsed.celsius, state.lastAccepted.get(thermometerDeviceId)?.celsius);
 }
 
 function recordProbeFailure(
-  { state, logger, timing }: ThermometerSweepContext,
+  { state, logger, timing, sysfs }: ThermometerSweepContext,
   probe: ThermometerProbe,
   reason: string
 ) {
-  const failedSweeps = (state.failureStreaks.get(probe.thermometer_device_id) ?? 0) + 1;
-  state.failureStreaks.set(probe.thermometer_device_id, failedSweeps);
+  const failedAtMs = sysfs.nowMs();
+  const streak = state.failureStreaks.get(probe.thermometer_device_id) ?? {
+    failedSweeps: 0,
+    silentSinceMs: state.lastAccepted.get(probe.thermometer_device_id)?.atMs ?? failedAtMs,
+    paged: false,
+  };
+  streak.failedSweeps++;
+  state.failureStreaks.set(probe.thermometer_device_id, streak);
   const probeName = `thermometer ${probe.thermometer_device_id} (${probe.label})`;
-  logger.log(`Failed reading ${probeName}, ${failedSweeps} sweep(s) in a row: ${reason}`);
-  if (failedSweeps === timing.probeFailurePageAfterSweeps) {
-    // A page, not a warning: temperatures-stale only watches the newest reading of all 14 probes, so one
-    // dark battery probe is invisible to it (cell_5 was dark for 40 min on 2026-10-17 with WARN lines only).
-    // A probe stuck on its 85 °C power-on value ends up here too, now that the guard rejects it every sweep.
-    // The probe id and label lead the message, so the errorLog dedupe key stays per probe.
-    logger.error(
-      `Thermometer ${probe.thermometer_device_id} (${probe.label}) has given no reading for ${failedSweeps} sweeps in a row, its last value is going stale. Latest failure: ${reason}`
-    );
+  logger.log(`Failed reading ${probeName}, ${streak.failedSweeps} sweep(s) in a row: ${reason}`);
+  const silentForMs = failedAtMs - streak.silentSinceMs;
+  if (
+    streak.paged ||
+    streak.failedSweeps < timing.probeSilencePageMinFailedSweeps ||
+    silentForMs < timing.probeSilencePageAfterMs
+  ) {
+    return;
   }
+  streak.paged = true;
+  // A page, not a warning: temperatures-stale only watches the newest reading of all 14 probes, so one
+  // dark battery probe is invisible to it (cell_5 was dark for 40 min on 2026-10-17 with WARN lines only).
+  // A probe stuck on its 85 °C power-on value ends up here too, now that the guard rejects it every sweep.
+  // The probe id and label lead the message and the numbers follow later, so the errorLog dedupe key
+  // (its first 80 characters) stays per probe.
+  logger.error(
+    `Thermometer ${probe.thermometer_device_id} (${probe.label}) has stopped giving readings, its last value is going stale: none for ${describeDurationMs(silentForMs)} (${streak.failedSweeps} sweeps in a row). Latest failure: ${reason}`
+  );
 }
 
-function recordProbeSuccess({ state, logger, timing }: ThermometerSweepContext, probe: ThermometerProbe) {
-  const failedSweeps = state.failureStreaks.get(probe.thermometer_device_id) ?? 0;
-  if (failedSweeps >= timing.probeFailurePageAfterSweeps) {
+function recordProbeSuccess({ state, logger }: ThermometerSweepContext, probe: ThermometerProbe) {
+  const streak = state.failureStreaks.get(probe.thermometer_device_id);
+  if (streak?.paged) {
     logger.log(
-      `Thermometer ${probe.thermometer_device_id} (${probe.label}) reads again after ${failedSweeps} failed sweeps`
+      `Thermometer ${probe.thermometer_device_id} (${probe.label}) reads again after ${streak.failedSweeps} failed sweeps`
     );
   }
   state.failureStreaks.delete(probe.thermometer_device_id);

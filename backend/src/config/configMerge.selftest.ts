@@ -2,7 +2,8 @@
  * The live config.json predates the physical solar model: its solar_model holds only the deleted
  * linear model's keys. Loading it must yield every new knob from the defaults and pass the dead
  * keys through untouched. It also predates the overheat sell stop's limits, and still carries the
- * retired alerting.inverter_temp_p1_celsius those replaced. Run from backend/ with:
+ * retired alerting.inverter_temp_p1_celsius those replaced, and the thermometer sweep interval. Run
+ * from backend/ with:
  *   yarn node src/config/configMerge.selftest.ts
  */
 import { default_config, mergeWithDefaults } from "./config.ts";
@@ -135,6 +136,44 @@ check(
     afterStalePatch.scheduled_power_selling.only_sell_below_inverter_temp_celsius === 95,
   "patched" in stalePagePatch ? "(patch accepted, merge dropped it)" : `(patch refused: ${stalePagePatch.error})`
 );
+
+// ——— temperature_saving stored before the sweep interval became a setting (the live pi's, 2026-10-26) ———
+const liveTemperatureSaving = { database: "mppsolar", table: "battery_temperatures" };
+const withLiveTemperatureSaving = mergeWithDefaults({
+  ...structuredClone(default_config),
+  // The cast is the point: this is the shape config.json files on disk still have
+  temperature_saving: liveTemperatureSaving as Config["temperature_saving"],
+});
+check(
+  "merge: an older temperature_saving picks up the 10 s sweep interval and keeps its database and table",
+  JSON.stringify(withLiveTemperatureSaving.temperature_saving) ===
+    JSON.stringify({ ...liveTemperatureSaving, thermometer_sweep_interval_seconds: 10 })
+);
+const tunedSweepInterval = mergeWithDefaults({
+  ...structuredClone(default_config),
+  temperature_saving: { ...liveTemperatureSaving, thermometer_sweep_interval_seconds: 0 },
+});
+check(
+  "merge: a stored sweep interval, even 0 (back to back), wins over the default",
+  tunedSweepInterval.temperature_saving.thermometer_sweep_interval_seconds === 0
+);
+const sweepIntervalPatch = applyConfigPatch(withLiveTemperatureSaving, {
+  path: ["temperature_saving", "thermometer_sweep_interval_seconds"],
+  op: "set",
+  value: 30,
+});
+check(
+  "patch: the config page can set the sweep interval on a merged live config",
+  "patched" in sweepIntervalPatch &&
+    mergeWithDefaults(sweepIntervalPatch.patched).temperature_saving.thermometer_sweep_interval_seconds === 30,
+  "error" in sweepIntervalPatch ? sweepIntervalPatch.error : ""
+);
+const stringSweepIntervalPatch = applyConfigPatch(withLiveTemperatureSaving, {
+  path: ["temperature_saving", "thermometer_sweep_interval_seconds"],
+  op: "set",
+  value: "30",
+});
+check("patch: a string sweep interval is refused (type preservation)", "error" in stringSweepIntervalPatch);
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);
