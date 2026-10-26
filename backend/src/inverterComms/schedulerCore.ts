@@ -21,6 +21,13 @@ import {
   type SchedulerTiming,
 } from "./schedulerTiming.ts";
 import { judgeConfirmRun, type ConfirmVerdicts } from "./confirmVerdicts.ts";
+import {
+  chainAfterReadback,
+  chainMayLeave,
+  chainWithWrite,
+  readbackFieldKey,
+  type FieldWriteChains,
+} from "./fieldWriteChains.ts";
 
 export type QueuedSetterView = {
   command: string;
@@ -60,6 +67,8 @@ export type SchedulerState = {
    * is trusted per field (each EDx sets one HECS flag; another flag's write says nothing about it)
    */
   lastWriteAtByReadbackField: Readonly<Record<string, number>>;
+  /** Per field, the writes no readback has proven committed yet (fieldWriteChains.ts) */
+  fieldWriteChains: FieldWriteChains;
   lastPollRoundEndedAt: number | undefined;
   lastPollRoundHadFailures: boolean;
   /** Start of the last round that included the settings queries */
@@ -88,6 +97,7 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     confirm: undefined,
     lastSentAtByCommand: {},
     lastWriteAtByReadbackField: {},
+    fieldWriteChains: {},
     lastPollRoundEndedAt: undefined,
     lastPollRoundHadFailures: false,
     lastSettingsPollAt: undefined,
@@ -200,13 +210,21 @@ export function afterSetterSent(
   // Every send may have changed its fields — ACKed, NAKed or unanswered alike (a NAK'd or lost
   // write can still have committed), so readbacks older than this can't vouch for them any more
   const lastWriteAtByReadbackField = { ...state.lastWriteAtByReadbackField };
+  const fieldWriteChains = { ...state.fieldWriteChains };
   for (const check of fieldsThisCommandWrites) {
-    lastWriteAtByReadbackField[readbackFieldKey(check.query, check.field)] = nowMs;
+    const fieldKey = readbackFieldKey(check.query, check.field);
+    lastWriteAtByReadbackField[fieldKey] = nowMs;
+    fieldWriteChains[fieldKey] = chainWithWrite(
+      fieldWriteChains[fieldKey],
+      { value: check.expectedValue, sentAtMs: nowMs },
+      state.latestSettingsReadbacks[check.query]?.fields[check.field]
+    );
   }
   return {
     ...state,
     lastSentAtByCommand: { ...state.lastSentAtByCommand, [command]: nowMs },
     lastWriteAtByReadbackField,
+    fieldWriteChains,
     // A copy queued while this one was on the wire got its gate from the PREVIOUS send; re-gate it
     // from this one, or it would go out straight after the ACK — a back-to-back duplicate write
     queuedSetters: state.queuedSetters.map(setter =>
@@ -271,7 +289,7 @@ export function afterConfirmRun(
     const nothing = { confirmedChecks: [], gaveUpChecks: [], notYetJudgedChecks: [], retry: undefined };
     return { state, result: { ...nothing, starvationFallback: undefined } };
   }
-  const verdicts = judgeConfirmRun(confirm, state.timing, decodedByQuery, nowMs);
+  const verdicts = judgeConfirmRun(confirm, state.timing, decodedByQuery, state.fieldWriteChains, nowMs);
   const startsStarvationFallback =
     confirm.strategy === "interleaved" &&
     verdicts.gaveUpChecks.length > 0 &&
@@ -312,41 +330,52 @@ export function afterPollRound(
   };
 }
 
-/** Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for that query. */
+/**
+ * Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for
+ * that query, and credit it to the writes it proves landed (fieldWriteChains.ts).
+ */
 export function withSettingsReadback(
   state: SchedulerState,
   query: SettingsQueryCommandName,
   fields: DecodedFields,
   nowMs: number
 ): SchedulerState {
+  const fieldWriteChains = { ...state.fieldWriteChains };
+  for (const [field, value] of Object.entries(fields)) {
+    const fieldKey = readbackFieldKey(query, field);
+    const chain = chainAfterReadback(fieldWriteChains[fieldKey], value, nowMs, state.timing.writeCommitWindowMs);
+    if (chain) fieldWriteChains[fieldKey] = chain;
+    else delete fieldWriteChains[fieldKey];
+  }
   return {
     ...state,
     latestSettingsReadbacks: { ...state.latestSettingsReadbacks, [query]: { fields, decodedAtMs: nowMs } },
+    fieldWriteChains,
   };
 }
 
 /**
  * Does the latest readback prove the inverter already holds this setter's target? Only a readback
  * that can stand in for the inverter's state counts, field by field: decoded after the last write to
- * that field, and with no pending confirm on it (an ACKed write may still commit and change it). A
- * setter with no readback mapping is never considered satisfied.
+ * that field, with no pending confirm on it (an ACKed write may still commit and change it), and no
+ * unproven write of another value still able to land (after 10 A → 261 A, a 10 A readback can be
+ * the first write landing before the second). A setter with no readback mapping is never considered
+ * satisfied.
  */
 export function readbackAlreadySatisfies(state: SchedulerState, command: string): boolean {
   const checks = expectedReadbackChecksForSetter(command);
   if (!checks.length) return false;
   return checks.every(check => {
     const readback = state.latestSettingsReadbacks[check.query];
-    const lastWriteToField = state.lastWriteAtByReadbackField[readbackFieldKey(check.query, check.field)] ?? -Infinity;
+    const fieldKey = readbackFieldKey(check.query, check.field);
+    const lastWriteToField = state.lastWriteAtByReadbackField[fieldKey] ?? -Infinity;
     if (!readback || readback.decodedAtMs <= lastWriteToField) return false;
+    if (chainMayLeave(state.fieldWriteChains[fieldKey], check.expectedValue)) return false;
     const confirmStillPending = state.confirm?.checks.some(
       pending => pending.query === check.query && pending.field === check.field
     );
     return !confirmStillPending && checkIsSatisfied(check, { [check.query]: readback.fields });
   });
-}
-
-function readbackFieldKey(query: SettingsQueryCommandName, field: string): string {
-  return `${query}:${field}`;
 }
 
 /**

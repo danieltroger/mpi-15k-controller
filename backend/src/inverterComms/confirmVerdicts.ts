@@ -5,6 +5,7 @@
 import type { DecodedFields, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 import type { ConfirmPhase, PendingReadbackCheck } from "./schedulerCore.ts";
 import { checkIsSatisfied } from "./setterConfirmation.ts";
+import { readbackFieldKey, readbackProvesWrite, type FieldWriteChains } from "./fieldWriteChains.ts";
 import { MAX_CONFIRM_ATTEMPTS, type SchedulerTiming } from "./schedulerTiming.ts";
 
 /**
@@ -26,6 +27,7 @@ export function judgeConfirmRun(
   confirm: ConfirmPhase,
   timing: Readonly<SchedulerTiming>,
   decodedByQuery: Partial<Record<SettingsQueryCommandName, DecodedFields>>,
+  fieldWriteChains: FieldWriteChains,
   nowMs: number
 ): ConfirmVerdicts {
   // A write merged into a running interleaved cadence can come up for a confirm right after it went
@@ -34,8 +36,10 @@ export function judgeConfirmRun(
   const notYetJudgedChecks =
     confirm.strategy === "interleaved" ? confirm.checks.filter(check => nowMs < firstJudgeableAt(timing, check)) : [];
   const judgedChecks = confirm.checks.filter(check => !notYetJudgedChecks.includes(check));
-  const confirmedChecks = judgedChecks.filter(check => checkIsSatisfied(check, decodedByQuery));
-  const stillOldChecks = judgedChecks.filter(check => !checkIsSatisfied(check, decodedByQuery));
+  // A readback showing the target but not provably from this write (A→B→A, B not yet seen) is
+  // no better than a still-old one: re-checked, and given up on if it never resolves
+  const confirmedChecks = judgedChecks.filter(check => readbackProvesCheck(check, decodedByQuery, fieldWriteChains));
+  const stillOldChecks = judgedChecks.filter(check => !confirmedChecks.includes(check));
   const { gaveUpChecks, retry } =
     confirm.strategy === "silent"
       ? silentVerdicts(timing, stillOldChecks, confirm.attemptsMade + 1, nowMs)
@@ -44,6 +48,19 @@ export function judgeConfirmRun(
 }
 
 type StillOldVerdicts = Pick<ConfirmVerdicts, "gaveUpChecks" | "retry">;
+
+function readbackProvesCheck(
+  check: PendingReadbackCheck,
+  decodedByQuery: Partial<Record<SettingsQueryCommandName, DecodedFields>>,
+  fieldWriteChains: FieldWriteChains
+): boolean {
+  if (!checkIsSatisfied(check, decodedByQuery)) return false;
+  return readbackProvesWrite(
+    fieldWriteChains[readbackFieldKey(check.query, check.field)],
+    { value: check.expectedValue, sentAtMs: check.writtenAtMs },
+    decodedByQuery[check.query]?.[check.field]
+  );
+}
 
 /** One confirm after the quiet gap, one re-check after the silent backoff, then the whole phase gives up */
 function silentVerdicts(
