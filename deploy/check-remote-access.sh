@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Checks the pi's remote access (#57), from the pi: the units, autossh/sshx processes running outside
-# them (e.g. left over from /etc/rc.local), and every tunnel end to end from the tunnel host's side.
+# Checks the pi's reverse tunnels (#57), from the pi: the units, autossh/ssh tunnel processes running
+# outside them (e.g. left over from /etc/rc.local), and every tunnel end to end from the tunnel host's side.
 # Read-only, apart from short probe connections through the tunnels. Exits 1 if anything is off.
 #
 # Usage, from a checkout of this repo on the pi:  ./deploy/check-remote-access.sh
@@ -11,7 +11,7 @@ readonly TUNNELS=(ssh ws mqtt)
 
 main() {
   local problems=0
-  local units=(sshx.service)
+  local units=()
   local tunnel
   for tunnel in "${TUNNELS[@]}"; do
     units+=("reverse-tunnel@${tunnel}.service")
@@ -38,12 +38,6 @@ main() {
     problems=1
   fi
 
-  echo "== Last sshx session published"
-  # Exits 1 when nothing matches, e.g. once the journal has rotated past the last publish.
-  if ! journalctl -u sshx.service --no-pager -o short-iso -g 'Published the new sshx session' -n 1; then
-    echo "(none in the journal)"
-  fi
-
   return "${problems}"
 }
 
@@ -51,13 +45,13 @@ check_processes_are_supervised() {
   local unsupervised_found=0
   local line
   while read -r line; do
-    if [[ ${line} != *" reverse-tunnel@"* && ${line} != *" sshx.service "* ]]; then
+    if [[ ${line} != *" reverse-tunnel@"* ]]; then
       echo "FAIL  ${line}"
       unsupervised_found=1
     fi
-  done < <(ps -eo pid=,unit=,args= | grep -E '^ *[0-9]+ +[^ ]+ +((/usr/lib/autossh/autossh|(/usr/local/bin/)?sshx)( |$)|/usr/bin/ssh .*-R [0-9])')
+  done < <(ps -eo pid=,unit=,args= | grep -E '^ *[0-9]+ +[^ ]+ +(/usr/lib/autossh/autossh( |$)|/usr/bin/ssh .*-R [0-9])')
   if ((unsupervised_found == 0)); then
-    echo "ok    every autossh, tunnel ssh and sshx runs in reverse-tunnel@* or sshx.service"
+    echo "ok    every autossh and tunnel ssh runs in a reverse-tunnel@ unit"
   fi
   return "${unsupervised_found}"
 }
