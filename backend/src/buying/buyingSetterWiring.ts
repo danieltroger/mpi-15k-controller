@@ -4,12 +4,13 @@ import type { SetterQueueItem, UsbValues } from "../inverterComms/inverterComms.
 import {
   acChargingLimitReassertions,
   type BuyWindowEndStepDownState,
-  edb0RetryRequests,
   holdsAcChargingOn,
   initialBuyWindowEndStepDownState,
+  lastRelevantSends,
   stepBuyWindowEndStepDown,
   wantedAcChargingLimitAmps,
 } from "./buyWindowEndStepDown.ts";
+import { edb0RetryRequests } from "./buyWindowEndRelease.ts";
 import { createAcChargingReadbacks } from "./acChargingReadbacks.ts";
 import { logStepDownEvent } from "./buyWindowEndStepDownLog.ts";
 
@@ -28,6 +29,8 @@ export type BuyingSetterEnvironment = {
   solarWatts: Accessor<number | undefined>;
   batteryVoltage: Accessor<number | undefined>;
   queueSetter: (item: SetterQueueItem) => void;
+  /** The session's record of when each command string last went out, on the monotonic clock */
+  lastSentAtMsByCommand: () => Readonly<Record<string, number>>;
   /** Changes at least every few seconds (useNow), so time-based transitions fire without sensor updates */
   clockTick: Accessor<number>;
   /** The step-down's clock (performance.now() in production) */
@@ -59,7 +62,8 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
       previous,
       {
         gridChargingWanted: !!chargingAmperageForBuying(),
-        wantedLimitAmps: wantedLimitAmps(),
+        // Not reactive: read afresh on every evaluation (each hall sample, readback and clock tick)
+        ...lastRelevantSends(environment.lastSentAtMsByCommand()),
         acChargingReadback: acChargingReading(),
         limitReadback: acChargingLimitReadback(),
         hallBatteryAmps: freshHallAmps(environment.batteryCurrentAmps(), environment.wallClockNowMs()),

@@ -2,14 +2,14 @@
  * Test harness for the buy-window end step-down selftests: drives the pure state machine through
  * timelines of input changes. Timelines follow the native PI17 session (#48): a write commits ~6 s
  * after it goes out, its BATS confirm is decoded after the 12 s quiet gap, a failed confirm re-checks
- * after 30 s more, and an identical setter is re-sent no sooner than 60 s after the last one.
+ * after 30 s more, and an identical setter is re-sent no sooner than 60 s after the last one. Sends
+ * are the session's record (`lastAboveIdleLimitSentAtMs`, `lastAcChargingEnableSentAtMs`): the ACK time.
  */
 import {
   type AcChargingReading,
   type BuyWindowEndInputs,
   type BuyWindowEndStepDownState,
   holdsAcChargingOn,
-  IDLE_AC_CHARGING_LIMIT_AMPS,
   initialBuyWindowEndStepDownState,
   stepBuyWindowEndStepDown,
   type StepDownEvent,
@@ -21,21 +21,19 @@ export type Simulation = {
   events: { atMs: number; event: StepDownEvent }[];
 };
 
-/** The 2026-10-21 incident's window: 261 A at 55 V in the dark, its limit confirmed long ago */
+/** The 2026-10-21 incident's window: 261 A at 55 V in the dark, EDB1 and MUCHGC2610 sent long ago */
 export const nightBuying: BuyWindowEndInputs = {
   gridChargingWanted: true,
-  wantedLimitAmps: 261,
   acChargingReadback: hecs("enabled", -600_000),
   limitReadback: { amps: 261, observedAtMs: -600_000 },
+  lastAboveIdleLimitSentAtMs: -600_000,
+  lastAcChargingEnableSentAtMs: -600_000,
   hallBatteryAmps: 280,
   solarWatts: 0,
   batteryVoltage: 55,
 };
-/** What changes when a window ends: nothing wants grid charging, so MUCHGC wants the idle cap */
-export const windowEnd: Partial<BuyWindowEndInputs> = {
-  gridChargingWanted: false,
-  wantedLimitAmps: IDLE_AC_CHARGING_LIMIT_AMPS,
-};
+/** What changes when a window ends: nothing wants grid charging any more */
+export const windowEnd: Partial<BuyWindowEndInputs> = { gridChargingWanted: false };
 export const COMMIT_AFTER_WRITE_MS = 6_000;
 /** #48's post-write radio silence: its confirm readback is decoded this long after a write */
 export const QUIET_GAP_AFTER_WRITE_MS = 12_000;
@@ -57,15 +55,16 @@ export function buyingFor(inputs: BuyWindowEndInputs): Simulation {
   return simulation;
 }
 
-/** A freshly started controller: no readbacks yet, no window, the battery current as the hall sees it */
+/** A freshly started controller: no readbacks or sends yet, no window, the battery current as the hall sees it */
 export function bootedWithHallAt(hallBatteryAmps: number): Simulation {
   return {
     state: initialBuyWindowEndStepDownState(),
     inputs: {
       gridChargingWanted: false,
-      wantedLimitAmps: IDLE_AC_CHARGING_LIMIT_AMPS,
       acChargingReadback: undefined,
       limitReadback: undefined,
+      lastAboveIdleLimitSentAtMs: undefined,
+      lastAcChargingEnableSentAtMs: undefined,
       hallBatteryAmps,
       solarWatts: 0,
       batteryVoltage: 55,

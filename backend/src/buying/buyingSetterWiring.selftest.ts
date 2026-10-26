@@ -13,13 +13,15 @@ import type { UsbValues } from "../inverterComms/inverterComms.types.ts";
 import { setOnErrorLog } from "../utilities/logging.ts";
 import { createAcChargingReadbacks } from "./acChargingReadbacks.ts";
 import { freshHallAmps, HALL_READING_MAX_AGE_MS } from "./buyingSetterWiring.ts";
-import { EDB0_RETRY_SPACING_MS, STEP_DOWN_TIMEOUT_MS } from "./buyWindowEndStepDown.ts";
+import { STEP_DOWN_EXTENSION_MS, STEP_DOWN_TIMEOUT_MS } from "./buyWindowEndStepDown.ts";
+import { EDB0_RETRY_SPACING_MS } from "./buyWindowEndRelease.ts";
 import {
   advanceTo,
   createWiringHarness,
   decodeBats,
   decodeHecs,
   queuedDuring,
+  recordSend,
   runWithHall,
   type WiringHarness,
 } from "./buyingSetterWiringHarness.ts";
@@ -85,7 +87,12 @@ const failedChecks: string[] = [];
   advanceTo(harness, 0);
   const startTick = queuedDuring(harness, () => harness.setChargingAmperage(261));
   check("window start: EDB1 + MUCHGC2610", startTick.includes("EDB1") && startTick.includes("MUCHGC2610"));
-  runWithHall(harness, 250, 4_750, atMs => (atMs < 3_000 ? -3 : 150));
+  // The session sends both (exchanges done at 0.3 s and 0.6 s)
+  advanceTo(harness, 300);
+  recordSend(harness, "EDB1");
+  advanceTo(harness, 600);
+  recordSend(harness, "MUCHGC2610");
+  runWithHall(harness, 750, 4_750, atMs => (atMs < 3_000 ? -3 : 150));
   const endTick = queuedDuring(harness, () => harness.setChargingAmperage(0));
   check(
     "window ends 5 s in → no EDB0 (and no EDB1 to 'hold' AC charging on the stale 'disabled')",
@@ -183,32 +190,51 @@ const failedChecks: string[] = [];
   );
   advanceTo(harness, 42_500);
   check("…a second 261 A readback queues nothing", queuedDuring(harness, () => decodeBats(harness, 261)).length === 0);
+  // The hall still at 280 A at the timeout: the cap is demonstrably not in effect → hold on, page
   const untilTimeout = runWithHall(harness, 42_750, STEP_DOWN_TIMEOUT_MS + 2_000, () => 280);
   check(
-    "…the timeout queues EDB0 and nothing else",
-    untilTimeout.map(entry => entry.command).join(" ") === "EDB0" && !harness.wiring.holdsAcChargingOn(),
+    "…the timeout with the hall at 280 A queues no EDB0: the hold is extended, and it pages",
+    untilTimeout.length === 0 &&
+      harness.wiring.holdsAcChargingOn() &&
+      reportedErrors.filter(text => text.includes("the 10 A cap is not in effect")).length === 1,
     untilTimeout.map(entry => `${entry.command}@${entry.atMs}`).join(" ")
   );
   advanceTo(harness, 180_000);
+  check(
+    "…the extension's 261 A readback re-asserts the cap once more",
+    queuedDuring(harness, () => decodeBats(harness, 261)).join(" ") === "MUCHGC0100"
+  );
+  advanceTo(harness, 200_000);
+  check("…and only once", queuedDuring(harness, () => decodeBats(harness, 261)).length === 0);
+  const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
+  const untilExtendedDeadline = runWithHall(harness, 200_250, extendedDeadlineMs + 2_000, () => 280);
+  check(
+    "…EDB0 only at the extended deadline, paging that it stops full current",
+    untilExtendedDeadline.map(entry => `${entry.command}@${entry.atMs}`).join(" ") === `EDB0@${extendedDeadlineMs}` &&
+      reportedErrors.filter(text => text.includes("one-step stop at full current")).length === 1,
+    untilExtendedDeadline.map(entry => `${entry.command}@${entry.atMs}`).join(" ")
+  );
+  advanceTo(harness, 320_000);
   check(
     "…readbacks after the release queue no MUCHGC",
     queuedDuring(harness, () => decodeBats(harness, 261)).length === 0
   );
   // EDB0 ACKed but never applied: HECS keeps showing "enabled" on the settings poll
   const edb0Requests: number[] = [];
-  for (const atMs of [200_000, 380_000, 560_000, 740_000]) {
+  for (const atMs of [400_000, 580_000, 760_000, 940_000]) {
     advanceTo(harness, atMs);
     if (queuedDuring(harness, () => decodeHecs(harness, "enabled")).includes("EDB0")) edb0Requests.push(atMs);
   }
   check(
     `EDB0 re-queued at most twice, ≥ ${EDB0_RETRY_SPACING_MS / 1000} s apart`,
-    edb0Requests.join() === "200000,380000",
+    edb0Requests.join() === "400000,580000",
     edb0Requests.join()
   );
+  const exhausted = reportedErrors.filter(text => text.includes("EDB0 still not applied"));
   check(
-    "…then one errorLog, not a retry loop",
-    reportedErrors.filter(text => text.includes("EDB0 still not applied")).length === 1,
-    reportedErrors.join(" | ")
+    "…then one errorLog, not a retry loop — naming the last read-back limit, not the cap",
+    exhausted.length === 1 && exhausted[0]!.includes("last read-back limit of 261.0 A"),
+    exhausted.join(" | ")
   );
   setOnErrorLog(undefined);
   harness.dispose();
@@ -247,6 +273,8 @@ function nightWindowAt261(): WiringHarness {
     hallBatteryAmps: 280,
   });
   advanceTo(harness, -600_000);
+  recordSend(harness, "EDB1");
+  recordSend(harness, "MUCHGC2610");
   decodeHecs(harness, "enabled");
   decodeBats(harness, 261);
   runWithHall(harness, -60_000, 0, () => 280);

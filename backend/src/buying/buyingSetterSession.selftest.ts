@@ -9,12 +9,12 @@
 import process from "process";
 import { setOnErrorLog } from "../utilities/logging.ts";
 import {
-  EDB0_RETRY_SPACING_MS,
   HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS,
   IDLE_AC_CHARGING_LIMIT_AMPS,
-  MAX_EDB0_RETRIES,
+  STEP_DOWN_EXTENSION_MS,
   STEP_DOWN_TIMEOUT_MS,
 } from "./buyWindowEndStepDown.ts";
+import { EDB0_RETRY_SPACING_MS, MAX_EDB0_RETRIES } from "./buyWindowEndRelease.ts";
 import { createSessionSimulation, runUntil, type SentSetter, sentCommands } from "./buyingSetterSessionSimulation.ts";
 
 const failedChecks: string[] = [];
@@ -47,7 +47,10 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
-  // The cap is ACKed but never applied (the review's requeueLoop.ts): bounded re-sends, then the timeout
+  // The cap is ACKed but never applied (the review's requeueLoop.ts): bounded re-sends; the hall at 261 A
+  // at the timeout extends the hold once (paging), then EDB0 goes out regardless (paging again)
+  const reportedErrors: string[] = [];
+  setOnErrorLog(args => reportedErrors.push(args.join(" ")));
   const simulation = createSessionSimulation({
     chargingAmperageForBuying: 261,
     inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100"]) },
@@ -56,20 +59,28 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.pollingPausedMs = 0;
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
+  const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
   const capSends = sentCommands(simulation, "MUCHGC0100", 0);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
   check(
-    "never-applied cap: MUCHGC0100 out at most twice, both inside the 120 s timeout, then never again",
-    capSends.length === 2 && capSends.every(sent => sent.atMs <= STEP_DOWN_TIMEOUT_MS),
+    "never-applied cap: MUCHGC0100 out at most 3 times, all inside the extended hold, then never again",
+    capSends.length <= 3 && capSends.every(sent => sent.atMs <= extendedDeadlineMs),
     describe(capSends)
   );
   check(
-    "…EDB0 at the timeout (~120 s), once",
+    "…EDB0 once, at the extended deadline (~300 s)",
     edb0Sends.length === 1 &&
-      edb0Sends[0]!.atMs >= STEP_DOWN_TIMEOUT_MS &&
-      edb0Sends[0]!.atMs <= STEP_DOWN_TIMEOUT_MS + 3_000,
+      edb0Sends[0]!.atMs >= extendedDeadlineMs &&
+      edb0Sends[0]!.atMs <= extendedDeadlineMs + 3_000,
     describe(edb0Sends)
   );
+  check(
+    "…paging twice: when the hold is extended and when EDB0 goes out at full current",
+    reportedErrors.filter(text => text.includes("the 10 A cap is not in effect")).length === 1 &&
+      reportedErrors.filter(text => text.includes("one-step stop at full current")).length === 1,
+    reportedErrors.join(" | ").slice(0, 300)
+  );
+  setOnErrorLog(undefined);
   const pausedShare = simulation.pollingPausedMs / THIRTY_MINUTES_MS;
   check(
     "…GS/PS polling paused < 10 % of the 30 min (the unbounded re-queue: 70 %)",
@@ -114,7 +125,7 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
     describe(edb0Sends)
   );
   check(
-    "…then exactly one errorLog saying AC charging stays on at the cap",
+    "…then exactly one errorLog saying AC charging stays on, at the last read-back limit",
     reportedErrors.filter(text => text.includes("EDB0 still not applied")).length === 1,
     reportedErrors.join(" | ")
   );

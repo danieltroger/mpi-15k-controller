@@ -16,7 +16,7 @@ export function useSetBuyingParameters({
   chargingAmperageForBuying: Accessor<number | undefined>;
   idleConsumptionWatts: Accessor<number>;
 }) {
-  const { $usbValues, queueSetter, lastDecodedRound } = useInverterComms();
+  const { $usbValues, queueSetter, lastDecodedRound, lastSentAtMsByCommand } = useInverterComms();
   const { batteryCurrentAmps } = useBatteryValuesProvider();
   const { currentlyBuying } = wireBuyingSetters({
     stillFeedingIn,
@@ -29,6 +29,7 @@ export function useSetBuyingParameters({
     batteryVoltage: reactiveBatteryVoltage,
     clockTick: useNow,
     queueSetter,
+    lastSentAtMsByCommand,
     monotonicNowMs: () => performance.now(),
     wallClockNowMs: () => Date.now(),
   });

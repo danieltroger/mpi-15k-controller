@@ -1,7 +1,9 @@
 /**
  * Pure self-test of the buy-window end step-down, main paths: EDB0 only once the 10 A cap has really
- * taken effect — at night, with PV, when the confirm gives up, without a hall sensor, and the timeout.
- * Window extensions, shrinks, new windows, restarts and readback races: buyWindowEndStepDownEdgeCases.selftest.ts.
+ * taken effect — at night, with PV, with #48's quiet gap and #62's gap 0, when the confirm gives up,
+ * without a hall sensor, and the timeout and its extension when the hall shows the cap isn't in effect.
+ * The released phase's EDB0 retries: buyWindowEndRelease.selftest.ts. Window extensions, shrinks, new
+ * windows, restarts and readback races: buyWindowEndStepDownEdgeCases.selftest.ts.
  * Run from backend/ with:  yarn node src/buying/buyWindowEndStepDown.selftest.ts
  */
 import process from "process";
@@ -9,15 +11,15 @@ import {
   acChargingLimitReassertions,
   allowedHallAmps,
   type BuyWindowEndInputs,
-  EDB0_RETRY_SPACING_MS,
-  edb0RetryRequests,
   HALL_ALLOWANCE_ABOVE_IDLE_LIMIT_AMPS,
   holdsAcChargingOn,
   IDLE_AC_CHARGING_LIMIT_AMPS,
   initialBuyWindowEndStepDownState,
-  MAX_EDB0_RETRIES,
+  lastRelevantSends,
   MAX_LIMIT_REASSERTIONS,
+  READBACK_COMMIT_MARGIN_MS,
   SETTLED_FOR_MS,
+  STEP_DOWN_EXTENSION_MS,
   STEP_DOWN_TIMEOUT_MS,
   wantedAcChargingLimitAmps,
 } from "./buyWindowEndStepDown.ts";
@@ -39,7 +41,10 @@ import {
 const failedChecks: string[] = [];
 
 check("constants: idle cap is MUCHGC0100's 10 A", IDLE_AC_CHARGING_LIMIT_AMPS === 10);
-check("constants: timeout ~2 min", STEP_DOWN_TIMEOUT_MS === 120_000);
+check(
+  "constants: timeout ~2 min, extension one 180 s settings poll",
+  STEP_DOWN_TIMEOUT_MS === 120_000 && STEP_DOWN_EXTENSION_MS === 180_000
+);
 check(
   "MUCHGC target: the window's amps while buying, the idle cap otherwise",
   wantedAcChargingLimitAmps(true, 261) === 261 &&
@@ -54,6 +59,25 @@ check(
     allowedHallAmps({ solarWatts: 5400, batteryVoltage: undefined }) === 30 &&
     allowedHallAmps({ solarWatts: undefined, batteryVoltage: 54 }) === 30
 );
+{
+  const sends = lastRelevantSends({
+    MUCHGC2610: 5_000,
+    MUCHGC2550: 7_000,
+    MUCHGC0100: 9_000,
+    EDB1: 3_000,
+    EDB0: 8_000,
+  });
+  check(
+    "send record: the latest MUCHGC above 10 A, and EDB1",
+    sends.lastAboveIdleLimitSentAtMs === 7_000 && sends.lastAcChargingEnableSentAtMs === 3_000,
+    JSON.stringify(sends)
+  );
+  const none = lastRelevantSends({ MUCHGC0100: 1_000, MUCHGC0050: 2_000 });
+  check(
+    "send record: caps at or below 10 A and no EDB1 → nothing relevant",
+    none.lastAboveIdleLimitSentAtMs === undefined && none.lastAcChargingEnableSentAtMs === undefined
+  );
+}
 check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepDownState()));
 
 {
@@ -65,7 +89,7 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
   const holdsUntilConfirm = holdsAtEveryStep(simulation, 250, CONFIRM_AFTER_WRITE_MS - 250, atMs => ({
     hallBatteryAmps: atMs < COMMIT_AFTER_WRITE_MS ? 280 : 11,
   }));
-  check("hall already at 11 A for 6 s but no BATS proof yet → still holding", holdsUntilConfirm);
+  check("hall already at 11 A for 6 s but no BATS readback yet → still holding", holdsUntilConfirm);
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
   check(
     "BATS 10 A with the hall settled for 6.5 s → confirmed and released in the same step",
@@ -95,27 +119,87 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
       disabledConfirmed?.afterMs === 25_500 &&
       disabledConfirmed.afterReleaseMs === 25_500 - CONFIRM_AFTER_WRITE_MS
   );
-  stepAt(simulation, 30_000, {});
-  check("idle with AC charging off stays idle", simulation.state.progress.phase === "idle");
 }
 
 {
-  // The cap "commits" per BATS but the battery keeps taking 280 A: never release on the readback alone
+  // A real window's amps wiggle, so its last higher-limit write can be seconds before the end
+  // (here MUCHGC2600 acknowledged at -3 s). #48: the confirm at +12.5 s is past that write's horizon.
+  const wiggling = { ...nightBuying, lastAboveIdleLimitSentAtMs: -3_000 };
+  const quietGap = buyingFor(wiggling);
+  stepAt(quietGap, 0, windowEnd);
+  holdsAtEveryStep(quietGap, 250, CONFIRM_AFTER_WRITE_MS - 250, atMs => ({
+    hallBatteryAmps: atMs < COMMIT_AFTER_WRITE_MS ? 280 : 11,
+  }));
+  stepAt(quietGap, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
+  check(
+    "quiet gap, last higher-limit write 3 s before the end → released at the confirm",
+    lastEvent(quietGap, "released")?.afterMs === CONFIRM_AFTER_WRITE_MS
+  );
+  // #62's gap 0: the interleaved confirm reads BATS 10 A at +7 s, inside that write's commit margin, and
+  // no BATS follows until the 180 s settings poll — the hall has to carry the proof past the horizon
+  const gapZero = buyingFor(wiggling);
+  stepAt(gapZero, 0, windowEnd);
+  stepAt(gapZero, 6_500, { hallBatteryAmps: 11 });
+  stepAt(gapZero, 7_000, { limitReadback: { amps: 10, observedAtMs: 7_000 } });
+  const horizonMs = -3_000 + READBACK_COMMIT_MARGIN_MS;
+  const heldPastHorizon = holdsAtEveryStep(gapZero, 7_250, horizonMs + SETTLED_FOR_MS - 250, () => ({
+    hallBatteryAmps: 11,
+  }));
+  stepAt(gapZero, horizonMs + SETTLED_FOR_MS, {});
+  check(
+    "gap 0: the +7 s readback is evidence, but release waits for the hall to settle 3 s past the horizon (+12 s), not the timeout",
+    heldPastHorizon &&
+      lastEvent(gapZero, "limit_confirmed")?.afterMs === 7_000 &&
+      lastEvent(gapZero, "released")?.afterMs === horizonMs + SETTLED_FOR_MS
+  );
+}
+
+{
+  // The cap shows in BATS but the battery keeps taking 280 A: the cap is demonstrably not in effect
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
   const heldUntilTimeout = holdsAtEveryStep(simulation, 13_000, STEP_DOWN_TIMEOUT_MS - 1, () => ({}));
   check("hall stuck at 280 A with BATS at 10 A → held right up to the timeout", heldUntilTimeout);
   stepAt(simulation, STEP_DOWN_TIMEOUT_MS, {});
+  const extended = lastEvent(simulation, "hold_extended");
+  check(
+    "…at the timeout the hall above the allowance extends the hold (errorLog) instead of sending EDB0",
+    holdsAcChargingOn(simulation.state) &&
+      extended?.afterMs === STEP_DOWN_TIMEOUT_MS &&
+      extended.hallBatteryAmps === 280 &&
+      extended.limitEvidence === "shows_cap",
+    JSON.stringify(extended)
+  );
+  const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
+  const heldThroughExtension = holdsAtEveryStep(
+    simulation,
+    STEP_DOWN_TIMEOUT_MS + 250,
+    extendedDeadlineMs - 1,
+    () => ({})
+  );
+  stepAt(simulation, extendedDeadlineMs, {});
   const timedOut = lastEvent(simulation, "timed_out");
   check(
-    "…then the timeout releases EDB0 anyway, reporting what was missing",
-    !holdsAcChargingOn(simulation.state) &&
-      timedOut?.afterMs === STEP_DOWN_TIMEOUT_MS &&
-      timedOut.limitConfirmedAfterMs === CONFIRM_AFTER_WRITE_MS &&
-      timedOut.hallBatteryAmps === 280 &&
-      timedOut.allowedHallAmps === 30,
+    "…held through the extension, then EDB0 regardless — flagged as going out at full current",
+    heldThroughExtension &&
+      !holdsAcChargingOn(simulation.state) &&
+      timedOut?.afterMs === extendedDeadlineMs &&
+      timedOut.hallAboveAllowance &&
+      simulation.events.filter(recorded => recorded.event.kind === "hold_extended").length === 1,
     JSON.stringify(timedOut)
+  );
+  // A cap that never shows but with the hall low (a full pack takes no current): EDB0 stops nothing
+  const fullPack = buyingFor({ ...nightBuying, hallBatteryAmps: 4 });
+  stepAt(fullPack, 0, windowEnd);
+  stepAt(fullPack, STEP_DOWN_TIMEOUT_MS, {});
+  const fullPackTimeout = lastEvent(fullPack, "timed_out");
+  check(
+    "no cap shown, hall low → plain timeout at 120 s (warn), no extension",
+    fullPackTimeout?.afterMs === STEP_DOWN_TIMEOUT_MS &&
+      !fullPackTimeout.hallAboveAllowance &&
+      fullPackTimeout.limitEvidence === "shows_higher_limit" &&
+      lastEvent(fullPack, "hold_extended") === undefined
   );
 }
 
@@ -154,7 +238,7 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
 
 {
   // The session's MUCHGC0100 confirm gives up (readback still 261 A at +12.5 s and +42.5 s); the buying
-  // module re-queues the target on every BATS readback, so it goes out again at +60.5 s
+  // module re-queues the target once, so it goes out again at +60.5 s
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 261, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
@@ -175,29 +259,34 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
     "…the re-sent MUCHGC0100 confirms at +72.5 s → released then, inside the timeout",
     lastEvent(simulation, "released")?.afterMs === 72_500
   );
+
+  // A cap the inverter never applies: the hall stays at 280 A, so the timeout extends the hold, the next
+  // settings poll's 261 A re-asserts once more, and EDB0 goes out only at the extended deadline
   const neverApplied = buyingFor(nightBuying);
   stepAt(neverApplied, 0, windowEnd);
   stepAt(neverApplied, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 261, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
-  const heldWhileNeverApplied = holdsAtEveryStep(neverApplied, 13_000, STEP_DOWN_TIMEOUT_MS - 1, () => ({}));
-  stepAt(neverApplied, STEP_DOWN_TIMEOUT_MS, {});
+  holdsAtEveryStep(neverApplied, 13_000, STEP_DOWN_TIMEOUT_MS, () => ({}));
+  stepAt(neverApplied, 180_000, { limitReadback: { amps: 261, observedAtMs: 180_000 } });
+  stepAt(neverApplied, 240_000, { limitReadback: { amps: 261, observedAtMs: 240_000 } });
+  const heldWhileNeverApplied = holdsAtEveryStep(neverApplied, 240_250, 299_750, () => ({}));
+  stepAt(neverApplied, STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS, {});
   const timedOut = lastEvent(neverApplied, "timed_out");
+  const reassertedAt = neverApplied.events
+    .filter(recorded => recorded.event.kind === "limit_reasserted")
+    .map(recorded => recorded.atMs);
   check(
-    "a cap that never applies → held for 2 min, then released with the unconfirmed readback reported",
+    "never-applied cap: held 120 s + 180 s, re-asserted at 12.5 s and once more in the extension, then EDB0 flagged",
     heldWhileNeverApplied &&
       !holdsAcChargingOn(neverApplied.state) &&
-      timedOut !== undefined &&
-      timedOut.limitConfirmedAfterMs === undefined &&
-      timedOut.limitReadback?.amps === 261
-  );
-  check(
-    "…with one re-assertion in total, and none left once released",
-    neverApplied.events.filter(recorded => recorded.event.kind === "limit_reasserted").length === 1 &&
-      acChargingLimitReassertions(neverApplied.state) === 0
+      reassertedAt.join() === "12500,180000" &&
+      timedOut?.limitEvidence === "shows_higher_limit" &&
+      timedOut.hallAboveAllowance,
+    `re-asserted at ${reassertedAt.join()}`
   );
 }
 
 {
-  // current_measuring disabled or erroring: the readback plus the settle time decide
+  // current_measuring disabled or erroring: only a readback beyond the commit horizon vouches for the cap
   const simulation = buyingFor({ ...nightBuying, hallBatteryAmps: undefined });
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
@@ -208,6 +297,18 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
     "no hall: released on the readback alone after the settle, flagged as such",
     kindsAt(simulation, CONFIRM_AFTER_WRITE_MS + SETTLED_FOR_MS).join() === "released_without_hall" &&
       !holdsAcChargingOn(simulation.state)
+  );
+  // …a readback inside the last higher-limit write's horizon doesn't (gap 0 without a hall: the timeout)
+  const insideHorizon = buyingFor({ ...nightBuying, hallBatteryAmps: undefined, lastAboveIdleLimitSentAtMs: -3_000 });
+  stepAt(insideHorizon, 0, windowEnd);
+  stepAt(insideHorizon, 7_000, { limitReadback: { amps: 10, observedAtMs: 7_000 } });
+  const heldInsideHorizon = holdsAtEveryStep(insideHorizon, 7_250, STEP_DOWN_TIMEOUT_MS - 250, () => ({}));
+  stepAt(insideHorizon, STEP_DOWN_TIMEOUT_MS, {});
+  check(
+    "no hall, readback inside the commit margin → held, then a plain timeout (no hall to extend on)",
+    heldInsideHorizon &&
+      lastEvent(insideHorizon, "timed_out")?.limitEvidence === "shows_cap" &&
+      lastEvent(insideHorizon, "hold_extended") === undefined
   );
 }
 
@@ -234,10 +335,10 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
 }
 
 {
-  // A window that only ever charged at the idle cap or below: the readback already proves it
+  // A window that only ever charged at the idle cap or below: no higher-limit write, the readback proves it
   const simulation = buyingFor({
     ...nightBuying,
-    wantedLimitAmps: 8,
+    lastAboveIdleLimitSentAtMs: undefined,
     limitReadback: { amps: 8, observedAtMs: -300_000 },
     hallBatteryAmps: 9,
   });
@@ -248,54 +349,23 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
 }
 
 {
-  // Someone else disables AC charging (the inverter's LCD) mid-step-down: a "disabled" closer than the
-  // commit margin to the window end can't be told from one still racing a write, so only a later one counts
+  // Someone else disables AC charging (the inverter's LCD) mid-step-down: EDB1 went out long ago, so a
+  // HECS "disabled" can't be one still racing it
   const simulation = buyingFor(nightBuying);
   stepAt(simulation, 0, windowEnd);
   stepAt(simulation, 8_000, { acChargingReadback: hecs("disabled", 8_000) });
   check(
-    "HECS 'disabled' 8 s after the end → still held (inside the commit margin)",
-    holdsAcChargingOn(simulation.state)
-  );
-  stepAt(simulation, 13_000, { acChargingReadback: hecs("disabled", 13_000) });
-  check(
-    "…a 'disabled' 13 s after the end → cancelled, nothing held",
+    "AC charging off by other means → cancelled, nothing held",
     lastEvent(simulation, "cancelled")?.reason === "AC charging already disabled" &&
       !holdsAcChargingOn(simulation.state)
   );
-}
-
-{
-  // EDB0 ACKed but never applied: HECS after the release keeps showing "enabled" (settings poll ~180 s)
-  const simulation = buyingFor(nightBuying);
-  stepAt(simulation, 0, windowEnd);
-  stepAt(simulation, 6_000, { hallBatteryAmps: 11 });
-  stepAt(simulation, CONFIRM_AFTER_WRITE_MS, { limitReadback: { amps: 10, observedAtMs: CONFIRM_AFTER_WRITE_MS } });
-  const releasedAtMs = CONFIRM_AFTER_WRITE_MS;
-  // EDB0's confirm and its backoff re-check, both inside the retry spacing → no retry yet
-  stepAt(simulation, releasedAtMs + 12_500, { acChargingReadback: hecs("enabled", releasedAtMs + 12_500) });
-  stepAt(simulation, releasedAtMs + 42_500, { acChargingReadback: hecs("enabled", releasedAtMs + 42_500) });
-  check("EDB0's own confirm + re-check showing 'enabled' → no retry yet", edb0RetryRequests(simulation.state) === 0);
-  const pollTimes = [180_000, 360_000, 540_000, 720_000, 900_000];
-  for (const atMs of pollTimes) stepAt(simulation, atMs, { acChargingReadback: hecs("enabled", atMs) });
-  const retries = simulation.events
-    .filter(recorded => recorded.event.kind === "edb0_retry")
-    .map(recorded => recorded.atMs);
-  const exhausted = simulation.events.filter(recorded => recorded.event.kind === "edb0_retries_exhausted");
-  check(
-    `EDB0 re-requested at most ${MAX_EDB0_RETRIES} times, ≥ ${EDB0_RETRY_SPACING_MS / 1000} s apart, then given up once`,
-    retries.join() === "180000,360000" && exhausted.length === 1 && exhausted[0]?.atMs === 540_000,
-    `retries at ${retries.join()} exhausted at ${exhausted.map(recorded => recorded.atMs).join()}`
-  );
-  check(
-    "…the request count stays at the cap and nothing is held",
-    edb0RetryRequests(simulation.state) === MAX_EDB0_RETRIES && !holdsAcChargingOn(simulation.state)
-  );
-  stepAt(simulation, 950_000, { acChargingReadback: hecs("disabled", 950_000) });
-  check(
-    "…a later 'disabled' still ends it cleanly",
-    simulation.state.progress.phase === "idle" && edb0RetryRequests(simulation.state) === 0
-  );
+  // …but within the commit margin of a recent EDB1 (the window started 3 s before it ended) it can be
+  const recentEnable = buyingFor({ ...nightBuying, lastAcChargingEnableSentAtMs: -3_000 });
+  stepAt(recentEnable, 0, windowEnd);
+  stepAt(recentEnable, 8_000, { acChargingReadback: hecs("disabled", 8_000) });
+  check("HECS 'disabled' 11 s after EDB1 went out → still held", holdsAcChargingOn(recentEnable.state));
+  stepAt(recentEnable, 9_500, { acChargingReadback: hecs("disabled", 9_500) });
+  check("…a 'disabled' 12.5 s after it → cancelled", !holdsAcChargingOn(recentEnable.state));
 }
 
 if (failedChecks.length) {

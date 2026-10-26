@@ -17,6 +17,8 @@ export type WiringHarness = {
   clock: SimulatedClock;
   /** Every command the wiring queued, in order, with the simulated time */
   queued: { atMs: number; command: string }[];
+  /** Stands in for the session's send record unless one is passed in (see recordSend) */
+  sendRecord: Record<string, number>;
   wiring: ReturnType<typeof wireBuyingSetters>;
   dispose: () => void;
   setChargingAmperage: Setter<number | undefined>;
@@ -41,9 +43,16 @@ export function createWiringHarness(
   {
     clock = { monotonicMs: 0 },
     queueSetter,
-  }: { clock?: SimulatedClock; queueSetter?: (item: SetterQueueItem) => void } = {}
+    lastSentAtMsByCommand,
+  }: {
+    clock?: SimulatedClock;
+    queueSetter?: (item: SetterQueueItem) => void;
+    /** A real (simulated) session's send record; without one, the harness's own sendRecord */
+    lastSentAtMsByCommand?: () => Readonly<Record<string, number>>;
+  } = {}
 ): WiringHarness {
   const queued: WiringHarness["queued"] = [];
+  const sendRecord: Record<string, number> = {};
   return createRoot(dispose => {
     const [chargingAmperageForBuying, setChargingAmperage] = createSignal(start.chargingAmperageForBuying);
     const [stillFeedingIn, setStillFeedingIn] = createSignal(false);
@@ -66,6 +75,7 @@ export function createWiringHarness(
         queued.push({ atMs: clock.monotonicMs, command: item.command });
         queueSetter?.(item);
       },
+      lastSentAtMsByCommand: lastSentAtMsByCommand ?? (() => sendRecord),
       clockTick,
       monotonicNowMs: () => clock.monotonicMs,
       wallClockNowMs: () => wallClockMs(clock),
@@ -73,6 +83,7 @@ export function createWiringHarness(
     return {
       clock,
       queued,
+      sendRecord,
       wiring,
       dispose,
       setChargingAmperage,
@@ -91,6 +102,11 @@ export function createWiringHarness(
 export function advanceTo(harness: WiringHarness, atMs: number): void {
   harness.clock.monotonicMs = atMs;
   harness.setClockTick(tick => tick + 1);
+}
+
+/** As if the session had just sent `command` (its exchange done now) */
+export function recordSend(harness: WiringHarness, command: string): void {
+  harness.sendRecord[command] = harness.clock.monotonicMs;
 }
 
 /** A fresh hall sample (stamped with the current simulated wall clock) */

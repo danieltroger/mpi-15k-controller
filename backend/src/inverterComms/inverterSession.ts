@@ -165,6 +165,11 @@ export function createInverterSession({
     },
     /** When the last control write went out — the signal behind the quiet-gap poll suppression */
     lastWriteAt,
+    /**
+     * Read-only, not reactive: when each command string last went out (exchange done), on the monotonic
+     * clock — for a consumer that must know whether one of its writes could still be committing
+     */
+    lastSentAtMsByCommand: (): Readonly<Record<string, number>> => state.scheduler.lastSentAtByCommand,
     serialIsOpen,
     /** Cumulative wire-level counters plus gate drops and completed poll rounds — for harnesses and debugging */
     exchangeCounters: () => currentCounters(state),

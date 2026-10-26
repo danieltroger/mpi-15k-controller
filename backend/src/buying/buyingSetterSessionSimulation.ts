@@ -81,7 +81,11 @@ export function createSessionSimulation({
       acChargeBatteryState: inverter.acChargingEnabled ? "enabled" : "disabled",
       hallBatteryAmps: modelledHallAmps({ ...inverter, pendingCommits: [] }),
     },
-    { clock, queueSetter: item => queueIntoSession(session, clock, item) }
+    {
+      clock,
+      queueSetter: item => queueIntoSession(session, clock, item),
+      lastSentAtMsByCommand: () => session.scheduler.lastSentAtByCommand,
+    }
   );
   decodeHecs(harness, inverter.acChargingEnabled ? "enabled" : "disabled");
   decodeBats(harness, inverter.limitAmps);
