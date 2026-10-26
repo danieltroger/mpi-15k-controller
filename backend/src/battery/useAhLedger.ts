@@ -1,78 +1,74 @@
 import { type Accessor, createMemo } from "solid-js";
 import type { get_config_object } from "../config/config.ts";
-import type { InfluxClientAccessor } from "./useDatabasePower.ts";
-import { anchorDetection } from "./anchorDetection.ts";
+import type { InfluxClientAccessor } from "../utilities/InfluxClientProvider.ts";
 import { socAnchorRestore } from "./socAnchorRestore.ts";
 import { ahLedger } from "./ahLedger.ts";
-import type { LedgerAnchor } from "./ahLedgerMath.ts";
+import type { InfluxHistoryOutageMonitor } from "./influxHistoryOutage.ts";
+import { createLedgerStartClock } from "./ledgerStartClock.ts";
+import { sameAnchor, type SelectedAnchor, selectLatestAnchor } from "./latestAnchorSelection.ts";
+
+/** The latest live anchor events, as anchorDetection.ts latches them. */
+export type LiveAnchorEvents = {
+  lastFullEventAt: Accessor<number | undefined>;
+  lastEmptyEventAt: Accessor<number | undefined>;
+  lastSoftEmptyEventAt: Accessor<number | undefined>;
+};
 
 /**
- * Wires the Ah ledger together: live edge detection + marker publishing, cross-restart restore from
- * soc_anchors (voltage-based fallback for full/empty), the single "latest anchor of any type" the ledger
- * hangs off, and the ledger itself. Consumes the hall amps *signals* (not the ADC) so it stays importable
- * on machines without the arm64 sensor addon.
+ * Wires the Ah ledger together: the cross-restart anchor restore from InfluxDB, the single "latest anchor
+ * of any type" the ledger hangs off (unknown until the restore has fully answered, unless a live event
+ * fired meanwhile), and the ledger itself. Takes the live anchor events and hall amps as signals and the
+ * InfluxDB client explicitly — no MQTT, no ADC — so socHistoryOutage.selftest.ts can run it against a fake
+ * InfluxDB.
  */
 export function useAhLedger({
   configSignal,
   influxClient,
   batteryCurrentAmps,
-  smoothedBatteryCurrentAmps,
-  databaseFullFallbackAt,
-  databaseEmptyFallbackAt,
+  liveAnchorEvents,
+  outageMonitor,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   influxClient: InfluxClientAccessor;
   batteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
-  smoothedBatteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
-  databaseFullFallbackAt: Accessor<number | undefined>;
-  databaseEmptyFallbackAt: Accessor<number | undefined>;
+  liveAnchorEvents: LiveAnchorEvents;
+  outageMonitor: InfluxHistoryOutageMonitor;
 }) {
   const [config] = configSignal;
+  const ledgerStart = createLedgerStartClock();
+  const restoredAt = socAnchorRestore({ config, influxClient, ledgerStart, outageMonitor });
 
-  const { lastFullEventAt, lastEmptyEventAt, lastSoftEmptyEventAt } = anchorDetection({
-    config,
-    smoothedBatteryCurrentAmps,
-  });
-  const { restoredFullAt, restoredEmptyAt, restoredSoftEmptyAt } = socAnchorRestore({
-    influxClient,
-    databaseFullFallbackAt,
-    databaseEmptyFallbackAt,
-  });
-
-  const fullAt = createMemo(() => laterOf(lastFullEventAt(), restoredFullAt()));
-  const emptyAt = createMemo(() => laterOf(lastEmptyEventAt(), restoredEmptyAt()));
-  const softEmptyAt = createMemo(() => laterOf(lastSoftEmptyEventAt(), restoredSoftEmptyAt()));
-
-  // The anchor the ledger hangs off: whichever kind fired most recently, tagged with its known SOC.
   // equals-guarded so unrelated config writes (the online drain/capacity persist, schedule edits, …)
   // can't churn the DB integral query or spuriously re-anchor.
-  const latestAnchor = createMemo<LedgerAnchor | undefined>(
-    () => {
-      const softEmptySocPercent = config().soc_calculations.ah_ledger.soft_empty.soc_percent;
-      const candidates: LedgerAnchor[] = [];
-      const fullTime = fullAt();
-      const emptyTime = emptyAt();
-      const softEmptyTime = softEmptyAt();
-      if (fullTime != undefined) candidates.push({ at: fullTime, soc: 100, type: "full" });
-      if (emptyTime != undefined) candidates.push({ at: emptyTime, soc: 0, type: "empty" });
-      if (softEmptyTime != undefined)
-        candidates.push({ at: softEmptyTime, soc: softEmptySocPercent, type: "soft_empty" });
-      if (!candidates.length) return undefined;
-      return candidates.reduce((latest, candidate) => (candidate.at > latest.at ? candidate : latest));
-    },
+  const latestAnchor = createMemo<SelectedAnchor | undefined>(
+    () =>
+      selectLatestAnchor({
+        liveEventAt: {
+          full: liveAnchorEvents.lastFullEventAt(),
+          empty: liveAnchorEvents.lastEmptyEventAt(),
+          soft_empty: liveAnchorEvents.lastSoftEmptyEventAt(),
+        },
+        restoredAt: {
+          full: restoredAt.full(),
+          empty: restoredAt.empty(),
+          soft_empty: restoredAt.soft_empty(),
+        },
+        softEmptySocPercent: config().soc_calculations.ah_ledger.soft_empty.soc_percent,
+      }),
     undefined,
-    { equals: (a, b) => a?.at === b?.at && a?.soc === b?.soc && a?.type === b?.type }
+    { equals: sameAnchor }
   );
 
-  const { socAh } = ahLedger({ configSignal, influxClient, batteryCurrentAmps, latestAnchor });
+  const { socAh } = ahLedger({
+    configSignal,
+    influxClient,
+    batteryCurrentAmps,
+    latestAnchor,
+    ledgerStart,
+    outageMonitor,
+  });
 
   // latestAnchor is exposed too: it's the Ah system's "last full/empty/soft-empty" the frontend shows
   // in place of the deleted Wh totalLastFull/totalLastEmpty.
   return { socAh, latestAnchor };
-}
-
-function laterOf(a: number | undefined, b: number | undefined): number | undefined {
-  if (a == undefined) return b;
-  if (b == undefined) return a;
-  return Math.max(a, b);
 }

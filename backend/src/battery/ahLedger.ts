@@ -1,21 +1,26 @@
 import { type Accessor, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
 import type { get_config_object } from "../config/config.ts";
-import type { Config } from "../config/config.types.ts";
-import type { InfluxClientAccessor } from "./useDatabasePower.ts";
+import type { InfluxClientAccessor } from "../utilities/InfluxClientProvider.ts";
 import { queryChargeIntegral } from "./queryChargeIntegral.ts";
 import { applyParameterTracking } from "./ahLedgerParameterTracking.ts";
-import { computeSocAh, type LedgerAnchor } from "./ahLedgerMath.ts";
-import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import { computeSocAh } from "./ahLedgerMath.ts";
 import { useNow } from "../utilities/useNow.ts";
-import { logLog, warnLog } from "../utilities/logging.ts";
+import { logLog } from "../utilities/logging.ts";
+import { createHistoryQueryRetrier } from "./historyQueryRetrier.ts";
+import { describeDurationMs } from "./historyRetryPolicy.ts";
+import type { InfluxHistoryOutageMonitor } from "./influxHistoryOutage.ts";
+import type { LedgerStartClock } from "./ledgerStartClock.ts";
+import type { SelectedAnchor } from "./latestAnchorSelection.ts";
 
-type ActiveAnchor = LedgerAnchor & { drainA: number; capacityAh: number };
+type ActiveAnchor = SelectedAnchor & { drainA: number; capacityAh: number };
 
 /**
  * The Ah (coulomb-counting) SOC ledger — the app's single SOC source. Anchored at the latest
- * full/empty/soft-empty event (`latestAnchor`), it restores ∫amps from that anchor out of InfluxDB once
- * (via the raw-mV subquery, so it survives deploys) and then accumulates live from the hall amps signal.
- * `soc_ah` is published UNclamped so the drift shows in Grafana; consumers read the clamped value.
+ * full/empty/soft-empty event (`latestAnchor`): a restored anchor's ∫amps up to ledger start comes out of
+ * InfluxDB (via the raw-mV subquery, so it survives deploys), and everything after ledger start — or
+ * after a live anchor — is accumulated here from the hall amps signal. The SOC stays undefined until both
+ * halves are known. The raw value goes to InfluxDB unclamped (publishSocAh.ts); consumers read the
+ * clamped one.
  *
  * On each re-anchor it (a) hands the completed span to the online drain/capacity EMA tracker, then
  * (b) snapshots the (possibly just-updated) drain/capacity into the new anchor. The SOC formula reads
@@ -27,30 +32,43 @@ export function ahLedger({
   influxClient,
   batteryCurrentAmps,
   latestAnchor,
+  ledgerStart,
+  outageMonitor,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   influxClient: InfluxClientAccessor;
   batteryCurrentAmps: Accessor<{ value: number; time: number } | undefined>;
-  latestAnchor: Accessor<LedgerAnchor | undefined>;
+  latestAnchor: Accessor<SelectedAnchor | undefined>;
+  ledgerStart: LedgerStartClock;
+  outageMonitor: InfluxHistoryOutageMonitor;
 }) {
   const [activeAnchor, setActiveAnchor] = createSignal<ActiveAnchor | undefined>(undefined);
   const [accumulationToggle, setAccumulationToggle] = createSignal(false);
-  // Anchors older than this are restore-time reconstructions, not live events — see the tracking gate below.
-  const ledgerStartedAt = +new Date();
+  // ∫amps since ledger start, or since the latest live anchor once one fired. A restored anchor never
+  // resets it: InfluxDB only holds that span up to ledger start, so the samples taken while the restore was
+  // still waiting for InfluxDB belong to the span too — after a power cycle that is the VM's whole boot.
   let localAh = 0;
-  let lastAmps: { value: number; time: number } | undefined;
+  let lastAmps: { value: number; arrivedAtMonotonicMs: number } | undefined;
 
-  // Charge integrated in the database from the anchor up to app start; re-queried whenever we re-anchor.
+  const integralRetrier = createHistoryQueryRetrier({ description: "Ah ledger charge integral", outageMonitor });
+  // Charge InfluxDB holds for a restored anchor's span up to ledger start; re-queried whenever we re-anchor.
   const [databaseAh] = createResource(
-    () => ({ anchorAt: latestAnchor()?.at, database: influxClient() }),
-    async ({ anchorAt, database }) => {
-      if (!anchorAt || !database) return undefined;
+    () => ({ anchor: latestAnchor(), database: influxClient() }),
+    async ({ anchor, database }) => {
+      integralRetrier.cancelPending();
+      if (!anchor) return undefined;
+      // A live anchor's span is all local. This still resolves a tick later (async), which the re-anchor
+      // effect relies on: it must read the previous span's database share before this replaces it.
+      if (anchor.origin === "live") return 0;
+      if (!database) return undefined;
       const currentMeasuring = untrack(() => config().current_measuring);
-      return await queryChargeIntegral(
-        database,
-        anchorAt,
-        currentMeasuring.zero_current_millivolts2,
-        currentMeasuring.millivolts_per_ampere2
+      return await integralRetrier.run(() =>
+        queryChargeIntegral({
+          database,
+          fromMs: anchor.at,
+          untilCondition: ledgerStart.beforeStartCondition(),
+          ...currentMeasuring,
+        })
       );
     }
   );
@@ -59,11 +77,15 @@ export function ahLedger({
   createEffect(() => {
     const amps = batteryCurrentAmps();
     if (!amps) return;
+    // Interval from the monotonic clock, not the samples' wall-clock stamps: the pi's clock steps forward
+    // when NTP syncs mid-boot (ledgerStartClock.ts), and one interval spanning that step would book hours
+    // of current. Samples arrive straight from the ADC callback, so arrival time is sample time.
+    const arrivedAtMonotonicMs = performance.now();
     if (lastAmps) {
-      const durationHours = (amps.time - lastAmps.time) / 1000 / 60 / 60;
+      const durationHours = (arrivedAtMonotonicMs - lastAmps.arrivedAtMonotonicMs) / 1000 / 60 / 60;
       localAh += lastAmps.value * durationHours;
     }
-    lastAmps = amps;
+    lastAmps = { value: amps.value, arrivedAtMonotonicMs };
     setAccumulationToggle(previous => !previous);
   });
 
@@ -83,7 +105,7 @@ export function ahLedger({
       const previous = activeAnchor();
       const spanIntegralAh = totalAh(); // ∫amps since the previous anchor (DB resource still holds its old value)
       if (previous && spanIntegralAh != undefined) {
-        if (anchor.at > ledgerStartedAt) {
+        if (anchor.origin === "live") {
           applyParameterTracking({ previousAnchor: previous, nextAnchor: anchor, spanIntegralAh, config, setConfig });
         } else {
           // Restored (pre-start) anchor: totalAh() measures previous→NOW, not previous→anchor, so hours of
@@ -92,12 +114,11 @@ export function ahLedger({
           logLog("Ah ledger: skipping parameter tracking for restored span", previous.type, "→", anchor.type);
         }
       }
-      localAh = 0; // keep lastAmps so the first post-anchor sample still bridges the gap across the re-anchor
+      // Keep lastAmps either way, so the first post-anchor sample still bridges the gap across the re-anchor.
+      if (anchor.origin === "live") localAh = 0;
       const ahLedgerConfig = config().soc_calculations.ah_ledger; // read AFTER the update above → forward-only
       setActiveAnchor({
-        at: anchor.at,
-        soc: anchor.soc,
-        type: anchor.type,
+        ...anchor,
         drainA: ahLedgerConfig.drain_a,
         capacityAh: ahLedgerConfig.capacity_ah,
       });
@@ -108,7 +129,8 @@ export function ahLedger({
   const socAh = createMemo(() => {
     // While a re-anchor's DB refetch is in flight, totalAh() still holds the OLD span's integral (the
     // re-anchor effect needs that stale read for parameter tracking) — but against the NEW anchor it
-    // would compute a wild one-off spike, so hold the output until the fresh integral lands.
+    // would compute a wild one-off spike, so hold the output until the fresh integral lands. That includes
+    // the whole wait while InfluxDB is still unreachable after a power cycle.
     if (databaseAh.loading) return undefined;
     const anchor = activeAnchor();
     const integralAh = totalAh();
@@ -122,25 +144,29 @@ export function ahLedger({
     });
   });
 
-  publishSocAh({ config, socAh });
+  logWhenSocFirstKnown({ socAh, activeAnchor, ledgerStart });
 
   return { socAh };
 }
 
-function publishSocAh({ config, socAh }: { config: Accessor<Config>; socAh: Accessor<number | undefined> }) {
-  const { mqttClient } = useFromMqttProvider();
-  createEffect(() => {
-    const client = mqttClient();
-    if (!client) return;
-    createEffect(() => {
-      const value = socAh();
-      // Publish UNclamped, but never NaN/±Infinity (that would corrupt the line-protocol point).
-      if (value == undefined || !isFinite(value)) return;
-      const table = untrack(() => config().soc_calculations.table);
-      const line = `${table} soc_ah=${value}`;
-      if (client.connected) {
-        client.publish(table, line).catch(error => warnLog("Failed to publish soc_ah", error));
-      }
-    });
-  });
+/** One line when the SOC first becomes known, saying how long the boot had to wait for it. */
+function logWhenSocFirstKnown({
+  socAh,
+  activeAnchor,
+  ledgerStart,
+}: {
+  socAh: Accessor<number | undefined>;
+  activeAnchor: Accessor<ActiveAnchor | undefined>;
+  ledgerStart: LedgerStartClock;
+}) {
+  createEffect<boolean>(alreadyLogged => {
+    if (alreadyLogged) return true;
+    const soc = socAh();
+    const anchor = untrack(activeAnchor);
+    if (soc === undefined || !anchor) return false;
+    logLog(
+      `Ah ledger: SOC initialised at ${soc.toFixed(1)} % from the ${anchor.origin} ${anchor.type} anchor of ${new Date(anchor.at).toISOString()}, ${describeDurationMs(ledgerStart.msSinceStart())} after start`
+    );
+    return true;
+  }, false);
 }
