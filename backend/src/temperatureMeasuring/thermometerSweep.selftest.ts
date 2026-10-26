@@ -3,8 +3,8 @@
  * /sys/bus/w1/devices, read and written through the production SysfsAccess (so a missing file or a
  * read-only attribute fails exactly as it would on the pi), plus a small model of w1_therm's bulk read
  * on top and a simulated clock. Covers trigger → wait → read, the bounded wait, the fallback to w1_slave
- * (EACCES, ENOENT, an ignored trigger), one warning per outage, the bulk retry, and the 85 °C/garbage
- * guards. Run from backend/ with:
+ * (EACCES, ENOENT, an ignored trigger), one warning per outage, the bulk retry, the 85 °C/garbage guards, and
+ * when a silent probe pages at the default, the longest and a back-to-back interval. Run from backend/ with:
  *   yarn node src/temperatureMeasuring/thermometerSweep.selftest.ts
  */
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
@@ -18,8 +18,10 @@ import {
   type SweepLogger,
   sweepThermometers,
   type ThermometerProbe,
+  type ThermometerSweepContextSettings,
   type ThermometerSweepState,
 } from "./thermometerSweep.ts";
+import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "./thermometerSweepSettings.ts";
 import { checkPlausibility, parseTemperatureAttribute, parseW1SlaveText } from "./thermometerReadingParsing.ts";
 import { errorLogDedupeKey } from "../alerting/alertingLogic.ts";
 
@@ -66,6 +68,9 @@ type LoggedLine = { level: "log" | "warn" | "error"; text: string };
 
 const SWEEP_INTERVAL_MS = 10_000;
 const timing = DEFAULT_THERMOMETER_SWEEP_TIMING;
+const SILENT_PAGE_AFTER_MS = DEFAULT_THERMOMETER_SWEEP_SETTINGS.thermometer_silent_page_after_minutes * 60_000;
+/** A probe's 5 min of silence before it pages, in sweeps at the default interval: 30, as before it was timed */
+const FAILED_SWEEPS_TO_PAGE = SILENT_PAGE_AFTER_MS / SWEEP_INTERVAL_MS;
 const fakeDirectories: string[] = [];
 const runningAsRoot = process.getuid?.() === 0;
 
@@ -359,17 +364,25 @@ if (runningAsRoot) {
   check("85 °C via w1_slave: rejected too", [fallbackSweep.method, fallbackSweep.readings.length], ["w1_slave", 0]);
 }
 
-// ——— a probe stuck on its power-on value goes quiet under the guard, so it must page instead ———
+// ——— a probe stuck on its power-on value goes quiet under the guard, so it must page instead. Stuck since
+// startup, it has no accepted reading to time its silence from, so the clock starts at its first failure ———
 {
   const kernel = createFakeKernel([[busBar, 85000]]);
   const state = createThermometerSweepState();
   const lines: LoggedLine[] = [];
-  for (let sweepIndex = 1; sweepIndex <= timing.probeFailurePageAfterSweeps; sweepIndex++) {
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= FAILED_SWEEPS_TO_PAGE + 1; sweepIndex++) {
     await runSweep(kernel, state, lines, [busBar]);
-    kernel.nowMs += SWEEP_INTERVAL_MS;
+    pageCountsAfterSweep.push(pages(lines).length);
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
   }
   check(
-    "stuck at 85 °C: one page after 30 sweeps, naming the power-on value",
+    "stuck at 85 °C since startup: no page 290 s after the first failure, one at 300 s",
+    [pageCountsAfterSweep[29], pageCountsAfterSweep[30]],
+    [0, 1]
+  );
+  check(
+    "stuck at 85 °C: the page names the power-on value",
     pages(lines).map(page => page.includes(busBar.label) && page.includes("85°C power-on value")),
     [true]
   );
@@ -420,7 +433,8 @@ if (runningAsRoot) {
   );
 }
 
-// ——— one probe gone for good: logged every sweep, paged once (errorLog → P2), recovery logged ———
+// ——— one probe gone for good after reading fine: logged every sweep, paged once (errorLog → P2) 5 min after
+// its last reading, which at the default 10 s interval is the 30th failed sweep; recovery logged ———
 {
   const kernel = createFakeKernel([
     [cell, 21000],
@@ -428,13 +442,15 @@ if (runningAsRoot) {
   ]);
   const state = createThermometerSweepState();
   const lines: LoggedLine[] = [];
+  await runSweep(kernel, state, lines, [cell, outlet]);
+  advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
   removeProbe(kernel, outlet.thermometer_device_id);
   const pageCountsAfterSweep: number[] = [];
-  for (let sweepIndex = 1; sweepIndex <= timing.probeFailurePageAfterSweeps + 1; sweepIndex++) {
+  for (let sweepIndex = 1; sweepIndex <= FAILED_SWEEPS_TO_PAGE + 1; sweepIndex++) {
     const sweep = await runSweep(kernel, state, lines, [cell, outlet]);
     if (sweep.readings.length !== 1) check(`missing probe, sweep ${sweepIndex}: the other probe reads`, false, true);
     pageCountsAfterSweep.push(pages(lines).length);
-    kernel.nowMs += SWEEP_INTERVAL_MS;
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
   }
   check(
     "missing probe: the page comes once, on the 30th failed sweep",
@@ -444,23 +460,27 @@ if (runningAsRoot) {
   check("missing probe: paged, not merely warned", warnings(lines), []);
   const firstPage = pages(lines)[0] ?? "";
   check(
-    "missing probe: the page names the probe, the streak and the cause",
-    [outlet.thermometer_device_id, outlet.label, "30 sweeps", "ENOENT"].every(part => firstPage.includes(part)),
+    "missing probe: the page names the probe, the silence, the streak and the cause",
+    [outlet.thermometer_device_id, outlet.label, "none for 5.0 min", "30 sweeps", "ENOENT"].every(part =>
+      firstPage.includes(part)
+    ),
     true
   );
   check(
-    "missing probe: the errorLog dedupe key differs per probe and stays put when the cause changes",
+    "missing probe: the errorLog dedupe key differs per probe and stays put when the cause or the numbers change",
     [
       errorLogDedupeKey([firstPage]) ===
         errorLogDedupeKey([firstPage.replace(outlet.thermometer_device_id, cell.thermometer_device_id)]),
       errorLogDedupeKey([firstPage]) === errorLogDedupeKey([firstPage.replace(/ENOENT.*/, "CRC didn't match")]),
+      errorLogDedupeKey([firstPage]) ===
+        errorLogDedupeKey([firstPage.replace("5.0 min (30 sweeps", "15.0 min (3 sweeps")]),
     ],
-    [false, true]
+    [false, true, true]
   );
   check(
     "missing probe: every failure logged, with ENOENT",
     lines.filter(line => line.level === "log" && line.text.includes("ENOENT")).length,
-    timing.probeFailurePageAfterSweeps + 1
+    FAILED_SWEEPS_TO_PAGE + 1
   );
   mkdirSync(path.join(kernel.devicesDirectory, outlet.thermometer_device_id));
   setProbeMillidegrees(kernel, outlet.thermometer_device_id, 22500);
@@ -474,6 +494,138 @@ if (runningAsRoot) {
   check("missing probe back: streak cleared", state.failureStreaks.size, 0);
 }
 
+// ——— at the 60 s maximum with a 1 min delay, one failed sweep is already past the delay: the page waits for
+// the third failed sweep, whichever of the two comes later ———
+{
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(1));
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 4; sweepIndex++) {
+    advanceToNextSweepStart(kernel, 60_000);
+    await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(1));
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check("60 s interval, 1 min delay: paged once, on the 3rd failed sweep", pageCountsAfterSweep, [0, 0, 1, 1]);
+  check(
+    "60 s interval, 1 min delay: the page says how long the probe has been silent",
+    pages(lines)[0]?.includes("none for 3.0 min (3 sweeps in a row)"),
+    true
+  );
+}
+
+// ——— back to back (interval 0, a sweep every ~1.15 s), 30 failed sweeps are 35 s: the page still waits 5 min ———
+{
+  const BACK_TO_BACK_SWEEP_MS = 1150;
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  await runSweep(kernel, state, lines, [cell, outlet]);
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 270; sweepIndex++) {
+    advanceToNextSweepStart(kernel, BACK_TO_BACK_SWEEP_MS);
+    await runSweep(kernel, state, lines, [cell, outlet]);
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check(
+    "back to back: no page after 30 failed sweeps, the page on the first one 5 min after the last reading, once",
+    [pageCountsAfterSweep[29], pageCountsAfterSweep.indexOf(1) + 1, pages(lines).length],
+    [0, Math.ceil(SILENT_PAGE_AFTER_MS / BACK_TO_BACK_SWEEP_MS), 1]
+  );
+}
+
+// ——— the bulk retry interval is a live setting, timed from the last attempt each sweep ———
+{
+  const kernel = createFakeKernel([[cell, 20000]], { denyTriggerWrite: true });
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  const outageStartedAtMs = kernel.nowMs;
+  await runSweep(kernel, state, lines, [cell], retryEvery(20));
+  check(
+    "retry setting: the outage warning names the configured interval",
+    warnings(lines)[0]?.includes("trying the bulk trigger again every 20 s"),
+    true
+  );
+  const triggerAttemptsAfterSweep: number[] = [];
+  for (const secondsIntoOutage of [10, 20, 30, 40]) {
+    kernel.nowMs = outageStartedAtMs + secondsIntoOutage * 1000;
+    await runSweep(kernel, state, lines, [cell], retryEvery(20));
+    triggerAttemptsAfterSweep.push(countTriggerAttempts(kernel));
+  }
+  check("retry setting: at 20 s, tried again at +20 s and +40 s", triggerAttemptsAfterSweep, [1, 2, 2, 3]);
+  // The last attempt was at +40 s
+  kernel.nowMs = outageStartedAtMs + 50_000;
+  await runSweep(kernel, state, lines, [cell], retryEvery(60));
+  const attemptsAfterLengthening = countTriggerAttempts(kernel);
+  kernel.nowMs = outageStartedAtMs + 60_000;
+  await runSweep(kernel, state, lines, [cell], retryEvery(10));
+  check(
+    "retry setting: changed to 60 s, not due 10 s after the last attempt; changed to 10 s, the next sweep tries",
+    [attemptsAfterLengthening, countTriggerAttempts(kernel)],
+    [3, 4]
+  );
+}
+
+// ——— the silent-probe delay is a live setting: lowered mid-silence it pages at the next failed sweep, once ———
+{
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  await runSweep(kernel, state, lines, [cell, outlet]);
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 16; sweepIndex++) {
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
+    // The default 5 min for the first 10 failed sweeps (100 s of silence), then 1 min
+    await runSweep(kernel, state, lines, [cell, outlet], pageAfterMinutes(sweepIndex <= 10 ? 5 : 1));
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check(
+    "silent setting: lowered to 1 min after 100 s of silence, paged at the next failed sweep and only then",
+    [pageCountsAfterSweep[9], pageCountsAfterSweep[10], pageCountsAfterSweep[15]],
+    [0, 1, 1]
+  );
+  check(
+    "silent setting: the page says how long the probe had been silent",
+    pages(lines)[0]?.includes("none for 1.8 min (11 sweeps in a row)"),
+    true
+  );
+}
+{
+  const kernel = createFakeKernel([
+    [cell, 21000],
+    [outlet, 22000],
+  ]);
+  const state = createThermometerSweepState();
+  const lines: LoggedLine[] = [];
+  const quarterHour = pageAfterMinutes(15);
+  await runSweep(kernel, state, lines, [cell, outlet], quarterHour);
+  removeProbe(kernel, outlet.thermometer_device_id);
+  const pageCountsAfterSweep: number[] = [];
+  for (let sweepIndex = 1; sweepIndex <= 90; sweepIndex++) {
+    advanceToNextSweepStart(kernel, SWEEP_INTERVAL_MS);
+    await runSweep(kernel, state, lines, [cell, outlet], quarterHour);
+    pageCountsAfterSweep.push(pages(lines).length);
+  }
+  check(
+    "silent setting: at 15 min, no page after 5 min of silence, one after 15",
+    [pageCountsAfterSweep[29], pageCountsAfterSweep[88], pageCountsAfterSweep[89]],
+    [0, 0, 1]
+  );
+}
+
 for (const fakeDirectory of fakeDirectories) rmSync(fakeDirectory, { recursive: true, force: true });
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
@@ -481,7 +633,29 @@ if (failures) {
 }
 console.log("\nall thermometer sweep checks passed");
 
-function runSweep(kernel: FakeKernel, state: ThermometerSweepState, lines: LoggedLine[], probes: ThermometerProbe[]) {
+/**
+ * Moves the clock to the next sweep's start, `intervalMs` after the previous one's (start to start, as the loop
+ * paces them): the fake trigger write has already advanced it by the conversion time. Assumes a bulk sweep.
+ */
+function advanceToNextSweepStart(kernel: FakeKernel, intervalMs: number) {
+  kernel.nowMs += intervalMs - kernel.behaviour.triggerWriteBlocksMs;
+}
+
+function retryEvery(seconds: number): ThermometerSweepContextSettings {
+  return { ...DEFAULT_THERMOMETER_SWEEP_SETTINGS, thermometer_bulk_retry_interval_seconds: seconds };
+}
+
+function pageAfterMinutes(minutes: number): ThermometerSweepContextSettings {
+  return { ...DEFAULT_THERMOMETER_SWEEP_SETTINGS, thermometer_silent_page_after_minutes: minutes };
+}
+
+function runSweep(
+  kernel: FakeKernel,
+  state: ThermometerSweepState,
+  lines: LoggedLine[],
+  probes: ThermometerProbe[],
+  settings: ThermometerSweepContextSettings = DEFAULT_THERMOMETER_SWEEP_SETTINGS
+) {
   return sweepThermometers({
     probes,
     state,
@@ -489,6 +663,7 @@ function runSweep(kernel: FakeKernel, state: ThermometerSweepState, lines: Logge
     logger: capturingLogger(lines),
     devicesDirectory: kernel.devicesDirectory,
     timing,
+    settings,
   });
 }
 

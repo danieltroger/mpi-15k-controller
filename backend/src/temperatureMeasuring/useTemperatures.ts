@@ -6,12 +6,10 @@ import {
   createResource,
   createSignal,
   mapArray,
-  onCleanup,
   type Setter,
   untrack,
 } from "solid-js";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import { wait } from "../vendor/depictUtilishared.ts";
 import type { Config } from "../config/config.types.ts";
 import type { TemperatureReadingBroadcast } from "../sharedTypes.ts";
 import { enableOneWireBus, ONE_WIRE_DEVICES_DIRECTORY } from "./oneWireBus.ts";
@@ -19,18 +17,12 @@ import { nodeSysfsAccess } from "./sysfsAccess.ts";
 import {
   createThermometerSweepState,
   DEFAULT_THERMOMETER_SWEEP_TIMING,
+  type SweepLogger,
   sweepThermometers,
   type ThermometerProbe,
 } from "./thermometerSweep.ts";
-
-/**
- * A sweep starts every 10 s. A bulk sweep takes ~1 s: the trigger write blocks for the 750 ms conversion,
- * then 14 scratchpad reads take ~15 ms each. The w1_slave fallback takes ~11 s, so its sweeps run back to back.
- * 10 s keeps each probe on about the cadence it had when every read ran its own conversion (one probe every
- * ~0.8 s, so each probe every ~11 s). MQTT/Influx volume, Grafana and the stale-temperature alert see the same
- * rhythm as before, only now all 14 values land together.
- */
-const SWEEP_INTERVAL_MS = 10_000;
+import { startThermometerSweepLoop, SYSTEM_SWEEP_CLOCK } from "./thermometerSweepLoop.ts";
+import { currentSweepSettings, useThermometerSweepSettings } from "./useThermometerSweepSettings.ts";
 
 type ProbeSignal = {
   thermometerDeviceId: string;
@@ -38,8 +30,15 @@ type ProbeSignal = {
   setReading: Setter<TemperatureReadingBroadcast | undefined>;
 };
 
-/** Every configured thermometer's latest accepted reading, keyed by device id, swept over the 1-wire bus. */
+const SWEEP_LOGGER: SweepLogger = { log: logLog, warn: warnLog, error: errorLog };
+
+/**
+ * Every configured thermometer's latest accepted reading, keyed by device id, swept over the 1-wire bus every
+ * temperature_saving.thermometer_sweep_interval_seconds (thermometerSweepLoop.ts). The temperature_saving.
+ * thermometer_* settings are live: each sweep runs with their current values.
+ */
 export function useTemperatures(getConfig: Accessor<Config>) {
+  const sweepSettings = useThermometerSweepSettings(getConfig, SWEEP_LOGGER);
   const [busEnabled] = createResource(async () => {
     await enableOneWireBus(Object.keys(untrack(getConfig).thermometers));
     return true;
@@ -58,43 +57,26 @@ export function useTemperatures(getConfig: Accessor<Config>) {
 
   createEffect(() => {
     if (!busEnabled()) return;
-    const loopControl = { stopped: false };
-    onCleanup(() => (loopControl.stopped = true));
-    void runSweepLoop({ loopControl, probeSignals, thermometers });
+    const sweepState = createThermometerSweepState();
+    startThermometerSweepLoop({
+      intervalSeconds: sweepSettings.thermometer_sweep_interval_seconds,
+      sweep: () =>
+        sweepThermometers({
+          probes: untrack(() => probesToSweep(probeSignals(), thermometers())),
+          state: sweepState,
+          sysfs: nodeSysfsAccess,
+          logger: SWEEP_LOGGER,
+          devicesDirectory: ONE_WIRE_DEVICES_DIRECTORY,
+          timing: DEFAULT_THERMOMETER_SWEEP_TIMING,
+          settings: currentSweepSettings(sweepSettings),
+        }),
+      publish: sweep => publishReadings(untrack(probeSignals), sweep.readings),
+      clock: SYSTEM_SWEEP_CLOCK,
+      logger: SWEEP_LOGGER,
+    });
   });
 
   return temperatures;
-}
-
-async function runSweepLoop({
-  loopControl,
-  probeSignals,
-  thermometers,
-}: {
-  loopControl: { stopped: boolean };
-  probeSignals: Accessor<ProbeSignal[]>;
-  thermometers: Accessor<Config["thermometers"]>;
-}) {
-  const sweepState = createThermometerSweepState();
-  logLog("Starting thermometer sweeps every", SWEEP_INTERVAL_MS / 1000, "s");
-  while (!loopControl.stopped) {
-    const sweepStartedAtMs = Date.now();
-    try {
-      const sweep = await sweepThermometers({
-        probes: untrack(() => probesToSweep(probeSignals(), thermometers())),
-        state: sweepState,
-        sysfs: nodeSysfsAccess,
-        logger: { log: logLog, warn: warnLog, error: errorLog },
-        devicesDirectory: ONE_WIRE_DEVICES_DIRECTORY,
-        timing: DEFAULT_THERMOMETER_SWEEP_TIMING,
-      });
-      if (!loopControl.stopped) publishReadings(untrack(probeSignals), sweep.readings);
-    } catch (error) {
-      errorLog("Thermometer sweep threw although it handles sysfs failures itself, retrying next interval", error);
-    }
-    await wait(Math.max(0, SWEEP_INTERVAL_MS - (Date.now() - sweepStartedAtMs)));
-  }
-  logLog("Stopped thermometer sweeps");
 }
 
 function probesToSweep(probeSignals: ProbeSignal[], thermometers: Config["thermometers"]): ThermometerProbe[] {
