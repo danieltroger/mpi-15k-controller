@@ -8,9 +8,12 @@
  *  B. Starved commit (the July 2026 hypothesis #52 ruled out for the real inverter): a write commits
  *     only once no command has arrived for 2 s, so with polling it never does. The session must give
  *     up loudly at the deadline with the one errorLog behind the P2, and keep polling.
+ *  C. The same starved inverter, the field retargeted every ~1.5 s (#75's review: the buy current
+ *     under continuous polling): every check is superseded before its give-up, yet the session pages
+ *     the field once, from a readback past the starved-write threshold.
  *
  * The windows are scaled down for the harness (first confirm 1 s after the write, then every 1 s,
- * give-up after 6 s). The production numbers are in schedulerTiming.ts. The commit timing lines
+ * give-up after 6 s, starved after 7 s). The production numbers are in schedulerTiming.ts. The commit timing lines
  * are this test's readout, read from the log the way #52's run read them.
  *
  * Run from backend/ with:  yarn node src/inverterComms/setterConfirm.pty.selftest.ts
@@ -35,7 +38,10 @@ const HARNESS_TIMING: Partial<SchedulerTiming> = {
   firstConfirmAfterWriteMs: 1_000,
   confirmRecheckIntervalMs: 1_000,
   confirmGiveUpAfterWriteMs: 6_000,
+  starvedWritePageAfterMs: 7_000,
 };
+/** Scenario C's targets, one every ~1.5 s, all different from the fake's boot 350 W and from each other */
+const RETARGETED_GPMP_WATTS = [400, 410, 420, 430, 440, 450, 460, 470];
 /** Polling "continues" if no two GS rounds are further apart than a round plus a confirm and slack */
 const MAX_GS_GAP_WHILE_POLLING_MS = 2_000;
 
@@ -53,7 +59,12 @@ function check(name: string, cond: boolean, detail = "") {
 }
 
 const errorLogsCaptured: string[] = [];
-setOnErrorLog(args => errorLogsCaptured.push(args.map(argument => String(argument)).join(" ")));
+/** When each captured errorLog was logged (wall clock), in the same order */
+const errorLogTimes: number[] = [];
+setOnErrorLog(args => {
+  errorLogsCaptured.push(args.map(argument => String(argument)).join(" "));
+  errorLogTimes.push(Date.now());
+});
 const commitTimingRecords: CommitTimingRecord[] = [];
 captureCommitTimingLines(commitTimingRecords);
 const hardTimeout = setTimeout(() => {
@@ -76,6 +87,45 @@ async function runSetterConfirmChecks(): Promise<void> {
   }
   await checkSlowCommitWithPollingContinuing();
   await checkStarvedCommitGivesUpLoudly();
+  await checkRetargetedStarvedFieldPagesOnce();
+}
+
+async function checkRetargetedStarvedFieldPagesOnce(): Promise<void> {
+  const fake = await startFakeInverter(["--no-faults", "--commit-needs-quiet-s", String(COMMIT_NEEDS_QUIET_S)]);
+  const engine = startEngine(fake.device);
+  await waitFor(() => roundsOf(engine.decodedRounds, "GS").length >= 3, 10_000);
+  const errorLogsBefore = errorLogsCaptured.length;
+  const firstWrite = await writeAndAwaitAck(engine.session, gpmpCommand(RETARGETED_GPMP_WATTS[0]!));
+  for (const watts of RETARGETED_GPMP_WATTS.slice(1)) {
+    await sleep(1_500);
+    await writeAndAwaitAck(engine.session, gpmpCommand(watts));
+  }
+  await waitFor(() => errorLogsCaptured.length > errorLogsBefore, 6_000);
+  const pagedAt = errorLogTimes[errorLogsBefore] ?? Date.now();
+  // Past the last write's own 6 s give-up, which must not page a second time
+  await sleep(8_000);
+  const counters = engine.session.exchangeCounters();
+  engine.dispose();
+  await fake.stop();
+  const pages = errorLogsCaptured.slice(errorLogsBefore);
+  check(
+    "C: the retargeted starved field paged once, 7–10 s after its first ACK — as never applied, naming GPMP",
+    pages.length === 1 &&
+      pages[0]!.startsWith("Inverter never applied ACKed writes to GPMP maximum_feeding_grid_power:") &&
+      firstWrite.ackedAt !== undefined &&
+      pagedAt - firstWrite.ackedAt >= 7_000 &&
+      pagedAt - firstWrite.ackedAt <= 10_000,
+    `${pages.length} errorLog(s) ${firstWrite.ackedAt === undefined ? "" : `${pagedAt - firstWrite.ackedAt} ms after the first ACK`}: ${pages.join(" | ")}`
+  );
+  check(
+    "C: the last write's give-up landed inside the same episode — logged, not paged",
+    counters.writesNeverApplied >= 1,
+    `never applied ${counters.writesNeverApplied}, confirmed ${counters.writesConfirmed}`
+  );
+}
+
+function gpmpCommand(watts: number): `GPMP0${string}` {
+  return `GPMP0${String(watts).padStart(5, "0")}`;
 }
 
 async function checkSlowCommitWithPollingContinuing(): Promise<void> {
@@ -221,7 +271,7 @@ function startEngine(device: string) {
  */
 async function writeAndAwaitAck(
   session: ReturnType<typeof createInverterSession>,
-  command: "GPMP000550"
+  command: `GPMP0${string}`
 ): Promise<{ ackedAt: number | undefined; recordsBefore: number }> {
   const recordsBefore = commitTimingRecords.length;
   let ackedAt: number | undefined;

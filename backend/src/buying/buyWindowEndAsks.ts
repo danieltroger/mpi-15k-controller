@@ -91,13 +91,14 @@ export function nextAlternateCapRequests(
 
 /**
  * The hall has shown the cap in effect for the settle time but no readback proves it, and the session has
- * read BATS since every unproven write went out: it won't again on its own before the next settings poll
- * (180–300 s), as its confirm saw the old value and gives up — a commit that outlasted the confirm. So the
- * step-down asks for one at once if the latest readback predates what the hall shows (it can't have seen
- * it), else once it is READBACK_REQUEST_INTERVAL_MS old, and again whenever the readback answering the
- * last request is that old without proving the cap. One request at a time: the session keeps it until
- * BATS decodes, past a silent confirm phase, for SETTINGS_READBACK_REQUEST_LIFETIME_MS at most. A
- * readback older than a write is left to that write's own confirm while one can still come.
+ * read BATS since every unproven write went out. It may read BATS again on its own — a pending check is
+ * re-read every 4 s until its 55 s give-up — but once those checks are judged or superseded, not before the
+ * next settings poll (180–300 s). So the step-down asks for one at once if the latest readback predates
+ * what the hall shows (it can't have seen it), else once it is READBACK_REQUEST_INTERVAL_MS old, and again
+ * whenever the readback answering the last request is that old without proving the cap; a request that
+ * coincides with a re-check costs nothing extra. One request at a time: the session keeps it until BATS
+ * decodes, for SETTINGS_READBACK_REQUEST_LIFETIME_MS at most. A readback older than a write is left to that
+ * write's own confirm while one can still come.
  */
 export function nextReadbackRequests(
   progress: SteppingDown,

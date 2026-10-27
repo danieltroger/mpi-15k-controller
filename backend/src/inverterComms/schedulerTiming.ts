@@ -37,6 +37,15 @@ export const CONFIRM_GIVE_UP_AFTER_WRITE_MS = 55_000;
  */
 export const IDENTICAL_SETTER_MIN_INTERVAL_MS = 60_000;
 /**
+ * A check's give-up only covers a write that keeps its check that long: any later write to the same
+ * field replaces it. With polling continuous, the buy current's target moves every ~6 s, so a MUCHGC
+ * that never commits is superseded check after check (#75's review: the first page ~6 min in, ~45 min
+ * with a 45 s write throttle). So a field also pages when a readback this long after an ACKed write
+ * shows neither it nor any later write: the field never moved on. Just past the give-up, so a write
+ * that keeps its check pages through it first; either opens the field's one page per episode.
+ */
+export const STARVED_WRITE_PAGE_AFTER_MS = 60_000;
+/**
  * For the confirm verdict, a write no readback has proven yet counts as landed (or as never
  * landing) this long after it was sent. Only an ambiguous readback needs it: after A→B→A with B
  * never seen, "A" could mean "nothing committed yet" forever (fieldWriteChains.ts). Below the give-up
@@ -80,6 +89,8 @@ export type SchedulerTiming = {
   firstConfirmAfterWriteMs: number;
   confirmRecheckIntervalMs: number;
   confirmGiveUpAfterWriteMs: number;
+  /** A readback this long after an ACKed write that shows neither it nor any later write pages (STARVED_WRITE_PAGE_AFTER_MS) */
+  starvedWritePageAfterMs: number;
   /** For the confirm, an unproven write counts as landed this long after its send (WRITE_COMMIT_WINDOW_MS) */
   writeCommitWindowMs: number;
   /** The same for the satisfied drop (DROP_TRUST_COMMIT_WINDOW_MS) */
@@ -92,6 +103,7 @@ export const DEFAULT_SCHEDULER_TIMING: Readonly<SchedulerTiming> = {
   firstConfirmAfterWriteMs: FIRST_CONFIRM_AFTER_WRITE_MS,
   confirmRecheckIntervalMs: CONFIRM_RECHECK_INTERVAL_MS,
   confirmGiveUpAfterWriteMs: CONFIRM_GIVE_UP_AFTER_WRITE_MS,
+  starvedWritePageAfterMs: STARVED_WRITE_PAGE_AFTER_MS,
   writeCommitWindowMs: WRITE_COMMIT_WINDOW_MS,
   dropTrustCommitWindowMs: DROP_TRUST_COMMIT_WINDOW_MS,
   pollRoundGapMs: POLL_ROUND_GAP_MS,

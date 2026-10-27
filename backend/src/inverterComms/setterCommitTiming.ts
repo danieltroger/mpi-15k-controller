@@ -9,7 +9,7 @@
  * field replaced its check first). Times are the session's monotonic clock.
  */
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import type { ConfirmPhase, PendingReadbackCheck } from "./schedulerCore.ts";
+import type { ConfirmPhase, PendingReadbackCheck, StarvedWriteReport } from "./schedulerCore.ts";
 import type { ConfirmVerdicts } from "./confirmVerdicts.ts";
 
 /** Cumulative line traffic, sampled at the ACK and again at the verdict */
@@ -83,15 +83,24 @@ export function reportConfirmOutcome(
   tracker: SetterCommitTracker,
   outcome: ConfirmVerdicts,
   nowMs: number,
-  traffic: LineTraffic
+  traffic: LineTraffic,
+  /** Give-ups whose field this starvation episode has already paged (giveUpsAlreadyPaged): logged, not paged */
+  alreadyPagedGiveUps: readonly PendingReadbackCheck[] = []
 ): CommitTimingRecord[] {
   const { confirmedChecks, gaveUpChecks, retry } = outcome;
   if (confirmedChecks.length) logLog("Inverter write(s) confirmed applied:", describeChecks(confirmedChecks));
-  if (gaveUpChecks.length) {
+  const pagedGiveUps = gaveUpChecks.filter(check => !alreadyPagedGiveUps.includes(check));
+  if (pagedGiveUps.length) {
     errorLog(
       "Inverter ACKed but never applied within the confirm window:",
-      gaveUpChecks.map(check => `${check.forCommand} (wanted ${check.field}=${check.expectedValue})`).join(", "),
+      pagedGiveUps.map(check => `${check.forCommand} (wanted ${check.field}=${check.expectedValue})`).join(", "),
       "— leaving any re-send to the owning control loop (rate-limited by the 60 s identical-setter gate)"
+    );
+  }
+  if (alreadyPagedGiveUps.length) {
+    warnLog(
+      "Inverter ACKed but never applied within the confirm window (field already paged as never applied):",
+      alreadyPagedGiveUps.map(check => `${check.forCommand} (wanted ${check.field}=${check.expectedValue})`).join(", ")
     );
   }
   const neverApplied = commandsOf(gaveUpChecks);
@@ -126,6 +135,24 @@ export function reportConfirmOutcome(
     }
   }
   return records;
+}
+
+/**
+ * One errorLog (P2) per starved field: a readback STARVED_WRITE_PAGE_AFTER_MS after an ACKed write that
+ * shows neither it nor any later write to the field, whose checks newer writes kept superseding before
+ * their own give-up. The field pages again only after it has moved to a written value.
+ */
+export function reportStarvedWrites(reports: readonly StarvedWriteReport[]): void {
+  for (const { query, field, write, laterWrites, readValue, decodedAtMs } of reports) {
+    errorLog(
+      "Inverter never applied ACKed writes to",
+      `${query} ${field}:`,
+      `it still reads ${readValue} ${Math.round((decodedAtMs - write.sentAtMs) / 1000)} s after the write of ${write.value}`,
+      laterWrites ? `and ${laterWrites} later write(s) to it` : "",
+      "— none showed in a readback while GS/PS polling continued; leaving any re-send to the owning control loop",
+      "(paged once until the field moves)"
+    );
+  }
 }
 
 export function commitTimingRecord(

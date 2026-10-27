@@ -11,11 +11,13 @@ import {
   afterPollRound,
   afterSetterSent,
   decideNextAction,
+  giveUpsAlreadyPaged,
   initialSchedulerState,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
   type ConfirmPhase,
+  type PendingReadbackCheck,
   type SchedulerState,
 } from "./schedulerCore.ts";
 import type { ConfirmVerdicts } from "./confirmVerdicts.ts";
@@ -59,6 +61,8 @@ export type SimulatedStep =
       startedAtMs: number;
       endedAtMs: number;
       result: ConfirmVerdicts;
+      /** The give-ups that page: their field's starvation episode wasn't open yet (giveUpsAlreadyPaged) */
+      pagedGiveUps: readonly PendingReadbackCheck[];
       /** The scheduler right after the run */
       stateAfter: SchedulerState;
     };
@@ -116,6 +120,7 @@ export function simulatePump({
       for (const query of decision.queries)
         state = withSettingsReadback(state, query, decodedByQuery[query] ?? {}, nowMs);
       const confirmRun = afterConfirmRun(state, decodedByQuery, nowMs, startedAtMs);
+      const alreadyPaged = giveUpsAlreadyPaged(state, confirmRun.result.gaveUpChecks);
       state = confirmRun.state;
       steps.push({
         action: "run_confirms",
@@ -123,6 +128,7 @@ export function simulatePump({
         startedAtMs,
         endedAtMs: nowMs,
         result: confirmRun.result,
+        pagedGiveUps: confirmRun.result.gaveUpChecks.filter(check => !alreadyPaged.includes(check)),
         stateAfter: state,
       });
     } else {

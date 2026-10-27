@@ -100,8 +100,8 @@ for (const commitLatencyMs of [seconds(45), seconds(48)]) {
 // ---------- the chain itself ----------
 {
   const capThenExtension = chainWithWrite(
-    chainWithWrite(undefined, { value: 10, sentAtMs: 0 }, 261),
-    { value: 261, sentAtMs: 5_000 },
+    chainWithWrite(undefined, { value: 10, sentAtMs: 0, acknowledged: true }, 261),
+    { value: 261, sentAtMs: 5_000, acknowledged: true },
     261
   );
   const stillAtStart = chainAfterReadback(capThenExtension, 261, 12_000, WRITE_COMMIT_WINDOW_MS);
@@ -125,7 +125,7 @@ for (const commitLatencyMs of [seconds(45), seconds(48)]) {
     `with 10 never seen, the ambiguity resolves once both writes are ${WRITE_COMMIT_WINDOW_MS / 1000} s old`,
     neverSawTen === undefined
   );
-  const singleWrite = chainWithWrite(undefined, { value: 550, sentAtMs: 0 }, 350);
+  const singleWrite = chainWithWrite(undefined, { value: 550, sentAtMs: 0, acknowledged: true }, 350);
   check(
     "a plain write is proven by the first readback that shows it",
     readbackProvesWrite(
@@ -135,8 +135,8 @@ for (const commitLatencyMs of [seconds(45), seconds(48)]) {
     ) && !readbackProvesWrite(singleWrite, { value: 550, sentAtMs: 0 }, 350)
   );
   const repeated = chainWithWrite(
-    chainWithWrite(undefined, { value: 550, sentAtMs: 0 }, 350),
-    { value: 550, sentAtMs: 61_000 },
+    chainWithWrite(undefined, { value: 550, sentAtMs: 0, acknowledged: true }, 350),
+    { value: 550, sentAtMs: 61_000, acknowledged: true },
     350
   );
   check(

@@ -10,8 +10,7 @@
  * Every time here is the session's MONOTONIC clock (performance.now() ms), never wall time: an NTP
  * step (the unit starts before time sync) must neither bring a confirm forward nor push one out.
  */
-import type { SettingsQueryCommandName } from "./pi17Protocol.types.ts";
-import type { DecodedFields } from "./pi17Protocol.types.ts";
+import type { DecodedFieldValue, DecodedFields, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 import { expectedReadbackChecksForSetter, checkIsSatisfied, type SetterReadbackCheck } from "./setterConfirmation.ts";
 import {
   DEFAULT_SCHEDULER_TIMING,
@@ -25,6 +24,9 @@ import {
   chainsAfterReadback,
   chainsWithWrite,
   readbackFieldKey,
+  starvedWriteInReadback,
+  unprovenWritesIn,
+  type FieldWrite,
   type FieldWriteChains,
 } from "./fieldWriteChains.ts";
 import {
@@ -54,6 +56,18 @@ export type ConfirmPhase = {
 /** The newest decoded settings readback per query, and when it was decoded */
 export type SettingsReadback = { fields: DecodedFields; decodedAtMs: number };
 
+/** A field a readback shows starved (STARVED_WRITE_PAGE_AFTER_MS), for the session to page */
+export type StarvedWriteReport = {
+  query: SettingsQueryCommandName;
+  field: string;
+  /** The oldest ACKed write the field never moved on to */
+  write: FieldWrite;
+  /** Writes to the field sent after it, none of which showed either */
+  laterWrites: number;
+  readValue: DecodedFieldValue;
+  decodedAtMs: number;
+};
+
 export type SchedulerState = {
   timing: Readonly<SchedulerTiming>;
   queuedSetters: readonly QueuedSetterView[];
@@ -75,6 +89,15 @@ export type SchedulerState = {
   latestSettingsReadbacks: Readonly<Partial<Record<SettingsQueryCommandName, SettingsReadback>>>;
   /** Readbacks consumers asked for, open until their query decodes (settingsReadbackRequests.ts) */
   settingsReadbackRequests: SettingsReadbackRequests;
+  /** Per field (readbackFieldKey), when a readback last showed it at a new value (or first read it) */
+  fieldChangedAtMs: Readonly<Record<string, number>>;
+  /**
+   * Fields paged as never applied, one page per episode: a starved readback or a check's give-up opens
+   * one, the field's first readback at a new value (or with nothing left unproven) ends it
+   */
+  starvedFieldKeys: ReadonlySet<string>;
+  /** Starved writes the session hasn't paged yet (takeStarvedWriteReports) */
+  starvedWriteReports: readonly StarvedWriteReport[];
 };
 
 export type SchedulerDecision =
@@ -100,6 +123,9 @@ export function initialSchedulerState(timingOverrides: Partial<SchedulerTiming> 
     lastSettingsPollAt: undefined,
     latestSettingsReadbacks: {},
     settingsReadbackRequests: {},
+    fieldChangedAtMs: {},
+    starvedFieldKeys: new Set(),
+    starvedWriteReports: [],
   };
 }
 
@@ -132,7 +158,8 @@ export function decideNextAction(
     const includeSettingsPoll =
       state.lastSettingsPollAt === undefined ||
       nowMs - state.lastSettingsPollAt >= settingsPollIntervalMs ||
-      settingsReadbackRequested(state.settingsReadbackRequests, nowMs, SETTINGS_READBACK_REQUEST_LIFETIME_MS);
+      settingsReadbackRequested(state.settingsReadbackRequests, nowMs, SETTINGS_READBACK_REQUEST_LIFETIME_MS) ||
+      starvationReadbackDue(state, nowMs);
     return { action: "poll_round", includeSettingsPoll };
   }
   return {
@@ -140,6 +167,33 @@ export function decideNextAction(
     untilMs: Math.min(nextPollDueAt, earliestSetterGate, nextConfirmDueAt),
     reason: "poll pacing",
   };
+}
+
+const SETTINGS_QUERIES: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS"];
+
+/**
+ * An ACKed write past STARVED_WRITE_PAGE_AFTER_MS, unproven, with no readback of its field since: read
+ * the settings now, so a starved field pages on time. Once its check is superseded and the superseding
+ * one judged, nothing else may read the field for a whole settings-poll interval (#75's review replay:
+ * a page 302 s after the write). At most one extra settings round per write, and none for a field
+ * already paged in this episode (its give-up or an earlier starved readback did).
+ */
+function starvationReadbackDue(state: SchedulerState, nowMs: number): boolean {
+  const pageAfterMs = state.timing.starvedWritePageAfterMs;
+  return SETTINGS_QUERIES.some(query => {
+    const readback = state.latestSettingsReadbacks[query];
+    if (!readback) return false;
+    return Object.keys(readback.fields).some(
+      field =>
+        !state.starvedFieldKeys.has(readbackFieldKey(query, field)) &&
+        unprovenWritesIn(state.dropTrustChains, query, field).some(
+          write =>
+            write.acknowledged &&
+            write.sentAtMs + pageAfterMs <= nowMs &&
+            readback.decodedAtMs < write.sentAtMs + pageAfterMs
+        )
+    );
+  });
 }
 
 /** Enqueue a control write, replacing any queued same-prefix one (a stale target must never land after a newer one). */
@@ -200,7 +254,7 @@ export function afterSetterSent(
   let { fieldWriteChains, dropTrustChains } = state;
   for (const check of fieldsThisCommandWrites) {
     const fieldKey = readbackFieldKey(check.query, check.field);
-    const write = { value: check.expectedValue, sentAtMs: nowMs };
+    const write = { value: check.expectedValue, sentAtMs: nowMs, acknowledged: expectApplied };
     const latestReadbackValue = state.latestSettingsReadbacks[check.query]?.fields[check.field];
     lastWriteAtByReadbackField[fieldKey] = nowMs;
     fieldWriteChains = chainsWithWrite(fieldWriteChains, fieldKey, write, latestReadbackValue);
@@ -252,15 +306,35 @@ export function afterConfirmRun(
     runStartedAtMs,
     nowMs,
   });
+  // A give-up pages its field: a starved readback of it right after must not page again
+  const starvedFieldKeys = new Set(state.starvedFieldKeys);
+  for (const check of result.gaveUpChecks) starvedFieldKeys.add(readbackFieldKey(check.query, check.field));
   const retry = result.retry;
-  if (!retry) return { state: { ...state, confirm: undefined }, result };
+  if (!retry) return { state: { ...state, starvedFieldKeys, confirm: undefined }, result };
   // Re-checks run only what the pending checks need (the refresh queries ran on the first run) —
   // not BATS every 4 s for a GPMP write
   const queries = [...new Set(retry.pendingChecks.map(check => check.query))];
   return {
-    state: { ...state, confirm: { dueAt: retry.retryAt, checks: retry.pendingChecks, queries } },
+    state: { ...state, starvedFieldKeys, confirm: { dueAt: retry.retryAt, checks: retry.pendingChecks, queries } },
     result,
   };
+}
+
+/** The give-ups whose field is already paged in this episode — logged, not paged again (call before afterConfirmRun) */
+export function giveUpsAlreadyPaged(
+  stateBeforeRun: SchedulerState,
+  gaveUpChecks: readonly PendingReadbackCheck[]
+): PendingReadbackCheck[] {
+  return gaveUpChecks.filter(check => stateBeforeRun.starvedFieldKeys.has(readbackFieldKey(check.query, check.field)));
+}
+
+/** The session's drain: the starved writes found since the last call, and the state without them */
+export function takeStarvedWriteReports(state: SchedulerState): {
+  state: SchedulerState;
+  reports: readonly StarvedWriteReport[];
+} {
+  if (!state.starvedWriteReports.length) return { state, reports: [] };
+  return { state: { ...state, starvedWriteReports: [] }, reports: state.starvedWriteReports };
 }
 
 export function afterPollRound(
@@ -286,7 +360,8 @@ export function withSettingsReadbackRequested(
 
 /**
  * Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for
- * that query, and credit it to the writes it proves landed (fieldWriteChains.ts).
+ * that query, note any field it shows starved, and credit it to the writes it proves landed
+ * (fieldWriteChains.ts).
  */
 export function withSettingsReadback(
   state: SchedulerState,
@@ -297,11 +372,50 @@ export function withSettingsReadback(
   const { writeCommitWindowMs, dropTrustCommitWindowMs } = state.timing;
   return {
     ...state,
+    ...starvationAfterReadback(state, query, fields, nowMs),
     latestSettingsReadbacks: { ...state.latestSettingsReadbacks, [query]: { fields, decodedAtMs: nowMs } },
     settingsReadbackRequests: withReadbackAnswered(state.settingsReadbackRequests, query),
     fieldWriteChains: chainsAfterReadback(state.fieldWriteChains, query, fields, nowMs, writeCommitWindowMs),
     dropTrustChains: chainsAfterReadback(state.dropTrustChains, query, fields, nowMs, dropTrustCommitWindowMs),
   };
+}
+
+/**
+ * Judged on the drop-trust chains before the readback credits them (it can't prove a write it shows
+ * starved). Each field pages once per episode; the episode ends when the field moves to a new value,
+ * or nothing written to it is left unproven.
+ */
+function starvationAfterReadback(
+  state: SchedulerState,
+  query: SettingsQueryCommandName,
+  fields: DecodedFields,
+  nowMs: number
+): Pick<SchedulerState, "fieldChangedAtMs" | "starvedFieldKeys" | "starvedWriteReports"> {
+  const fieldChangedAtMs = { ...state.fieldChangedAtMs };
+  const starvedFieldKeys = new Set(state.starvedFieldKeys);
+  const starvedWriteReports = [...state.starvedWriteReports];
+  const previousFields = state.latestSettingsReadbacks[query]?.fields;
+  for (const [field, readValue] of Object.entries(fields)) {
+    const fieldKey = readbackFieldKey(query, field);
+    const changed = previousFields?.[field] !== readValue;
+    if (changed) fieldChangedAtMs[fieldKey] = nowMs;
+    const chain = state.dropTrustChains[fieldKey];
+    const starvedWrite = starvedWriteInReadback(
+      chain,
+      readValue,
+      nowMs,
+      state.timing.starvedWritePageAfterMs,
+      fieldChangedAtMs[fieldKey] ?? nowMs
+    );
+    if (starvedWrite && chain && !starvedFieldKeys.has(fieldKey)) {
+      starvedFieldKeys.add(fieldKey);
+      const laterWrites = chain.writes.length - 1 - chain.writes.indexOf(starvedWrite);
+      starvedWriteReports.push({ query, field, write: starvedWrite, laterWrites, readValue, decodedAtMs: nowMs });
+    } else if (changed || chain === undefined) {
+      starvedFieldKeys.delete(fieldKey);
+    }
+  }
+  return { fieldChangedAtMs, starvedFieldKeys, starvedWriteReports };
 }
 
 /**

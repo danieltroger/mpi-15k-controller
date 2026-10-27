@@ -29,7 +29,7 @@ import {
 
 const failedChecks: string[] = [];
 const readback = (amps: number, observedAtMs: number) => ({ amps, observedAtMs });
-const write = (value: number | string, sentAtMs: number) => ({ value, sentAtMs });
+const write = (value: number | string, sentAtMs: number) => ({ value, sentAtMs, acknowledged: true });
 
 check(
   "evidence: no readback / a higher limit / a cap with a higher write unproven / a proven cap",

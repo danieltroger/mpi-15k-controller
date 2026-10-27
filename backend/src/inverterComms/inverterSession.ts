@@ -40,8 +40,10 @@ import {
   afterPollRound,
   afterSetterSent,
   decideNextAction,
+  giveUpsAlreadyPaged,
   hasEligibleSetter,
   initialSchedulerState,
+  takeStarvedWriteReports,
   withSettingsReadbackRequested,
   withSettingsReadback,
   withSetterDequeued,
@@ -53,6 +55,7 @@ import { type FieldWrite, unprovenWritesIn } from "./fieldWriteChains.ts";
 import {
   reportAckedSetter,
   reportConfirmOutcome,
+  reportStarvedWrites,
   type LineTraffic,
   type SetterCommitTracker,
 } from "./setterCommitTiming.ts";
@@ -151,7 +154,7 @@ export function createInverterSession({
       state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
     },
     /**
-     * Read GPMP + HECS + BATS on the next poll rounds (after any silent confirm phase) until `query` has
+     * Read GPMP + HECS + BATS on the next poll rounds until `query` has
      * decoded, ahead of poll_values_interval_seconds, for at most SETTINGS_READBACK_REQUEST_LIFETIME_MS —
      * for a consumer whose proof waits on a readback nothing else will take. Nothing here bounds how often
      * it is called: each call slows GS/PS by a settings round or more, so callers must bound their asking.
@@ -286,7 +289,9 @@ async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Prom
   }
   recordGateAccept(state, command);
   if (isSettingsQuery(command)) {
-    state.scheduler = withSettingsReadback(state.scheduler, command, fields, performance.now());
+    const recorded = takeStarvedWriteReports(withSettingsReadback(state.scheduler, command, fields, performance.now()));
+    state.scheduler = recorded.state;
+    reportStarvedWrites(recorded.reports);
   }
   state.onDecodedRound({ command, wireCommand, fields, decodedAt: Date.now() });
   return { kind: "decoded", fields };
@@ -354,6 +359,7 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
   if (state.disposed) return;
   const hadConfirmPhase = state.scheduler.confirm !== undefined;
   const nowMs = performance.now();
+  const schedulerBeforeRun = state.scheduler;
   const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, nowMs, runStartedAtMs);
   state.scheduler = scheduler;
   if (!hadConfirmPhase) {
@@ -361,7 +367,8 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
     errorLog("Inverter session: ran confirm queries", queries.join(", "), "without a confirm phase");
     return;
   }
-  for (const record of reportConfirmOutcome(state.commitTracker, result, nowMs, lineTraffic(state))) {
+  const alreadyPaged = giveUpsAlreadyPaged(schedulerBeforeRun, result.gaveUpChecks);
+  for (const record of reportConfirmOutcome(state.commitTracker, result, nowMs, lineTraffic(state), alreadyPaged)) {
     if (record.verdict === "confirmed") state.writesConfirmed++;
     if (record.verdict === "never_applied") state.writesNeverApplied++;
   }
