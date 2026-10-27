@@ -197,8 +197,12 @@ function replayBuyWindow() {
   const loggedTargets = parseBuyWindowTargets(BUY_WINDOW_2026_10_27);
   const run = newRun<AcChargingMode>();
   run.state = { target: IDLE_CAP_AMPS, mode: "idle_cap", changedAtMs: -3_600_000 };
+  // Code guards, not evidence from the data: stepSetterThrottle lets an elapsed interval or a decrease of
+  // at least the margin through in the same evaluation, so these stay 0 on any input unless it regresses.
+  // What the data shows is the summary line: the change counts and the largest overshoot.
   let heldTooLong = 0;
   let overshootAtOrAboveMargin = 0;
+  let largestOvershootAmps = 0;
   for (let index = 0; index < loggedTargets.length; index++) {
     const logged = loggedTargets[index]!;
     const wish = acChargingWish(logged.amps);
@@ -208,6 +212,7 @@ function replayBuyWindow() {
       const state = run.state!;
       if (state.target !== wish.target && atMs - state.changedAtMs >= defaultLimits.minIntervalMs) heldTooLong++;
       if (state.target - wish.target >= defaultLimits.immediateDecrease!) overshootAtOrAboveMargin++;
+      if (wish.mode === "buy_window") largestOvershootAmps = Math.max(largestOvershootAmps, state.target - wish.target);
     }
   }
   const windowChanges = run.changes;
@@ -228,7 +233,8 @@ function replayBuyWindow() {
   console.log(
     `2026-10-27 replay: ${loggedTargets.length} logged targets over ${durationMinutes.toFixed(0)} min →`,
     `${windowChanges.length} MUCHGC changes (was ${BUY_WINDOW_2026_10_27.unthrottledMuchgcWrites} writes)`,
-    JSON.stringify(countsByReason)
+    JSON.stringify(countsByReason),
+    `; the held limit at most ${largestOvershootAmps} A above the wish`
   );
   const first = windowChanges[0];
   const last = windowChanges[windowChanges.length - 1];

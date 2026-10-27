@@ -37,11 +37,15 @@ export const SETTER_CHANGE_THROTTLE_BOUNDS = {
   // Past 5 min, an increase (more headroom on the fuse, a bigger anti-peak bump) waits too long to be
   // worth making.
   min_seconds_between_setting_changes: { defaultValue: 45, min: 0, max: 300, unit: "s" },
-  // Battery amps, which the three-phase charger draws evenly from all phases: 10 A at ~53 V is ~180 W
-  // (~0.8 A at 230 V) per phase. Just under that is how far a held decrease can push the most-loaded
-  // phase past max_grid_input_amperage, for at most one interval. The noise (on 2026-10-27 mostly 1–2 A
-  // moves, almost never over 6 A) stays below it; a kettle (~110 A) or the EV is far above it. Capped at
-  // 30 A (~2.3 A per phase), so a held decrease stays a small overshoot. 0 = every decrease at once.
+  // Battery amps, which the three-phase charger draws evenly from all phases: at the top of a charge
+  // (57.6 V, ~93 % charger efficiency) 10 A is ~0.9 A at 230 V per phase. The held limit always stays
+  // less than this margin above the wish (a decrease is measured against the target last let through, so
+  // sub-margin steps can't add up), which bounds how far it can push the most-loaded phase past
+  // max_grid_input_amperage. Each held decrease waits at most one interval, but holds can follow each
+  // other while a load creeps up: replaying 2026-10-27, the overshoot peaked at 8 A and back-to-back
+  // holds lasted up to 82 s. The noise (mostly 1–2 A moves, almost never over 6 A) stays below the
+  // margin; a kettle (~110 A) or the EV is far above it. Capped at 30 A (~2.7 A per phase), so a held
+  // decrease stays a small overshoot. 0 = every decrease at once.
   ac_charging_current_immediate_decrease_amps: { defaultValue: 10, min: 0, max: 30, unit: "A" },
 } as const satisfies Record<SetterChangeThrottleSettingName, SetterChangeThrottleBounds>;
 
