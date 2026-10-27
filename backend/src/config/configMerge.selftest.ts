@@ -2,8 +2,9 @@
  * The live config.json predates the physical solar model: its solar_model holds only the deleted
  * linear model's keys. Loading it must yield every new knob from the defaults and pass the dead
  * keys through untouched. It also predates the overheat sell stop's limits, and still carries the
- * retired alerting.inverter_temp_p1_celsius those replaced, and the thermometer sweep interval. Run
- * from backend/ with:
+ * retired alerting.inverter_temp_p1_celsius those replaced, and the thermometer sweep interval, and the
+ * setter write throttle (it still carries the retired usb_parameter_setting.min_seconds_between_commands).
+ * Run from backend/ with:
  *   yarn node src/config/configMerge.selftest.ts
  */
 import { default_config, mergeWithDefaults } from "./config.ts";
@@ -186,6 +187,65 @@ for (const [settingName, patchedValue] of sweepSettingPatches) {
   });
   check(`patch: a string ${settingName} is refused (type preservation)`, "error" in stringPatch);
 }
+
+// ——— usb_parameter_setting stored before the write throttle (the live pi's, 2026-10-27) ———
+const liveUsbParameterSetting = {
+  min_seconds_between_commands: 40,
+  poll_values_interval_seconds: 180,
+  quiet_gap_after_write_ms: 12000,
+};
+const withLiveUsbParameterSetting = mergeWithDefaults({
+  ...structuredClone(default_config),
+  // The cast is the point: this is the shape config.json files on disk still have
+  usb_parameter_setting: liveUsbParameterSetting as unknown as Config["usb_parameter_setting"],
+});
+check(
+  "merge: an older usb_parameter_setting picks up the throttle defaults, keeps its own values, drops the retired spacing",
+  JSON.stringify(withLiveUsbParameterSetting.usb_parameter_setting) ===
+    JSON.stringify({
+      min_seconds_between_setting_changes: 45,
+      ac_charging_current_immediate_decrease_amps: 10,
+      poll_values_interval_seconds: 180,
+      quiet_gap_after_write_ms: 12000,
+    })
+);
+const throttleOff = mergeWithDefaults({
+  ...structuredClone(default_config),
+  usb_parameter_setting: { ...default_config.usb_parameter_setting, min_seconds_between_setting_changes: 0 },
+});
+check(
+  "merge: a stored interval of 0 (throttle off) wins over the default",
+  throttleOff.usb_parameter_setting.min_seconds_between_setting_changes === 0
+);
+const throttleSettingPatches: [keyof Config["usb_parameter_setting"], number][] = [
+  ["min_seconds_between_setting_changes", 90],
+  ["ac_charging_current_immediate_decrease_amps", 5],
+];
+for (const [settingName, patchedValue] of throttleSettingPatches) {
+  const settingPatch = applyConfigPatch(withLiveUsbParameterSetting, {
+    path: ["usb_parameter_setting", settingName],
+    op: "set",
+    value: patchedValue,
+  });
+  check(
+    `patch: the config page can set ${settingName} on a merged live config`,
+    "patched" in settingPatch &&
+      mergeWithDefaults(settingPatch.patched).usb_parameter_setting[settingName] === patchedValue,
+    "error" in settingPatch ? settingPatch.error : ""
+  );
+}
+const staleSpacingPatch = applyConfigPatch(withLiveUsbParameterSetting, {
+  path: ["usb_parameter_setting", "min_seconds_between_commands"],
+  op: "set",
+  value: 40,
+});
+check(
+  "retired key: a stale config page writing min_seconds_between_commands doesn't bring it back",
+  !(
+    "patched" in staleSpacingPatch &&
+    "min_seconds_between_commands" in mergeWithDefaults(staleSpacingPatch.patched).usb_parameter_setting
+  )
+);
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);

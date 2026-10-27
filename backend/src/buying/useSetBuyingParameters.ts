@@ -6,15 +6,18 @@ import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useTotalSolarPower } from "../utilities/useTotalSolarPower.ts";
 import { useNow } from "../utilities/useNow.ts";
 import { wireBuyingSetters } from "./buyingSetterWiring.ts";
+import type { SetterChangeThrottleSettings } from "../inverterComms/setterChangeThrottle.ts";
 
 export function useSetBuyingParameters({
   stillFeedingIn,
   chargingAmperageForBuying,
   idleConsumptionWatts,
+  setterChangeThrottle,
 }: {
   stillFeedingIn: Accessor<boolean>;
   chargingAmperageForBuying: Accessor<number | undefined>;
   idleConsumptionWatts: Accessor<number>;
+  setterChangeThrottle: Accessor<SetterChangeThrottleSettings>;
 }) {
   const { $usbValues, queueSetter, lastDecodedRound, unprovenWrites, requestSettingsReadback, settingsReadbackAtMs } =
     useInverterComms();
@@ -35,6 +38,7 @@ export function useSetBuyingParameters({
     settingsReadbackAtMs,
     monotonicNowMs: () => performance.now(),
     wallClockNowMs: () => Date.now(),
+    setterChangeThrottle,
   });
 
   useLogExpectedVsActualChargingAmperage(chargingAmperageForBuying, idleConsumptionWatts);

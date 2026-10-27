@@ -238,10 +238,18 @@ export type Config = {
   alerting: AlertingConfig;
   usb_parameter_setting: {
     /**
-     * Legacy knob of the retired mpp-solar CLI command queue — unused by the native serial engine
-     * (which self-paces via its quiet-gap scheduler); kept so existing config.json files load.
+     * Minimum time between two changes of the same analog setter target: the AC charging current
+     * (MUCHGC) and the feed-in limit (GPMP). A buy window starting or ending, feeding switching
+     * mode, the first target after a start and the on/off switches are never held. 0 = every
+     * change goes out at once. Default 45, 0–300. Live. See inverterComms/setterChangeThrottle.ts.
      */
-    min_seconds_between_commands: number;
+    min_seconds_between_setting_changes: number;
+    /**
+     * An AC charging current target at least this many amps (battery side) below the last one goes
+     * out at once, whatever the interval above: a load coming on mid-window must not overload a
+     * phase while the old current is held. Default 10, 0–30. Live.
+     */
+    ac_charging_current_immediate_decrease_amps: number;
     /**
      * Cadence of the slow settings poll (GPMP/HECS/BATS). GS+PS poll continuously at the serial
      * engine's own natural rate; targeted confirms after writes happen regardless of this value.

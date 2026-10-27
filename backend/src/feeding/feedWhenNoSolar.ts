@@ -12,6 +12,13 @@ import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
 import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
 import { batteryStateFeedingGate } from "./batteryStateFeedingGate.ts";
+import { feedInLimitThrottleLimits, type SetterTargetWish } from "../inverterComms/setterChangeThrottle.ts";
+import {
+  createThrottledSetterTarget,
+  useSetterChangeThrottleSettings,
+} from "../inverterComms/throttledSetterTarget.ts";
+
+type FeedInLimitMode = "solar_only" | "battery" | "selling";
 
 /**
  * The inverter always draws ~300w from the grid when it's not feeding into the grid (for unknown reasons), this function makes sure we're feeding from the battery if we're not feeding from the solar so that we're never pulling anything from the grid.
@@ -204,6 +211,29 @@ export function feedWhenNoSolar({
     }
     return feed_amount_watts;
   });
+  const setterChangeThrottle = useSetterChangeThrottleSettings(config);
+  // GPMP went out every ~25 s on the anti-peak bumps (2026-10-27, 17:32–18:00); the throttle spaces those.
+  // Switching between solar-only feeding, feeding from the battery and selling is a mode change and goes
+  // out at once, so neither a sell window's end nor the EDF/EDG switch-on below waits on it.
+  const feedInLimitWatts = createThrottledSetterTarget<FeedInLimitMode>({
+    setter: "GPMP",
+    unit: "W",
+    wish: () =>
+      feedInLimitWish(
+        debouncedShouldEnableFeeding(),
+        exportAmountForSelling(),
+        feedWhenForceFeedingAmount(),
+        config().feed_from_battery_when_no_solar.max_feed_in_power_when_feeding_from_solar
+      ),
+    limits: () => feedInLimitThrottleLimits(setterChangeThrottle()),
+    modeChangeReasons: {
+      solar_only: "feeding switches to solar only",
+      battery: "feeding switches to the battery",
+      selling: "selling starts",
+    },
+    clockTick: useNow,
+    monotonicNowMs: () => performance.now(),
+  });
   const stillFeedingIn = createMemo(
     () =>
       $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal !== "disabled" ||
@@ -213,6 +243,7 @@ export function feedWhenNoSolar({
     chargingAmperageForBuying,
     idleConsumptionWatts,
     stillFeedingIn,
+    setterChangeThrottle,
   });
 
   debugLog(`feedWhenNoSolar started`);
@@ -224,7 +255,7 @@ export function feedWhenNoSolar({
     let wantFeedIntoGrid: undefined | boolean;
     if (shouldEnable) {
       const currentlySetTo = $usbValues.maximum_feeding_grid_power;
-      if (currentlySetTo && parseFloat(currentlySetTo) === feedWhenForceFeedingAmount() && !currentlyBuying()) {
+      if (currentlySetTo && parseFloat(currentlySetTo) === feedInLimitWatts() && !currentlyBuying()) {
         // Only actually start feeding in once it's confirmed we won't start feeding with 15kw when we shouldn't. And that we're not still buying/AC Charging.
         wantFeedIntoGrid = true;
       }
@@ -267,9 +298,9 @@ export function feedWhenNoSolar({
   });
 
   createEffect(() => {
-    const { max_feed_in_power_when_feeding_from_solar } = config().feed_from_battery_when_no_solar;
     const shouldFeed = debouncedShouldEnableFeeding();
-    if (shouldFeed == undefined) return;
+    const target = feedInLimitWatts();
+    if (shouldFeed == undefined || target == undefined) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
       if (stillFeedingIn()) {
@@ -281,7 +312,6 @@ export function feedWhenNoSolar({
       // before EDB0 is a separate F14 lever, not part of the window-end sequence
       return;
     }
-    const target = Math.round(shouldFeed ? feedWhenForceFeedingAmount() : max_feed_in_power_when_feeding_from_solar);
     // Desired state, queued even when the readback already shows it (see the EDF/EDG effect above):
     // replacesPrefix drops any queued-but-unsent max-feed-in-power command for this newer target,
     // and the session sends nothing when the inverter already holds it
@@ -316,6 +346,18 @@ export function feedWhenNoSolar({
         $usbValues.battery_discharge_to_feed_grid_when_solar_input_normal
       )
   );
+}
+
+/** The GPMP target: the force-feeding amount while feeding from the battery (or selling), else the solar-only cap */
+function feedInLimitWish(
+  shouldFeed: boolean | undefined,
+  exportWattsForSelling: number | undefined,
+  forceFeedingWatts: number,
+  solarOnlyFeedInWatts: number
+): SetterTargetWish<FeedInLimitMode> | undefined {
+  if (shouldFeed == undefined) return undefined;
+  if (!shouldFeed) return { target: Math.round(solarOnlyFeedInWatts), mode: "solar_only" };
+  return { target: Math.round(forceFeedingWatts), mode: exportWattsForSelling ? "selling" : "battery" };
 }
 
 function debugLog(message: string) {

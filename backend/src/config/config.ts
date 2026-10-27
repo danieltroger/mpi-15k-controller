@@ -6,6 +6,7 @@ import { errorLog, logLog } from "../utilities/logging.ts";
 import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
 import { QUIET_GAP_AFTER_WRITE_MS } from "../inverterComms/schedulerTiming.ts";
 import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
+import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -118,7 +119,7 @@ export const default_config: Config = {
     },
   },
   usb_parameter_setting: {
-    min_seconds_between_commands: 60,
+    ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     poll_values_interval_seconds: 60 * 5,
     quiet_gap_after_write_ms: QUIET_GAP_AFTER_WRITE_MS,
   },
@@ -247,7 +248,10 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
         : {}),
       ...partial.scheduled_power_selling,
     },
-    usb_parameter_setting: { ...default_config.usb_parameter_setting, ...partial.usb_parameter_setting },
+    usb_parameter_setting: withoutRetiredUsbParameterSettingKeys({
+      ...default_config.usb_parameter_setting,
+      ...partial.usb_parameter_setting,
+    }),
     temperature_saving: { ...default_config.temperature_saving, ...partial.temperature_saving },
     soc_calculations: {
       ...default_config.soc_calculations,
@@ -266,6 +270,19 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
 
 /** Keys older config.json files may still carry that mergeWithDefaults migrates away */
 type RetiredAlertingKeys = { inverter_temp_p1_celsius?: unknown };
+
+/**
+ * min_seconds_between_commands spaced every command of the retired mpp-solar queue (the live pi had 40).
+ * The native engine (#48) never read it, and min_seconds_between_setting_changes isn't the same knob:
+ * it spaces only analog target changes per setter. Dropped so the config page can't show a do-nothing
+ * field; it leaves the disk at the next config write.
+ */
+function withoutRetiredUsbParameterSettingKeys(
+  merged: Config["usb_parameter_setting"] & { min_seconds_between_commands?: unknown }
+): Config["usb_parameter_setting"] {
+  const { min_seconds_between_commands: retiredCommandSpacing, ...usbParameterSetting } = merged;
+  return usbParameterSetting;
+}
 
 /**
  * solar_model and its per-string specs are nested one more level, so they merge deeper too. Keys
