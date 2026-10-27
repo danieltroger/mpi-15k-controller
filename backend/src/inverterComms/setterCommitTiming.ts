@@ -1,23 +1,22 @@
 /**
- * Per-setter commit measurement and the confirm-verdict log lines, so the quiet-gap experiment
- * (#52) can be read straight from the log: how long the inverter took to ACK, how long from the
- * ACK until a readback showed the write applied, and how much traffic went over the line in
- * between (an ACK is frame-level only — the commit lands seconds later, if traffic lets it).
+ * Per-setter commit measurement and the confirm-verdict log lines, so the inverter's commit
+ * behaviour can be read straight from the log (#52): how long the inverter took to ACK, how long
+ * from the ACK until a readback showed the write applied, and how much traffic went over the line
+ * in between (an ACK is frame-level only — the commit lands seconds later).
  *
  * Every setter with a readback check gets exactly one "Inverter commit timing:" JSON line, at its
  * verdict: confirmed, never_applied (the loud give-up) or superseded (a newer write to the same
  * field replaced its check first). Times are the session's monotonic clock.
  */
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
-import type { ConfirmOutcome, ConfirmPhase, PendingReadbackCheck } from "./schedulerCore.ts";
-import { QUIET_GAP_AFTER_WRITE_MS, type ConfirmStrategy } from "./schedulerTiming.ts";
+import type { ConfirmPhase, PendingReadbackCheck } from "./schedulerCore.ts";
+import type { ConfirmVerdicts } from "./confirmVerdicts.ts";
 
 /** Cumulative line traffic, sampled at the ACK and again at the verdict */
 export type LineTraffic = { pollRoundsCompleted: number; framesWritten: number };
 
 export type TrackedSetter = {
   command: string;
-  quietGapAfterWriteMs: number;
   ackLatencyMs: number;
   /** 2 when only the retry got the ACK */
   ackAttempts: number;
@@ -37,7 +36,6 @@ export type CommitVerdict = "confirmed" | "never_applied" | "superseded";
 export type CommitTimingRecord = {
   command: string;
   verdict: CommitVerdict;
-  quietGapAfterWriteMs: number;
   ackLatencyMs: number;
   ackAttempts: number;
   ackToVerdictMs: number;
@@ -58,14 +56,12 @@ export function reportAckedSetter(
   confirm: ConfirmPhase | undefined,
   traffic: LineTraffic
 ): CommitTimingRecord[] {
-  const { command, quietGapAfterWriteMs, ackLatencyMs, ackAttempts, ackedAtMs } = setter;
+  const { command, ackLatencyMs, ackAttempts, ackedAtMs } = setter;
   logLog(
     "Inverter ACKed",
     command,
     `in ${Math.round(ackLatencyMs)} ms${ackAttempts > 1 ? " (on the retry)" : ""}`,
-    quietGapAfterWriteMs > 0
-      ? `— confirming the commit by readback after the ${quietGapAfterWriteMs} ms quiet gap`
-      : "— confirming the commit by readback with polling continuing (quiet gap 0)"
+    "— confirming the commit by readback, polling continuing"
   );
   // An identical rewrite keeps the command (and so its checks' command) — the older measurement ends here
   const commandsStillChecked = commandsOf(confirm?.checks ?? []);
@@ -85,8 +81,7 @@ export function reportAckedSetter(
  */
 export function reportConfirmOutcome(
   tracker: SetterCommitTracker,
-  outcome: ConfirmOutcome,
-  strategy: ConfirmStrategy,
+  outcome: ConfirmVerdicts,
   nowMs: number,
   traffic: LineTraffic
 ): CommitTimingRecord[] {
@@ -94,40 +89,24 @@ export function reportConfirmOutcome(
   if (confirmedChecks.length) logLog("Inverter write(s) confirmed applied:", describeChecks(confirmedChecks));
   if (gaveUpChecks.length) {
     errorLog(
-      strategy === "silent"
-        ? "Inverter ACKed but never applied within quiet gap + backoff:"
-        : "Inverter ACKed but never applied within the interleaved confirm window:",
+      "Inverter ACKed but never applied within the confirm window:",
       gaveUpChecks.map(check => `${check.forCommand} (wanted ${check.field}=${check.expectedValue})`).join(", "),
       "— leaving any re-send to the owning control loop (rate-limited by the 60 s identical-setter gate)"
     );
   }
   const neverApplied = commandsOf(gaveUpChecks);
-  if (outcome.starvationFallback) {
-    errorLog(
-      "Inverter quiet gap 0 auto-reverted:",
-      `${[...neverApplied].join(", ")} starved while GS/PS polling continued`,
-      "— new writes wait for any still-running gap-0 confirm phase to end (≤ 55 s), then use the",
-      `${outcome.starvationFallback.quietGapAfterWriteMs} ms quiet gap until usb_parameter_setting.quiet_gap_after_write_ms`,
-      `changes or the controller restarts (the fallback is not saved). Set it back to ${QUIET_GAP_AFTER_WRITE_MS} now (#52).`
-    );
-  }
   const stillPending = commandsOf(retry?.pendingChecks ?? []);
   // A check written too recently to judge was not seen "still old" — it only waits
   const seenStillOld = commandsOf(
     (retry?.pendingChecks ?? []).filter(check => !outcome.notYetJudgedChecks.includes(check))
   );
   if (retry && seenStillOld.size) {
-    const stillOldCommands = [...seenStillOld].join(", ");
-    if (strategy === "silent") {
-      warnLog("Inverter write(s) not visible in readback yet — re-checking after quiet backoff:", stillOldCommands);
-    } else {
-      debugLog(
-        "Inverter write(s) not visible in readback yet — re-checking in",
-        Math.round(retry.retryAt - nowMs),
-        "ms with polling continuing:",
-        stillOldCommands
-      );
-    }
+    debugLog(
+      "Inverter write(s) not visible in readback yet — re-checking in",
+      Math.round(retry.retryAt - nowMs),
+      "ms with polling continuing:",
+      [...seenStillOld].join(", ")
+    );
   }
 
   const confirmed = [...commandsOf(confirmedChecks)].filter(
@@ -158,7 +137,6 @@ export function commitTimingRecord(
   return {
     command: tracked.command,
     verdict,
-    quietGapAfterWriteMs: tracked.quietGapAfterWriteMs,
     ackLatencyMs: Math.round(tracked.ackLatencyMs),
     ackAttempts: tracked.ackAttempts,
     ackToVerdictMs: Math.round(nowMs - tracked.ackedAtMs),

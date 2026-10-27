@@ -6,8 +6,8 @@
  * extend-then-re-end lose its 10 A cap: MUCHGC2610 "confirmed" on the pre-step-down 261 A, a
  * settings poll's 10 A (MUCHGC0100 landing) then dropped the queued MUCHGC0100 as satisfied, and
  * MUCHGC2610 committed afterwards. Swept across the settings-poll cycle (180 s, the live
- * poll_values_interval_seconds) at 12, 14 and 18 s commits, for the default gap and for gap 0.
- * Past the 30 s commit window (the July 2026 commit landed 42 s into the quiet period) verdicts
+ * poll_values_interval_seconds) at 12, 14 and 18 s commits, polling continuing through every write.
+ * Past the 30 s commit window (the July 2026 commit landed after 42 s) verdicts
  * may be wrong either way, but the cap must still hold: the satisfied drop trusts a longer horizon.
  * Run from backend/ with:
  *   yarn node src/inverterComms/commitAttribution.selftest.ts
@@ -23,7 +23,7 @@ import {
   sendsIn,
   simulatePump,
 } from "./schedulerSimulation.ts";
-import { DROP_TRUST_COMMIT_WINDOW_MS, QUIET_GAP_AFTER_WRITE_MS, WRITE_COMMIT_WINDOW_MS } from "./schedulerTiming.ts";
+import { DROP_TRUST_COMMIT_WINDOW_MS, WRITE_COMMIT_WINDOW_MS } from "./schedulerTiming.ts";
 import {
   afterSetterSent,
   initialSchedulerState,
@@ -46,59 +46,54 @@ const CHARGING_AMPS = 261;
 const CAP_AMPS = 10;
 
 // ---------- the extend-then-re-end sweep ----------
-for (const quietGapAfterWriteMs of [QUIET_GAP_AFTER_WRITE_MS, 0]) {
-  for (const commitLatencyMs of [seconds(12), seconds(14), seconds(18)]) {
-    const capLostAt: string[] = [];
-    const creditedEarlyAt: string[] = [];
-    const falseGiveUpsAt: string[] = [];
-    for (let offsetSeconds = 0; offsetSeconds < LIVE_SETTINGS_POLL_INTERVAL_MS / 1000; offsetSeconds++) {
-      const outcome = runWindowEnd(quietGapAfterWriteMs, commitLatencyMs, seconds(100 + offsetSeconds));
-      if (outcome.finalLimitAmps !== CAP_AMPS) capLostAt.push(`+${offsetSeconds} s (${outcome.finalLimitAmps} A)`);
-      if (outcome.confirmedBeforeItsCommit) creditedEarlyAt.push(`+${offsetSeconds} s`);
-      if (outcome.gaveUp) falseGiveUpsAt.push(`+${offsetSeconds} s`);
-    }
-    const label = `gap ${quietGapAfterWriteMs}, ${commitLatencyMs / 1000} s commits`;
-    check(
-      `${label}: every extend-then-re-end ends at the ${CAP_AMPS} A cap`,
-      capLostAt.length === 0,
-      `${capLostAt.length}/180 lost the cap${capLostAt.length ? ": " + capLostAt.slice(0, 4).join(", ") : ""}`
-    );
-    check(
-      `${label}: MUCHGC2610 is never confirmed by a readback from before its own commit`,
-      creditedEarlyAt.length === 0,
-      `${creditedEarlyAt.length}/180 credited early`
-    );
-    check(
-      `${label}: every write lands, so nothing is reported never applied (an ambiguous readback resolves)`,
-      falseGiveUpsAt.length === 0,
-      `${falseGiveUpsAt.length}/180 false give-ups${falseGiveUpsAt.length ? ": " + falseGiveUpsAt.slice(0, 4).join(", ") : ""}`
-    );
+for (const commitLatencyMs of [seconds(12), seconds(14), seconds(18)]) {
+  const capLostAt: string[] = [];
+  const creditedEarlyAt: string[] = [];
+  const falseGiveUpsAt: string[] = [];
+  for (let offsetSeconds = 0; offsetSeconds < LIVE_SETTINGS_POLL_INTERVAL_MS / 1000; offsetSeconds++) {
+    const outcome = runWindowEnd(commitLatencyMs, seconds(100 + offsetSeconds));
+    if (outcome.finalLimitAmps !== CAP_AMPS) capLostAt.push(`+${offsetSeconds} s (${outcome.finalLimitAmps} A)`);
+    if (outcome.confirmedBeforeItsCommit) creditedEarlyAt.push(`+${offsetSeconds} s`);
+    if (outcome.gaveUp) falseGiveUpsAt.push(`+${offsetSeconds} s`);
   }
+  const label = `${commitLatencyMs / 1000} s commits`;
+  check(
+    `${label}: every extend-then-re-end ends at the ${CAP_AMPS} A cap`,
+    capLostAt.length === 0,
+    `${capLostAt.length}/180 lost the cap${capLostAt.length ? ": " + capLostAt.slice(0, 4).join(", ") : ""}`
+  );
+  check(
+    `${label}: MUCHGC2610 is never confirmed by a readback from before its own commit`,
+    creditedEarlyAt.length === 0,
+    `${creditedEarlyAt.length}/180 credited early`
+  );
+  check(
+    `${label}: every write lands, so nothing is reported never applied (an ambiguous readback resolves)`,
+    falseGiveUpsAt.length === 0,
+    `${falseGiveUpsAt.length}/180 false give-ups${falseGiveUpsAt.length ? ": " + falseGiveUpsAt.slice(0, 4).join(", ") : ""}`
+  );
 }
 
 // ---------- commits slower than the 30 s window: verdicts may be wrong, the cap must hold ----------
 for (const commitLatencyMs of [seconds(45), seconds(48)]) {
-  const capLostAt = sweepCapLost(QUIET_GAP_AFTER_WRITE_MS, commitLatencyMs, 1);
+  const capLostAt = sweepCapLost(commitLatencyMs, 1);
   check(
-    `gap ${QUIET_GAP_AFTER_WRITE_MS}, ${commitLatencyMs / 1000} s commits (past the window): every extend-then-re-end still ends at the ${CAP_AMPS} A cap`,
+    `${commitLatencyMs / 1000} s commits (past the window): every extend-then-re-end still ends at the ${CAP_AMPS} A cap`,
     capLostAt.length === 0,
     `${capLostAt.length}/180 lost the cap${capLostAt.length ? ": " + capLostAt.slice(0, 4).join(", ") : ""}`
   );
 }
 {
   // Every 2nd offset keeps it cheap (~3 s); the dedicated sweeps above cover each offset
-  const slowestLossesByConfig: string[] = [];
-  for (const quietGapAfterWriteMs of [QUIET_GAP_AFTER_WRITE_MS, 0]) {
-    for (let commitLatencySeconds = 12; commitLatencySeconds <= 60; commitLatencySeconds += 3) {
-      const capLostAt = sweepCapLost(quietGapAfterWriteMs, seconds(commitLatencySeconds), 2);
-      if (capLostAt.length)
-        slowestLossesByConfig.push(`gap ${quietGapAfterWriteMs} @ ${commitLatencySeconds} s: ${capLostAt.length}/90`);
-    }
+  const slowestLosses: string[] = [];
+  for (let commitLatencySeconds = 12; commitLatencySeconds <= 60; commitLatencySeconds += 3) {
+    const capLostAt = sweepCapLost(seconds(commitLatencySeconds), 2);
+    if (capLostAt.length) slowestLosses.push(`${commitLatencySeconds} s: ${capLostAt.length}/90`);
   }
   check(
-    "12–60 s commits (3 s steps), both gaps: the cap holds at every offset",
-    slowestLossesByConfig.length === 0,
-    slowestLossesByConfig.join("; ")
+    "12–60 s commits (3 s steps): the cap holds at every offset",
+    slowestLosses.length === 0,
+    slowestLosses.join("; ")
   );
 }
 
@@ -181,14 +176,14 @@ console.log(
 process.exit(fails.length ? 1 : 0);
 
 /** The offsets (every `offsetStepSeconds` across the settings-poll cycle) at which the cap was lost */
-function sweepCapLost(quietGapAfterWriteMs: number, commitLatencyMs: number, offsetStepSeconds: number): string[] {
+function sweepCapLost(commitLatencyMs: number, offsetStepSeconds: number): string[] {
   const capLostAt: string[] = [];
   for (
     let offsetSeconds = 0;
     offsetSeconds < LIVE_SETTINGS_POLL_INTERVAL_MS / 1000;
     offsetSeconds += offsetStepSeconds
   ) {
-    const outcome = runWindowEnd(quietGapAfterWriteMs, commitLatencyMs, seconds(100 + offsetSeconds));
+    const outcome = runWindowEnd(commitLatencyMs, seconds(100 + offsetSeconds));
     if (outcome.finalLimitAmps !== CAP_AMPS) capLostAt.push(`+${offsetSeconds} s (${outcome.finalLimitAmps} A)`);
   }
   return capLostAt;
@@ -199,12 +194,12 @@ function sweepCapLost(quietGapAfterWriteMs: number, commitLatencyMs: number, off
  * again 3 s after that (MUCHGC0100 queued as desired state, gated behind the first one's 60 s).
  * Every write commits `commitLatencyMs` after it went out, in order.
  */
-function runWindowEnd(quietGapAfterWriteMs: number, commitLatencyMs: number, windowEndAtMs: number) {
+function runWindowEnd(commitLatencyMs: number, windowEndAtMs: number) {
   const boot = { BATS: { [LIMIT_FIELD]: CHARGING_AMPS } };
   const registers = registersFor(boot);
   const untilMs = windowEndAtMs + seconds(150);
   const { steps } = simulatePump({
-    initial: bootedScheduler({ quietGapAfterWriteMs }, boot),
+    initial: bootedScheduler({}, boot),
     registers,
     events: [
       queueSetterAt(windowEndAtMs, "MUCHGC0100", "MUCHGC"),

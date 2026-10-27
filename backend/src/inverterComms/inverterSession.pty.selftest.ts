@@ -56,13 +56,13 @@ const SETTLED_WINDOW_MS = 8_000;
 const MAX_MEDIAN_GS_GAP_MS = 1_330;
 /**
  * One budget for the whole latch scenario — the EDB1 readback, the EDB0 readback, then the second
- * read of the last fault-record slot (quiet gaps, confirms, ~12 rounds, nine of them carrying a
+ * read of the last fault-record slot (confirms, ~12 rounds, nine of them carrying a
  * 138-byte record or a NAK). Shared rather than per wait, so a run that stalls in any of them
  * still prints its diagnostics well inside HARD_TIMEOUT_MS (~55 s to the scenario's start + this).
  */
 const LATCH_SCENARIO_TIMEOUT_MS = 60_000;
 /**
- * The fault-14 latch must be read as Fault mode this soon (quiet gap 1.5 s + confirm + 2–3 rounds),
+ * The fault-14 latch must be read as Fault mode this soon (the 1.5 s first confirm + 2–3 rounds),
  * i.e. by the DC-idle trigger — the minute poll isn't due until ~60 s into the run
  */
 const MAX_LATCH_TO_FAULT_MODE_READ_S = 8;
@@ -153,9 +153,6 @@ async function runEndToEnd(): Promise<void> {
     session = createInverterSession({
       devicePath: device,
       poll_values_interval_seconds: () => 8,
-      // Harness speed only: the production quiet gap (12 s) / backoff (30 s) are unchanged. The
-      // silent strategy (any gap > 0) is what this run exercises; quietGapExperiment.pty covers 0.
-      quiet_gap_after_write_ms: () => 1_500,
       onDecodedRound: round => {
         decodedRounds.push(round);
         // The production loop (useInverterStatus.ts): tracker events, and its query wishes back to the engine
@@ -164,7 +161,8 @@ async function runEndToEnd(): Promise<void> {
         statusEvents.push(...step.events);
         if (step.requestedQueries.length) session?.requestStatusQueries(step.requestedQueries);
       },
-      schedulerTimingOverrides: { confirmBackoffMs: 3_000 },
+      // Harness speed only (the fake commits at once): production confirms first 9 s after a write
+      schedulerTimingOverrides: { firstConfirmAfterWriteMs: 1_500 },
     });
     return dispose;
   });
@@ -551,7 +549,7 @@ function evaluate({
     `timeouts ${stall.timeoutsBefore} → ${timeoutsAfterStall}`
   );
 
-  // ---- setters: ACK despite a stale data frame first, then the quiet-gap confirm ----
+  // ---- setters: ACK despite a stale data frame first, then the confirm readback ----
   check(
     "GPMP000950 was ACKed (the stale data frame before the ACK was rejected)",
     setterResults.get("GPMP000950") === true

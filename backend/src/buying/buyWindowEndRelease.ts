@@ -13,8 +13,8 @@ import type {
 
 /**
  * After EDB0 is released, a HECS readback that still shows AC charging enabled this long after the last
- * EDB0 request asks for EDB0 again: #48's confirm (12 s) and its backoff re-check (30 s more) are over
- * by then, and the identical-setter gate wouldn't send it any sooner anyway.
+ * EDB0 request asks for EDB0 again: EDB0's own confirm has its verdict by then (it gives up 55 s after
+ * the write at the latest), and the identical-setter gate wouldn't send it any sooner anyway.
  */
 export const EDB0_RETRY_SPACING_MS = 60_000;
 /** EDB0 re-requests before giving up loudly (errorLog); AC charging then stays on until the next window */

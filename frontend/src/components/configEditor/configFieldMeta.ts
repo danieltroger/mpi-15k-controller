@@ -1021,7 +1021,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["usb_parameter_setting", "min_seconds_between_setting_changes"],
         "Time between setting changes",
-        `How long the AC charging current (MUCHGC) and the feed-in limit (GPMP) each keep a target before the next change is written. During a buy window the charging current follows the house load, and without a pause it was rewritten every ~14 s over 1–2 A of noise. In the evening of 2026-10-27 that coincided with the inverter dropping off the grid five times ("AC input island"). Never held: a buy window starting or ending (the end's 10 A step-down included), feeding switching between solar only, the battery and selling, switching AC charging or feeding on or off, the first value after a restart, and a large charging-current decrease (next setting). Longer means fewer writes, but a higher target (more charging, a peak boost) arrives later, and a small decrease can keep the charging current up to the next setting's amount too high for that long (longer while a load keeps creeping up). 0 writes every change at once, like before. Applies at once. ${describeThrottleSettingBounds("min_seconds_between_setting_changes")}`,
+        `How long the AC charging current (MUCHGC) and the feed-in limit (GPMP) each keep a target before the next change is written. During a buy window the charging current follows the house load, and without a pause it was rewritten every ~14 s over 1–2 A of noise. In the evening of 2026-10-27 that coincided with the inverter dropping off the grid five times ("AC input island"). Never held: a buy window starting or ending (the end's 10 A step-down included), feeding switching between solar only, the battery and selling, switching AC charging or feeding on or off, the first value after a restart, and a large charging-current decrease (next setting). Longer means fewer writes, but a higher target (more charging, a peak boost) arrives later, and a small decrease can keep the charging current up to the next setting's amount too high for that long (longer while a load keeps creeping up). 0 writes every change at once, unpaced: since the quiet gap after each write is gone (#52), nothing else spaces them, so the charging current would again be rewritten every few seconds. Applies at once. ${describeThrottleSettingBounds("min_seconds_between_setting_changes")}`,
         throttleSettingInput("min_seconds_between_setting_changes")
       ),
       f(
@@ -1033,14 +1033,8 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["usb_parameter_setting", "poll_values_interval_seconds"],
         "Settings poll interval",
-        "How often the inverter's settings are read back outside of writes.",
+        "How often the inverter's settings are read back outside of writes. Each write is read back on its own from 9 s after it, every 4 s, until it shows, with an alert if it hasn't after 55 s — or, for a setting whose newer writes kept replacing the check, once it has shown none of them for 60 s.",
         { unit: "s" }
-      ),
-      f(
-        ["usb_parameter_setting", "quiet_gap_after_write_ms"],
-        "Quiet gap after write",
-        "How long the controller stops talking to the inverter after each settings write before reading the setting back. The inverter acknowledges a write at once but applies it seconds later, and in July 2026 non-stop traffic seemed to keep it from applying at all, so the default is 12000 ms of silence (live telemetry pauses meanwhile). 0 is an experiment: telemetry keeps flowing and the setting is read back 6 s after the write and every 4 s after that, with an alert if it hasn't applied after 55 s. If that happens, the controller also goes back to 12000 ms on its own (with a second alert), but only until this value is changed or the controller restarts — so set it back to 12000 yourself. Changing it applies once any write being checked has finished; leaving 0 can hold new writes for up to 55 s while that happens. At most 15000.",
-        { unit: "ms", min: 0, max: 15000, step: 1000 }
       ),
       f(
         ["mqtt_host"],

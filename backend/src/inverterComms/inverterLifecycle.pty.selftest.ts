@@ -26,7 +26,6 @@ import { createSerialConnection } from "./serialConnection.ts";
 import { createInverterSession } from "./inverterSession.ts";
 import { buildQueryFrame } from "./pi17Frames.ts";
 import { setOnErrorLog } from "../utilities/logging.ts";
-import { QUIET_GAP_AFTER_WRITE_MS } from "./schedulerTiming.ts";
 
 const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", import.meta.url));
 const HARD_TIMEOUT_MS = 90_000;
@@ -157,7 +156,6 @@ async function checkDisposeMidExchange(): Promise<void> {
     session = createInverterSession({
       devicePath: fake.device,
       poll_values_interval_seconds: () => 600,
-      quiet_gap_after_write_ms: () => QUIET_GAP_AFTER_WRITE_MS,
       onDecodedRound: () => (disposed ? roundsAfterDispose++ : roundsDecoded++),
     });
     return dispose;
@@ -191,7 +189,6 @@ async function checkDisposeAtBoot(): Promise<void> {
     createInverterSession({
       devicePath: fake.device,
       poll_values_interval_seconds: () => 600,
-      quiet_gap_after_write_ms: () => QUIET_GAP_AFTER_WRITE_MS,
       onDecodedRound: () => rounds++,
     });
     return dispose;

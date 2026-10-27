@@ -44,17 +44,18 @@ export type {
 } from "./buyWindowEndStepDown.types.ts";
 
 /**
- * Give up waiting and send EDB0 anyway. Normal step-downs take ~12.5 s (the confirm after the 12 s
- * quiet gap; at gap 0 the first interleaved re-check showing the cap, ~6.5 s, plus the 3 s settle).
- * 120 s also covers a confirm that gave up: the one re-asserted MUCHGC0100 goes out 60 s after the first
- * send (the identical-setter gate) and confirms ~12 s later.
+ * Give up waiting and send EDB0 anyway. Normal step-downs take ~12.5 s (the cap's first confirm, ~9.5 s
+ * after the window end, plus the 3 s settle; a commit that needs one more re-check adds 4 s). 120 s also
+ * covers a confirm that gave up: the one re-asserted MUCHGC0100 goes out 60 s after the first send (the
+ * identical-setter gate) and confirms ~9 s later.
  */
 export const STEP_DOWN_TIMEOUT_MS = 120_000;
 /**
  * If the timeout finds the hall fresh and above the allowance, the cap is demonstrably not in effect
  * and EDB0 would be exactly the one-step stop that latched F14: the step-down errorLogs, sends the
- * alternate cap at once and holds this much longer — the alternate cap's send, its commit and #48's
- * confirm plus backoff re-check (12 + 30 s) fit, a cap that hasn't applied by then won't — and only then
+ * alternate cap at once and holds this much longer — the alternate cap's send, its commit and its
+ * confirm's whole window (re-checked until 55 s after the write) fit, a cap that hasn't applied by then
+ * won't — and only then
  * sends EDB0 regardless (errorLogged again). Holding costs grid import at the limit the inverter still
  * applies, which no longer follows house load, for ≤ 3 min after the window, against a ~1.4 % chance
  * per hard stop of a latched inverter.

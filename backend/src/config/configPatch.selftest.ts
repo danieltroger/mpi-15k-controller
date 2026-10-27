@@ -197,40 +197,5 @@ expectError(
   check("applyConfigPatches stops at the first invalid patch", "error" in result);
 }
 
-// ---------- usb_parameter_setting.quiet_gap_after_write_ms (#52) ----------
-{
-  // The live config.json predates the knob: its usb_parameter_setting has only the two older keys
-  const predatingTheKnob = {
-    ...structuredClone(default_config),
-    usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 120 },
-  } as unknown as Partial<Config>;
-  const merged = mergeWithDefaults(predatingTheKnob);
-  check(
-    "a config.json without quiet_gap_after_write_ms boots with the 12000 default, keeping its poll interval (the retired command spacing is dropped)",
-    merged.usb_parameter_setting.quiet_gap_after_write_ms === 12_000 &&
-      merged.usb_parameter_setting.poll_values_interval_seconds === 120 &&
-      !("min_seconds_between_commands" in merged.usb_parameter_setting)
-  );
-  const toZero = applyConfigPatch(merged, {
-    path: ["usb_parameter_setting", "quiet_gap_after_write_ms"],
-    op: "set",
-    value: 0,
-  });
-  check(
-    "the ws patch to 0 (the experiment) applies",
-    "patched" in toZero && toZero.patched.usb_parameter_setting.quiet_gap_after_write_ms === 0
-  );
-  expectError(
-    "a non-number quiet gap is rejected",
-    applyConfigPatch(merged, { path: ["usb_parameter_setting", "quiet_gap_after_write_ms"], op: "set", value: "0" }),
-    "Type mismatch"
-  );
-  expectError(
-    "the quiet gap can't be unset (it would leave the scheduler without a value)",
-    applyConfigPatch(merged, { path: ["usb_parameter_setting", "quiet_gap_after_write_ms"], op: "unset" }),
-    "Refusing to unset"
-  );
-}
-
 console.log(`\n${fails.length ? `${fails.length} FAILED: ${fails.join(", ")}` : "all configPatch selftests passed"}`);
 process.exit(fails.length ? 1 : 0);

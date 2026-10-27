@@ -39,7 +39,7 @@ type InverterSetterCommand =
  * (settings unchanged). Timeouts never invoke onResult — the session errorLogs them centrally —
  * and neither does a setter dropped unsent because the readback already showed its target.
  * Note that even an ACK is not a commit: the inverter applies setters on an internal housekeeping
- * cycle seconds later, which the session verifies via the quiet-gap confirm queries.
+ * cycle seconds later, which the session verifies via its confirm readbacks.
  */
 export type SetterResult = { acknowledged: boolean };
 
@@ -56,7 +56,7 @@ export type SetterQueueItem = {
    * so a stale target can never be applied after a newer one (e.g. "MCHGV", "GPMP0", "EDB").
    */
   replacesPrefix: string;
-  /** Settings queries to run after the post-write quiet gap so the readback stores re-sync; [] = none extra */
+  /** Settings queries to run with the write's first confirm so the readback stores re-sync; [] = none extra */
   refreshAfterSend: readonly SettingsQueryCommandName[];
   onResult?: (result: SetterResult) => void;
 };

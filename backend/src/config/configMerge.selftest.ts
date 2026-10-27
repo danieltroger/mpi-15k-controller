@@ -3,8 +3,8 @@
  * linear model's keys. Loading it must yield every new knob from the defaults and pass the dead
  * keys through untouched. It also predates the overheat sell stop's limits, and still carries the
  * retired alerting.inverter_temp_p1_celsius those replaced, and the thermometer sweep interval, and the
- * setter write throttle (it still carries the retired usb_parameter_setting.min_seconds_between_commands).
- * Run from backend/ with:
+ * setter write throttle (it still carries the retired usb_parameter_setting.min_seconds_between_commands
+ * and quiet_gap_after_write_ms, #52). Run from backend/ with:
  *   yarn node src/config/configMerge.selftest.ts
  */
 import { default_config, mergeWithDefaults } from "./config.ts";
@@ -200,14 +200,19 @@ const withLiveUsbParameterSetting = mergeWithDefaults({
   usb_parameter_setting: liveUsbParameterSetting as unknown as Config["usb_parameter_setting"],
 });
 check(
-  "merge: an older usb_parameter_setting picks up the throttle defaults, keeps its own values, drops the retired spacing",
+  "merge: an older usb_parameter_setting picks up the throttle defaults, keeps its poll interval, drops the retired spacing and quiet gap",
   JSON.stringify(withLiveUsbParameterSetting.usb_parameter_setting) ===
     JSON.stringify({
       min_seconds_between_setting_changes: 45,
       ac_charging_current_immediate_decrease_amps: 10,
       poll_values_interval_seconds: 180,
-      quiet_gap_after_write_ms: 12000,
-    })
+    }),
+  JSON.stringify(withLiveUsbParameterSetting.usb_parameter_setting)
+);
+check(
+  "retired keys: the defaults carry neither",
+  !("min_seconds_between_commands" in default_config.usb_parameter_setting) &&
+    !("quiet_gap_after_write_ms" in default_config.usb_parameter_setting)
 );
 const throttleOff = mergeWithDefaults({
   ...structuredClone(default_config),
@@ -234,18 +239,22 @@ for (const [settingName, patchedValue] of throttleSettingPatches) {
     "error" in settingPatch ? settingPatch.error : ""
   );
 }
-const staleSpacingPatch = applyConfigPatch(withLiveUsbParameterSetting, {
-  path: ["usb_parameter_setting", "min_seconds_between_commands"],
-  op: "set",
-  value: 40,
-});
-check(
-  "retired key: a stale config page writing min_seconds_between_commands doesn't bring it back",
-  !(
-    "patched" in staleSpacingPatch &&
-    "min_seconds_between_commands" in mergeWithDefaults(staleSpacingPatch.patched).usb_parameter_setting
-  )
-);
+// A config page opened before the deploy still renders these fields; saving one must not bring it back
+for (const [retiredKey, staleValue] of [
+  ["min_seconds_between_commands", 40],
+  ["quiet_gap_after_write_ms", 0],
+] as const) {
+  const stalePatch = applyConfigPatch(withLiveUsbParameterSetting, {
+    path: ["usb_parameter_setting", retiredKey],
+    op: "set",
+    value: staleValue,
+  });
+  check(
+    `retired key: a stale config page writing ${retiredKey} doesn't bring it back`,
+    !("patched" in stalePatch && retiredKey in mergeWithDefaults(stalePatch.patched).usb_parameter_setting),
+    "patched" in stalePatch ? "(patch accepted, merge dropped it)" : `(patch refused: ${stalePatch.error})`
+  );
+}
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);

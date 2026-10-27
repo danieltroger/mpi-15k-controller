@@ -4,6 +4,8 @@
  * when EDB0 goes out and at what current, that a cap or an EDB0 the inverter never applies is re-sent
  * a bounded number of times, never in a loop (the review of #63 measured 30 MUCHGC0100 sends in 30 min
  * and GS/PS polling paused 70 % of the time with an unbounded re-queue), and #65's slow commits.
+ * The simulation runs the production scheduler timing: polling continues through every write, its
+ * confirm reads it back from 9 s after it, every 4 s.
  * Run from backend/ with:  yarn node src/buying/buyingSetterSession.selftest.ts
  */
 import process from "process";
@@ -15,6 +17,7 @@ import {
   IDLE_AC_CHARGING_LIMIT_AMPS,
 } from "./buyWindowEndEvidence.ts";
 import { EDB0_RETRY_SPACING_MS, MAX_EDB0_RETRIES } from "./buyWindowEndRelease.ts";
+import { READBACK_REQUEST_INTERVAL_MS } from "./buyWindowEndAsks.ts";
 import { createSessionSimulation, runUntil, type SentSetter, sentCommands } from "./buyingSetterSessionSimulation.ts";
 
 const failedChecks: string[] = [];
@@ -56,7 +59,7 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
     inverter: { ...nightWindowInverter, neverApplies: new Set(["MUCHGC0100", "MUCHGC0090"]) },
   });
   runUntil(simulation, 0);
-  simulation.pollingPausedMs = 0;
+  simulation.lineTimeOnWritesMs = 0;
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const extendedDeadlineMs = STEP_DOWN_TIMEOUT_MS + STEP_DOWN_EXTENSION_MS;
@@ -83,11 +86,12 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
     reportedErrors.join(" | ").slice(0, 300)
   );
   setOnErrorLog(undefined);
-  const pausedShare = simulation.pollingPausedMs / THIRTY_MINUTES_MS;
+  // The unbounded re-queue's 30 MUCHGC0100 sends would cost ~30 × (0.3 s + ~12 confirm reads × 0.5 s) ≈ 10 %
+  const writeShare = simulation.lineTimeOnWritesMs / THIRTY_MINUTES_MS;
   check(
-    "…GS/PS polling paused < 10 % of the 30 min (the unbounded re-queue: 70 %)",
-    pausedShare < 0.1,
-    `${(pausedShare * 100).toFixed(1)} %`
+    "…writes and their confirm reads took < 3 % of the line in the 30 min, GS/PS polling the rest",
+    writeShare < 0.03,
+    `${(writeShare * 100).toFixed(1)} %`
   );
   simulation.harness.dispose();
 }
@@ -206,15 +210,15 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
-  // 10 A after 10 → 261 → 10 can't tell whether MUCHGC2610 is still to land: the alternate cap settles it
+  // 10 A after 10 → 261 → 10 can't tell whether MUCHGC2610 is still to land; the confirm's re-reads (or
+  // the alternate cap) settle it — either way EDB0 waits for a cap in effect
   check(
     "window ending 11 s in at full current, HECS still 'disabled': EDB0 only once the (alternate) cap is in effect",
     fullCurrentBeforeEnd &&
       hecsStillStale &&
-      sentCommands(simulation, "MUCHGC0090", 0).length === 1 &&
       edb0Sends.length === 1 &&
-      edb0Sends[0]!.limitAmpsAtSend === ALTERNATE_CAP_AMPS &&
-      edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS,
+      edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
+      edb0Sends[0]!.limitAmpsAtSend <= IDLE_AC_CHARGING_LIMIT_AMPS,
     `full current at the end: ${fullCurrentBeforeEnd}, HECS stale: ${hecsStillStale}; ` +
       describe([...sentCommands(simulation, "EDB1", 0), ...sentCommands(simulation, "MUCHGC2610", 0), ...edb0Sends])
   );
@@ -222,13 +226,9 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
-  // Extend-and-re-end within seconds under #62's real gap 0 (interleaved confirms: polling continues, a
-  // check is judged from its write + 6 s and re-read every 4 s), where a readback can predate MUCHGC2610's commit
-  const simulation = createSessionSimulation({
-    chargingAmperageForBuying: 261,
-    inverter: nightWindowInverter,
-    timingOverrides: { quietGapAfterWriteMs: 0 },
-  });
+  // Extend-and-re-end within seconds (polling continues, a check is judged from its write + 9 s and
+  // re-read every 4 s), where a readback can predate MUCHGC2610's commit
+  const simulation = createSessionSimulation({ chargingAmperageForBuying: 261, inverter: nightWindowInverter });
   runUntil(simulation, 0);
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, 5_500);
@@ -238,7 +238,7 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
   check(
-    "gap 0 (#62 interleaved), extended and re-ended: EDB0 only with the cap in effect, not while MUCHGC2610 is",
+    "extended and re-ended: EDB0 only with the cap in effect, not while MUCHGC2610 is",
     edb0Sends.length === 1 &&
       edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS,
@@ -248,10 +248,10 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
 }
 
 {
-  // #65: commits take 45 s at the default quiet gap; the window ends, is re-entered at 5 s and ends again at
-  // 8 s. Under #63's fixed 12 s margin the 47 s re-check's 10 A released EDB0 as MUCHGC2610 landed (180 of
-  // 180 sweep runs at full current). Now nothing proves the cap until the gated MUCHGC0100 has landed — after
-  // its own confirms gave up — and the settings readback the step-down asks for then shows it.
+  // #65: commits take 45 s; the window ends, is re-entered at 5 s and ends again at 8 s. Under #63's fixed
+  // 12 s margin a 47 s re-check's 10 A released EDB0 as MUCHGC2610 landed (180 of 180 sweep runs at full
+  // current). Now nothing proves the cap until the gated MUCHGC0100 has landed — after its own confirms
+  // gave up — and a settings readback (its own re-checks', or one the step-down asks for) shows it.
   const reportedErrors: string[] = [];
   setOnErrorLog(args => reportedErrors.push(args.join(" ")));
   const simulation = createSessionSimulation({
@@ -266,13 +266,21 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  // The step-down asks for a readback once the hall settles; bound the asks (at least one, never closer
+  // than the request interval) rather than pin their count, which depends on where the re-checks fall
+  const requestTimes = simulation.harness.readbackRequestsAtMs;
+  const requestsBounded =
+    requestTimes.length >= 1 &&
+    requestTimes.every(
+      (requestedAtMs, index) => index === 0 || requestedAtMs - requestTimes[index - 1]! >= READBACK_REQUEST_INTERVAL_MS
+    );
   check(
     "45 s commits, extended and re-ended: EDB0 once, with the cap in effect, inside the timeout, nothing paged",
     edb0Sends.length === 1 &&
       edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
       edb0Sends[0]!.atMs < 8_000 + STEP_DOWN_TIMEOUT_MS &&
-      simulation.harness.readbackRequestsAtMs.length === 1 &&
+      requestsBounded &&
       reportedErrors.length === 0,
     `${describe(edb0Sends)}; readback requests at ${simulation.harness.readbackRequestsAtMs.join()}; ${reportedErrors.join(" | ").slice(0, 200)}`
   );
@@ -284,10 +292,11 @@ const nightWindowInverter = { limitAmps: 261, acChargingEnabled: true, neverAppl
   simulation.harness.dispose();
 }
 
+let alternateCapNakedRuns = 0;
 for (const commitAfterWriteMs of [6_000, 12_000]) {
-  // #70's review: a firmware that NAKs MUCHGC0090. Extended and re-ended at the default gap, the ambiguity's
-  // alternate cap is NAKed, its fallback MUCHGC0100 waits on the 60 s gate, and a NAKed write gets no
-  // confirm — deferring to it blocked every readback request, 119 of 180 sweep runs timed out blind
+  // #70's review: a firmware that NAKs MUCHGC0090. Extended and re-ended, the ambiguity's alternate cap
+  // is NAKed, its fallback MUCHGC0100 waits on the 60 s gate, and a NAKed write gets no confirm —
+  // deferring to it blocked every readback request, 119 of 180 sweep runs timed out blind
   const simulation = createSessionSimulation({
     chargingAmperageForBuying: 261,
     inverter: { ...nightWindowInverter, commitAfterWriteMs, rejects: new Set(["MUCHGC0090"]) },
@@ -300,9 +309,13 @@ for (const commitAfterWriteMs of [6_000, 12_000]) {
   simulation.harness.setChargingAmperage(0);
   runUntil(simulation, THIRTY_MINUTES_MS);
   const edb0Sends = sentCommands(simulation, "EDB0", 0);
+  // Whether the alternate cap goes out depends on where the re-checks fall (the 12 s run proves the cap
+  // without it); the check below makes sure at least one run takes the NAK path
+  const alternateCapSends = sentCommands(simulation, "MUCHGC0090", 0).length;
+  if (alternateCapSends) alternateCapNakedRuns++;
   check(
     `MUCHGC0090 NAKed, ${commitAfterWriteMs / 1000} s commits, extended and re-ended: EDB0 once, cap in effect, before the timeout`,
-    sentCommands(simulation, "MUCHGC0090", 0).length === 1 &&
+    alternateCapSends <= 1 &&
       edb0Sends.length === 1 &&
       edb0Sends[0]!.limitAmpsAtSend === IDLE_AC_CHARGING_LIMIT_AMPS &&
       edb0Sends[0]!.hallAmpsAtSend <= ALLOWED_NIGHT_HALL_AMPS &&
@@ -311,6 +324,7 @@ for (const commitAfterWriteMs of [6_000, 12_000]) {
   );
   simulation.harness.dispose();
 }
+check("…and the NAKed alternate cap was exercised (sent, and NAKed, in at least one run)", alternateCapNakedRuns >= 1);
 
 if (failedChecks.length) {
   console.error(`\n${failedChecks.length} check(s) FAILED:`, failedChecks.join("; "));

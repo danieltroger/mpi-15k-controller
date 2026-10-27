@@ -32,8 +32,8 @@ latch commits like any other write, on the commit timing below. Once latched, HF
 with a NAK (unless --no-faults): the real firmware has never declined a slot, but the engine's
 NAK path (declined, the batch goes on, the line goes quiet) must still run once per test run.
 
-Commit behaviour for the quiet-gap experiment harness (quietGapExperiment.pty.selftest.ts), the
-two readings of the July 2026 evidence:
+Commit behaviour for the write → confirm harness (setterConfirm.pty.selftest.ts), the two readings
+of the July 2026 evidence (#52 found the real inverter behaves like the first):
   --commit-delay-s S        every write commits S seconds after it arrives, whatever the traffic
   --commit-needs-quiet-s Q  a write commits only once no command has arrived for Q seconds, so
                             continuous polling starves it forever

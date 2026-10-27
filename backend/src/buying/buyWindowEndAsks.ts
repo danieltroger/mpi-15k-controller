@@ -6,7 +6,8 @@
  * machine: buyWindowEndStepDown.ts.
  */
 import {
-  MAX_QUIET_GAP_AFTER_WRITE_MS,
+  CONFIRM_RECHECK_INTERVAL_MS,
+  FIRST_CONFIRM_AFTER_WRITE_MS,
   SETTINGS_READBACK_REQUEST_LIFETIME_MS,
 } from "../inverterComms/schedulerTiming.ts";
 import { ambiguousHigherLimitsAmps, IDLE_AC_CHARGING_LIMIT_AMPS, SETTLED_FOR_MS } from "./buyWindowEndEvidence.ts";
@@ -26,17 +27,21 @@ import type {
 export const MAX_LIMIT_REASSERTIONS = 1;
 /**
  * A settings readback is asked for again this often while the hall shows the cap but no readback proves
- * it. At gap 0 a pending write is re-read every 4 s (behind ≤ 2 s of poll round), so a readback this old
+ * it. A pending write is re-read every 4 s (behind ≤ 2 s of poll round), so a readback this old
  * means none is coming; each request costs one GPMP + HECS + BATS round (~1.4 s on the wire), at most a
  * dozen before the timeout.
  */
 export const READBACK_REQUEST_INTERVAL_MS = 10_000;
+/** The longest poll round (GS + PS + the settings queries) a due confirm waits behind */
+const POLL_ROUND_ALLOWANCE_MS = 2_000;
 /**
- * A write's own confirm reads BATS within the longest quiet gap of it, here with a request interval's
- * margin — or never: a NAKed or unanswered write arms no check, and MUCHGC's confirm refreshes nothing
- * else (#70's review: a NAKed MUCHGC0090 left the step-down to time out blind)
+ * A write's own confirm reads BATS 9 s after it, behind ≤ 2 s of poll round, or one 4 s re-check later
+ * if that answer is lost; here with a request interval's margin: 25 s, as #70 validated it. Or never:
+ * a NAKed or unanswered write arms no check, and MUCHGC's confirm refreshes nothing else (#70's review:
+ * a NAKed MUCHGC0090 left the step-down to time out blind).
  */
-export const OWN_CONFIRM_DUE_WITHIN_MS = MAX_QUIET_GAP_AFTER_WRITE_MS + READBACK_REQUEST_INTERVAL_MS;
+export const OWN_CONFIRM_DUE_WITHIN_MS =
+  FIRST_CONFIRM_AFTER_WRITE_MS + POLL_ROUND_ALLOWANCE_MS + CONFIRM_RECHECK_INTERVAL_MS + READBACK_REQUEST_INTERVAL_MS;
 
 /** A new BATS readback during the step-down that still shows a higher limit re-asserts the cap (bounded) */
 export function nextLimitReassertions(

@@ -1,27 +1,26 @@
 /**
- * End-to-end self-test of the quiet-gap knob (#52): the real engine against fakePi17Inverter.py on
- * a pty, in the two inverter behaviours the July 2026 evidence can't tell apart.
+ * End-to-end self-test of the write → confirm path (#52): the real engine against fakePi17Inverter.py
+ * on a pty, polling continuing through every write, in two inverter behaviours.
  *
- *  A. Slow commit: every write commits 2.5 s after it arrives, whatever the traffic. With the gap
- *     at 0, GS/PS polling must carry on through the write, interleaved confirms must see the old
- *     value first and then converge, and the commit timing line must say so.
- *  B. Starved commit: a write commits only once no command has arrived for 2 s. With a 3 s gap (the
- *     silent strategy) the write converges. Switched live to 0, the next write never commits while
- *     polling continues, and the session must give up loudly with the errorLog behind the P2 — and
- *     fall back to the silent gap (another P2), under which the following write commits again.
+ *  A. Slow commit: every write commits 2.5 s after it arrives, whatever the traffic. GS/PS polling
+ *     must carry on through the write, the confirms must see the old value first and then converge,
+ *     and the commit timing line must say so.
+ *  B. Starved commit (the July 2026 hypothesis #52 ruled out for the real inverter): a write commits
+ *     only once no command has arrived for 2 s, so with polling it never does. The session must give
+ *     up loudly at the deadline with the one errorLog behind the P2, and keep polling.
  *
  * The windows are scaled down for the harness (first confirm 1 s after the write, then every 1 s,
  * give-up after 6 s). The production numbers are in schedulerTiming.ts. The commit timing lines
- * are this test's readout, read from the log the way the experiment runbook reads them.
+ * are this test's readout, read from the log the way #52's run read them.
  *
- * Run from backend/ with:  yarn node src/inverterComms/quietGapExperiment.pty.selftest.ts
- * Needs python3 and Linux ptys. Takes ~30 s.
+ * Run from backend/ with:  yarn node src/inverterComms/setterConfirm.pty.selftest.ts
+ * Needs python3 and Linux ptys. Takes ~20 s.
  */
 import process from "process";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { createRoot, createSignal, type Accessor } from "solid-js";
+import { createRoot } from "solid-js";
 import { createInverterSession } from "./inverterSession.ts";
 import type { DecodedRound } from "./pi17Protocol.types.ts";
 import type { CommitTimingRecord } from "./setterCommitTiming.ts";
@@ -32,13 +31,10 @@ const FAKE_INVERTER_SCRIPT = fileURLToPath(new URL("./fakePi17Inverter.py", impo
 const HARD_TIMEOUT_MS = 90_000;
 const SLOW_COMMIT_DELAY_S = 2.5;
 const COMMIT_NEEDS_QUIET_S = 2;
-const SILENT_QUIET_GAP_MS = 3_000;
-const HARNESS_TIMING: Partial<Omit<SchedulerTiming, "quietGapAfterWriteMs">> = {
-  firstInterleavedConfirmAfterWriteMs: 1_000,
-  interleavedConfirmIntervalMs: 1_000,
-  interleavedConfirmGiveUpAfterWriteMs: 6_000,
-  starvationFallbackQuietGapMs: SILENT_QUIET_GAP_MS,
-  confirmBackoffMs: 3_000,
+const HARNESS_TIMING: Partial<SchedulerTiming> = {
+  firstConfirmAfterWriteMs: 1_000,
+  confirmRecheckIntervalMs: 1_000,
+  confirmGiveUpAfterWriteMs: 6_000,
 };
 /** Polling "continues" if no two GS rounds are further apart than a round plus a confirm and slack */
 const MAX_GS_GAP_WHILE_POLLING_MS = 2_000;
@@ -61,18 +57,18 @@ setOnErrorLog(args => errorLogsCaptured.push(args.map(argument => String(argumen
 const commitTimingRecords: CommitTimingRecord[] = [];
 captureCommitTimingLines(commitTimingRecords);
 const hardTimeout = setTimeout(() => {
-  console.error(`FAIL: quiet-gap run did not finish within ${HARD_TIMEOUT_MS} ms`);
+  console.error(`FAIL: setter confirm run did not finish within ${HARD_TIMEOUT_MS} ms`);
   process.exit(1);
 }, HARD_TIMEOUT_MS);
 
-await runQuietGapChecks();
+await runSetterConfirmChecks();
 clearTimeout(hardTimeout);
 console.log(
-  `\n${fails.length ? `${fails.length} FAILED: ${fails.join(", ")}` : "all quietGapExperiment pty selftests passed"}`
+  `\n${fails.length ? `${fails.length} FAILED: ${fails.join(", ")}` : "all setterConfirm pty selftests passed"}`
 );
 process.exit(fails.length ? 1 : 0);
 
-async function runQuietGapChecks(): Promise<void> {
+async function runSetterConfirmChecks(): Promise<void> {
   const python = spawnSync("python3", ["--version"], { encoding: "utf-8" });
   if (python.status !== 0) {
     check("python3 is available for the fake inverter", false, String(python.error ?? python.stderr));
@@ -84,7 +80,7 @@ async function runQuietGapChecks(): Promise<void> {
 
 async function checkSlowCommitWithPollingContinuing(): Promise<void> {
   const fake = await startFakeInverter(["--no-faults", "--commit-delay-s", String(SLOW_COMMIT_DELAY_S)]);
-  const engine = startEngine(fake.device, () => 0);
+  const engine = startEngine(fake.device);
   await waitFor(() => roundsOf(engine.decodedRounds, "GS").length >= 3, 10_000);
   const errorLogsBefore = errorLogsCaptured.length;
 
@@ -97,18 +93,14 @@ async function checkSlowCommitWithPollingContinuing(): Promise<void> {
   const fakeEvents = await fake.stop();
 
   check("A: GPMP000550 was ACKed", ackedAt !== undefined);
-  check(
-    "A: its commit timing line says confirmed, with the gap at 0",
-    record?.verdict === "confirmed" && record.quietGapAfterWriteMs === 0,
-    JSON.stringify(record)
-  );
+  check("A: its commit timing line says confirmed", record?.verdict === "confirmed", JSON.stringify(record));
   check(
     `A: ACK → confirmed spans the ${SLOW_COMMIT_DELAY_S} s commit delay plus at most ~2 confirm intervals`,
     record !== undefined && record.ackToVerdictMs >= SLOW_COMMIT_DELAY_S * 1000 - 200 && record.ackToVerdictMs <= 5_000,
     `${record?.ackToVerdictMs} ms`
   );
   check(
-    "A: an interleaved confirm saw the old value before the commit landed",
+    "A: a confirm saw the old value before the commit landed",
     record !== undefined &&
       record.readbacksStillOld >= 1 &&
       record.lastStillOldAfterAckMs !== null &&
@@ -152,56 +144,27 @@ async function checkSlowCommitWithPollingContinuing(): Promise<void> {
 
 async function checkStarvedCommitGivesUpLoudly(): Promise<void> {
   const fake = await startFakeInverter(["--no-faults", "--commit-needs-quiet-s", String(COMMIT_NEEDS_QUIET_S)]);
-  const [quietGapMs, setQuietGapMs] = createSignal(SILENT_QUIET_GAP_MS);
-  const engine = startEngine(fake.device, quietGapMs);
+  const engine = startEngine(fake.device);
   await waitFor(() => roundsOf(engine.decodedRounds, "GS").length >= 3, 10_000);
   const errorLogsBefore = errorLogsCaptured.length;
 
-  const silentWrite = await writeAndAwaitAck(engine.session, "GPMP000550");
-  const silentAckedAt = silentWrite.ackedAt;
-  const silentRecord = await waitForTimingRecord(silentWrite, "GPMP000550", 10_000);
-  check(
-    `B: with a ${SILENT_QUIET_GAP_MS} ms gap the starved write commits during the silence and is confirmed`,
-    silentRecord?.verdict === "confirmed" &&
-      silentRecord.quietGapAfterWriteMs === SILENT_QUIET_GAP_MS &&
-      silentRecord.pollRoundsBetween === 0,
-    JSON.stringify(silentRecord)
-  );
-  const gsDuringSilence = roundsOf(engine.decodedRounds, "GS").filter(
-    round =>
-      silentAckedAt !== undefined &&
-      round.decodedAt > silentAckedAt + 200 &&
-      round.decodedAt < silentAckedAt + SILENT_QUIET_GAP_MS - 200
-  );
-  check("B: no GS round during that quiet gap", gsDuringSilence.length === 0, `${gsDuringSilence.length} rounds`);
-
-  // The live knob, as a ws config patch would move it
-  setQuietGapMs(0);
-  await sleep(1_500);
-  const interleavedWrite = await writeAndAwaitAck(engine.session, "GPMP000350");
-  const interleavedAckedAt = interleavedWrite.ackedAt;
-  const starvedRecord = await waitForTimingRecord(interleavedWrite, "GPMP000350", 12_000);
+  const starvedWrite = await writeAndAwaitAck(engine.session, "GPMP000550");
+  const starvedAckedAt = starvedWrite.ackedAt;
+  const starvedRecord = await waitForTimingRecord(starvedWrite, "GPMP000550", 12_000);
   const gaveUpAt = Date.now();
   await sleep(2_500);
   const gsAfterGiveUp = roundsOf(engine.decodedRounds, "GS").filter(round => round.decodedAt > gaveUpAt);
   const gsDuringPhase = roundsOf(engine.decodedRounds, "GS")
     .map(round => round.decodedAt)
-    .filter(decodedAt => interleavedAckedAt !== undefined && decodedAt >= interleavedAckedAt && decodedAt <= gaveUpAt);
-  const starvedStillPendingBeforeFallbackWrite = !fake.events.some(
-    event => event.event === "committed" && event.setter === "GPMP000350"
-  );
-  // The knob is still 0, but the give-up started the fallback: this write gets the silent gap
-  const fallbackWrite = await writeAndAwaitAck(engine.session, "GPMP000450");
-  const fallbackRecord = await waitForTimingRecord(fallbackWrite, "GPMP000450", 10_000);
+    .filter(decodedAt => starvedAckedAt !== undefined && decodedAt >= starvedAckedAt && decodedAt <= gaveUpAt);
   const counters = engine.session.exchangeCounters();
   engine.dispose();
   const fakeEvents = await fake.stop();
   const summary = fakeEvents.find(event => event.event === "summary");
 
   check(
-    "B: after the live switch to 0, the starved write is given up as never_applied at the deadline",
+    "B: the starved write is given up as never_applied at the deadline",
     starvedRecord?.verdict === "never_applied" &&
-      starvedRecord.quietGapAfterWriteMs === 0 &&
       starvedRecord.ackToVerdictMs >= 5_900 &&
       starvedRecord.ackToVerdictMs <= 8_500 &&
       starvedRecord.readbacksStillOld >= 3,
@@ -209,49 +172,33 @@ async function checkStarvedCommitGivesUpLoudly(): Promise<void> {
   );
   const neverAppliedErrorLogs = errorLogsCaptured
     .slice(errorLogsBefore)
-    .filter(text => text.includes("never applied") && text.includes("GPMP000350"));
-  const fallbackErrorLogs = errorLogsCaptured
-    .slice(errorLogsBefore)
-    .filter(
-      text => text.includes("auto-reverted") && text.includes("GPMP000350") && text.includes("Set it back to 12000")
-    );
+    .filter(text => text.includes("never applied") && text.includes("GPMP000550"));
   check(
-    "B: the give-up errorLogged (P2) once, the auto-revert to the silent gap once, and nothing else",
-    neverAppliedErrorLogs.length === 1 &&
-      fallbackErrorLogs.length === 1 &&
-      errorLogsCaptured.length - errorLogsBefore === 2,
+    "B: the give-up errorLogged (P2) exactly once, and nothing else — no fallback, no second page",
+    neverAppliedErrorLogs.length === 1 && errorLogsCaptured.length - errorLogsBefore === 1,
     errorLogsCaptured.slice(errorLogsBefore).join(" | ")
-  );
-  check(
-    `B: with the knob still 0, the next write runs on the ${SILENT_QUIET_GAP_MS} ms fallback silence and is confirmed`,
-    fallbackRecord?.verdict === "confirmed" &&
-      fallbackRecord.quietGapAfterWriteMs === SILENT_QUIET_GAP_MS &&
-      fallbackRecord.pollRoundsBetween === 0,
-    JSON.stringify(fallbackRecord)
   );
   check(
     "B: polling continued through the starved write's confirm phase and after the give-up",
     gsDuringPhase.length >= 4 && longestGap(gsDuringPhase) <= MAX_GS_GAP_WHILE_POLLING_MS && gsAfterGiveUp.length >= 1,
     `${gsDuringPhase.length} GS rounds in the phase (longest gap ${longestGap(gsDuringPhase)} ms), ${gsAfterGiveUp.length} after`
   );
-  const committedSetters = fakeEvents.flatMap(event => (event.event === "committed" ? [event.setter] : []));
   check(
-    "B: the starved write stayed pending while polling ran, then landed in the fallback's silence",
-    starvedStillPendingBeforeFallbackWrite &&
-      summary?.event === "summary" &&
-      summary.pending_commits.length === 0 &&
+    "B: the fake never committed it — polling kept deferring the commit",
+    summary?.event === "summary" &&
+      summary.pending_commits.length === 1 &&
       summary.commits_deferred_by_traffic >= 3 &&
-      committedSetters.join() === "GPMP000550,GPMP000350,GPMP000450",
-    `committed ${committedSetters.join(", ")}; ${JSON.stringify(summary)}`
+      !fakeEvents.some(event => event.event === "committed"),
+    JSON.stringify(summary)
   );
   check(
-    "B: counted as two confirmed writes and one never-applied",
-    counters.writesConfirmed === 2 && counters.writesNeverApplied === 1,
+    "B: counted as one never-applied write",
+    counters.writesConfirmed === 0 && counters.writesNeverApplied === 1,
     `confirmed ${counters.writesConfirmed}, never applied ${counters.writesNeverApplied}`
   );
 }
 
-function startEngine(device: string, quietGapAfterWriteMs: Accessor<number>) {
+function startEngine(device: string) {
   const decodedRounds: DecodedRound[] = [];
   let session: ReturnType<typeof createInverterSession> | undefined;
   const dispose = createRoot(disposeRoot => {
@@ -259,7 +206,6 @@ function startEngine(device: string, quietGapAfterWriteMs: Accessor<number>) {
       devicePath: device,
       // Only the boot round reads the settings: every later GPMP readback is a confirm
       poll_values_interval_seconds: () => 600,
-      quiet_gap_after_write_ms: quietGapAfterWriteMs,
       onDecodedRound: round => decodedRounds.push(round),
       schedulerTimingOverrides: HARNESS_TIMING,
     });
@@ -275,7 +221,7 @@ function startEngine(device: string, quietGapAfterWriteMs: Accessor<number>) {
  */
 async function writeAndAwaitAck(
   session: ReturnType<typeof createInverterSession>,
-  command: "GPMP000550" | "GPMP000350" | "GPMP000450"
+  command: "GPMP000550"
 ): Promise<{ ackedAt: number | undefined; recordsBefore: number }> {
   const recordsBefore = commitTimingRecords.length;
   let ackedAt: number | undefined;

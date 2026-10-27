@@ -1,9 +1,12 @@
 /**
  * Pure self-test of the buy-window end step-down, edge cases: a window extended or re-entered while
- * stepping down (with #48's quiet gap and under #62's gap 0), the planner shrinking one, a window ending
+ * stepping down (with a 12 s confirm and with early readbacks), the planner shrinking one, a window ending
  * seconds after it started, a new window starting, stillFeedingIn, a controller restart, and readbacks
  * that predate the latest higher-limit write. Main paths: buyWindowEndStepDown.selftest.ts; the chain's
  * A→B→A and trust-window cases: buyWindowEndStepDownChains.selftest.ts.
+ * The early-readback timelines were written for #62's 6 s first confirm (9 s since #52). The step-down
+ * judges a readback by its time against the write chains, not by when a confirm was due, and a settings
+ * poll or another write's confirm can still read BATS 6 s after a write, so they remain cases it must get right.
  * Run from backend/ with:  yarn node src/buying/buyWindowEndStepDownEdgeCases.selftest.ts
  */
 import process from "process";
@@ -25,7 +28,7 @@ import {
   kindsAt,
   lastEvent,
   nightBuying,
-  QUIET_GAP_AFTER_WRITE_MS,
+  LATE_CONFIRM_AFTER_WRITE_MS,
   sentAt,
   stepAt,
   windowEnd,
@@ -44,7 +47,7 @@ const preWindow = {
 {
   // The planner extends the window 5 s into the step-down and shrinks it again at +20 s, on #48's
   // timeline: MUCHGC0100 out at 0.5 s (commits ~6.5 s); MUCHGC2610 acknowledged at 5.8 s (commits
-  // ~11.8 s) re-arms the quiet gap, so the shared confirm at 17.8 s shows 261 A — which the chain can't
+  // ~11.8 s) joins the confirm, so the shared readback at 17.8 s shows 261 A — which the chain can't
   // tell from "nothing landed yet". The re-end's MUCHGC0100 is the same string sent at 0.5 s, so the
   // identical-setter gate holds it until 60.5 s.
   const simulation = buyingFor(nightBuying);
@@ -62,7 +65,7 @@ const preWindow = {
   stepAt(simulation, 17_800, batsAt(simulation, 261, 17_800));
   stepAt(simulation, 20_000, windowEnd);
   const reSentAtMs = CAP_SENT_AFTER_END_MS + IDENTICAL_SETTER_GATE_MS;
-  const gatedConfirmAtMs = reSentAtMs + QUIET_GAP_AFTER_WRITE_MS;
+  const gatedConfirmAtMs = reSentAtMs + LATE_CONFIRM_AFTER_WRITE_MS;
   stepAt(simulation, reSentAtMs, sentAt(simulation, "MUCHGC0100", reSentAtMs));
   const heldUntilGatedConfirm = holdsAtEveryStep(simulation, reSentAtMs + 250, gatedConfirmAtMs - 250, atMs => ({
     hallBatteryAmps: atMs < reSentAtMs + COMMIT_AFTER_WRITE_MS ? 280 : 11,
@@ -72,7 +75,7 @@ const preWindow = {
     heldUntilGatedConfirm && kindsAt(simulation, 20_000).join() === "started"
   );
   // Every write landed, but "10 A" after 10 → 261 → 10 can also mean only the first cap did, with 261 A
-  // still to come: the alternate cap settles it, its 9 A readback a quiet gap later
+  // still to come: the alternate cap settles it, its 9 A readback 12 s later
   stepAt(simulation, gatedConfirmAtMs, batsAt(simulation, 10, gatedConfirmAtMs));
   const ambiguity = lastEvent(simulation, "ambiguous_limit_readback");
   check(
@@ -91,7 +94,7 @@ const preWindow = {
       simulation.events.filter(recorded => recorded.event.kind === "ambiguous_limit_readback").length === 1
   );
   stepAt(simulation, alternateSentAtMs + COMMIT_AFTER_WRITE_MS, { hallBatteryAmps: 9 });
-  const alternateConfirmAtMs = alternateSentAtMs + QUIET_GAP_AFTER_WRITE_MS;
+  const alternateConfirmAtMs = alternateSentAtMs + LATE_CONFIRM_AFTER_WRITE_MS;
   stepAt(simulation, alternateConfirmAtMs, batsAt(simulation, 9, alternateConfirmAtMs));
   check(
     "…released on the alternate cap's 9 A confirm, 64.8 s after the re-end — no timeout",
@@ -102,8 +105,8 @@ const preWindow = {
 }
 
 {
-  // The same extend-and-re-end under #62's gap 0: end 0 s (MUCHGC0100 commits ~6.5 s), extension 5 s
-  // (MUCHGC2610 acknowledged at 5.3 s, commits ~11.3 s), re-end 8 s. The cap's interleaved confirm at
+  // The same extend-and-re-end under early readbacks: end 0 s (MUCHGC0100 commits ~6.5 s), extension 5 s
+  // (MUCHGC2610 acknowledged at 5.3 s, commits ~11.3 s), re-end 8 s. The cap's confirm at
   // 6.5 s reads 10 A — after MUCHGC2610 went out, but MUCHGC2610 is still unproven (and still to land).
   const simulation = buyingFor(nightBuying);
   endWindow(simulation);
@@ -114,7 +117,7 @@ const preWindow = {
   stepAt(simulation, 10_500, batsAt(simulation, 10, 10_500));
   const heldWhileUnproven = holdsAtEveryStep(simulation, 10_750, 11_250, () => ({}));
   check(
-    "gap 0: a 10 A readback with MUCHGC2610 unproven proves nothing → held, the hall low notwithstanding",
+    "early readbacks: a 10 A readback with MUCHGC2610 unproven proves nothing → held, the hall low notwithstanding",
     heldWhileUnproven && lastEvent(simulation, "limit_confirmed") === undefined
   );
   // MUCHGC2610 lands at 11.3 s and its re-check at 14.5 s sees it: the cap is re-asserted, and the re-end's
@@ -127,7 +130,7 @@ const preWindow = {
   stepAt(simulation, 66_500, { hallBatteryAmps: 11, ...batsAt(simulation, 10, 66_500) });
   stepAt(simulation, 69_500, {});
   check(
-    "gap 0: …held while MUCHGC2610 charges at 261 A, released 3 s after the gated cap's first 10 A re-check",
+    "early readbacks: …held while MUCHGC2610 charges at 261 A, released 3 s after the gated cap's first 10 A re-check",
     heldAtFullCurrent &&
       lastEvent(simulation, "released")?.afterMs === 61_500 &&
       simulation.events.filter(recorded => recorded.event.kind === "limit_reasserted").length === 1 &&
@@ -136,8 +139,8 @@ const preWindow = {
 }
 
 {
-  // The review's gap-0 ABA with ~12 s commits: MUCHGC0100 out at 0.75 s, MUCHGC2610 at 5.3 s (extension),
-  // re-end at 8 s. The interleaved confirm at 12.25 s reads the pre-step-down 261 A, MUCHGC0100 commits at
+  // The review's early-readback ABA with ~12 s commits: MUCHGC0100 out at 0.75 s, MUCHGC2610 at 5.3 s (extension),
+  // re-end at 8 s. The confirm at 12.25 s reads the pre-step-down 261 A, MUCHGC0100 commits at
   // 12.75 s, the settings poll at 14 s reads 10 A — then MUCHGC2610 commits at 17.3 s. Under the 12 s
   // margin the 14 s readback proved the cap; in the chain MUCHGC2610 is still unproven, so it doesn't.
   const simulation = buyingFor(nightBuying);
@@ -154,7 +157,7 @@ const preWindow = {
     ...(atMs === 18_250 ? batsAt(simulation, 261, atMs) : {}),
   }));
   check(
-    "gap-0 ABA: BATS shows 10 A while MUCHGC2610 is unproven → never confirmed; its late commit is seen at 18.25 s",
+    "early-readback ABA: BATS shows 10 A while MUCHGC2610 is unproven → never confirmed; its late commit is seen at 18.25 s",
     heldThroughLateCommit &&
       lastEvent(simulation, "limit_confirmed") === undefined &&
       lastEvent(simulation, "released") === undefined
@@ -192,7 +195,7 @@ const preWindow = {
     kindsAt(simulation, 5_000).join() === "started" && holdsAcChargingOn(simulation.state)
   );
   stepAt(simulation, 5_400, sentAt(simulation, "MUCHGC0100", 5_400));
-  // #62's gap 0 could poll HECS before EDB1 commits: that "disabled" can't rule out the unproven EDB1
+  // early readbacks could poll HECS before EDB1 commits: that "disabled" can't rule out the unproven EDB1
   stepAt(simulation, 6_000, hecsAt(simulation, "disabled", 6_000));
   check("…a 'disabled' with EDB1 still unproven can't cancel it", holdsAcChargingOn(simulation.state));
   stepAt(simulation, 6_600, { hallBatteryAmps: 270 });
@@ -212,7 +215,7 @@ const preWindow = {
     JSON.stringify(lastEvent(simulation, "released"))
   );
 
-  // The same under gap 0: the cap's interleaved confirm reads 10 A at 11.5 s, the alternate cap goes out at
+  // The same with early readbacks: the cap's confirm reads 10 A at 11.5 s, the alternate cap goes out at
   // once and its first re-check, 6 s later, reads 9 A
   const gapZero = buyingFor(preWindow);
   stepAt(gapZero, 0, { gridChargingWanted: true });
@@ -226,7 +229,7 @@ const preWindow = {
   stepAt(gapZero, 11_800, sentAt(gapZero, "MUCHGC0090", 11_800));
   stepAt(gapZero, 17_800, { hallBatteryAmps: 9, ...batsAt(gapZero, 9, 17_800) });
   check(
-    "gap 0, window ending 5 s in: released at the alternate cap's first re-check, 12.8 s after the end",
+    "early readbacks, window ending 5 s in: released at the alternate cap's first re-check, 12.8 s after the end",
     lastEvent(gapZero, "ambiguous_limit_readback")?.afterMs === 6_500 &&
       lastEvent(gapZero, "released")?.afterMs === 12_800,
     JSON.stringify(lastEvent(gapZero, "released"))

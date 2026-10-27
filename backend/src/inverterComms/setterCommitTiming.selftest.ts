@@ -30,32 +30,31 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
   framesWritten,
 });
 
-// ---------- gap 0: still old twice, then confirmed ----------
+// ---------- still old twice, then confirmed ----------
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(10), 0);
+  let state = ackedWrite(initialSchedulerState(), tracker, "GPMP000550", seconds(10), 0);
   check("an ACKed setter with a readback check is tracked", tracker.has("GPMP000550"));
-  const stillOldRecords = [seconds(16), seconds(20)].flatMap(confirmAtMs => {
+  const stillOldRecords = [seconds(19), seconds(23)].flatMap(confirmAtMs => {
     const confirmRun = afterConfirmRun(state, gpmp(350), confirmAtMs);
     state = confirmRun.state;
-    return reportConfirmOutcome(tracker, confirmRun.result, "interleaved", confirmAtMs, traffic(9, 21));
+    return reportConfirmOutcome(tracker, confirmRun.result, confirmAtMs, traffic(9, 21));
   });
   check(
     "still-old runs report no verdict and count the old readbacks",
     stillOldRecords.length === 0 && tracker.get("GPMP000550")?.readbacksStillOld === 2
   );
-  const confirmRun = afterConfirmRun(state, gpmp(550), seconds(24.2));
-  const [record] = reportConfirmOutcome(tracker, confirmRun.result, "interleaved", seconds(24.2), traffic(14, 33));
+  const confirmRun = afterConfirmRun(state, gpmp(550), seconds(27.2));
+  const [record] = reportConfirmOutcome(tracker, confirmRun.result, seconds(27.2), traffic(14, 33));
   check(
     "the confirming run logs one timing record with ACK latency, ACK → confirmed and the traffic in between",
     record?.verdict === "confirmed" &&
       record.command === "GPMP000550" &&
-      record.quietGapAfterWriteMs === 0 &&
       record.ackLatencyMs === 87 &&
       record.ackAttempts === 1 &&
-      record.ackToVerdictMs === 14_200 &&
+      record.ackToVerdictMs === 17_200 &&
       record.readbacksStillOld === 2 &&
-      record.lastStillOldAfterAckMs === 10_000 &&
+      record.lastStillOldAfterAckMs === 13_000 &&
       record.pollRoundsBetween === 12 &&
       record.framesBetween === 28,
     JSON.stringify(record)
@@ -63,21 +62,20 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
   check("…and the measurement ends there", tracker.size === 0);
 }
 
-// ---------- the default strategy: confirmed on the first readback, nothing in between ----------
+// ---------- confirmed on the first readback ----------
 {
   const tracker: SetterCommitTracker = new Map();
   const state = ackedWrite(initialSchedulerState(), tracker, "GPMP000350", seconds(10), 0);
-  const confirmRun = afterConfirmRun(state, gpmp(350), seconds(22.1));
-  const [record] = reportConfirmOutcome(tracker, confirmRun.result, "silent", seconds(22.1), traffic(2, 6));
+  const confirmRun = afterConfirmRun(state, gpmp(350), seconds(19.6));
+  const [record] = reportConfirmOutcome(tracker, confirmRun.result, seconds(19.6), traffic(10, 26));
   check(
-    "silent: confirmed after the 12 s gap with no poll round and one confirm frame in between",
+    "confirmed on the first readback, 9.6 s after the ACK, with the poll rounds in between counted",
     record?.verdict === "confirmed" &&
-      record.quietGapAfterWriteMs === 12_000 &&
-      record.ackToVerdictMs === 12_100 &&
+      record.ackToVerdictMs === 9_600 &&
       record.readbacksStillOld === 0 &&
       record.lastStillOldAfterAckMs === null &&
-      record.pollRoundsBetween === 0 &&
-      record.framesBetween === 1,
+      record.pollRoundsBetween === 8 &&
+      record.framesBetween === 21,
     JSON.stringify(record)
   );
 }
@@ -85,34 +83,34 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
 // ---------- give-up, supersede, identical rewrite, multi-field setters ----------
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
+  let state = ackedWrite(initialSchedulerState(), tracker, "GPMP000550", seconds(0), 0);
   const recordsBeforeDeadline: CommitTimingRecord[] = [];
-  for (let confirmAtSeconds = 6; confirmAtSeconds < 55; confirmAtSeconds += 4) {
+  for (let confirmAtSeconds = 9; confirmAtSeconds < 55; confirmAtSeconds += 4) {
     const confirmRun = afterConfirmRun(state, gpmp(350), seconds(confirmAtSeconds));
     state = confirmRun.state;
     recordsBeforeDeadline.push(
-      ...reportConfirmOutcome(tracker, confirmRun.result, "interleaved", seconds(confirmAtSeconds), traffic(40, 90))
+      ...reportConfirmOutcome(tracker, confirmRun.result, seconds(confirmAtSeconds), traffic(40, 90))
     );
   }
   const finalRun = afterConfirmRun(state, gpmp(350), seconds(55));
-  const records = reportConfirmOutcome(tracker, finalRun.result, "interleaved", seconds(55), traffic(44, 99));
+  const records = reportConfirmOutcome(tracker, finalRun.result, seconds(55), traffic(44, 99));
   check(
     "a write that never shows up gets a never_applied record at its deadline, and none before",
     recordsBeforeDeadline.length === 0 &&
       records.length === 1 &&
       records[0]!.verdict === "never_applied" &&
       records[0]!.ackToVerdictMs === 55_000 &&
-      records[0]!.readbacksStillOld === 13,
+      records[0]!.readbacksStillOld === 12,
     JSON.stringify(records)
   );
 }
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
+  let state = ackedWrite(initialSchedulerState(), tracker, "GPMP000550", seconds(0), 0);
   state = afterSetterSent(state, "GPMP000350", ["GPMP"], seconds(3), true);
   const superseded = reportAckedSetter(
     tracker,
-    { command: "GPMP000350", quietGapAfterWriteMs: 0, ackLatencyMs: 90, ackAttempts: 1, ackedAtMs: seconds(3) },
+    { command: "GPMP000350", ackLatencyMs: 90, ackAttempts: 1, ackedAtMs: seconds(3) },
     state.confirm,
     traffic(3, 8)
   );
@@ -127,7 +125,7 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
   state = afterSetterSent(state, "GPMP000350", ["GPMP"], seconds(63), true);
   const rewritten = reportAckedSetter(
     tracker,
-    { command: "GPMP000350", quietGapAfterWriteMs: 0, ackLatencyMs: 2_400, ackAttempts: 2, ackedAtMs: seconds(63) },
+    { command: "GPMP000350", ackLatencyMs: 2_400, ackAttempts: 2, ackedAtMs: seconds(63) },
     state.confirm,
     traffic(50, 120)
   );
@@ -141,18 +139,18 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
 }
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "MCHGV0570,0570", seconds(0), 0);
+  let state = ackedWrite(initialSchedulerState(), tracker, "MCHGV0570,0570", seconds(0), 0);
   const floatStillOld = { BATS: { "battery_constant_charge_voltage(c.v.)": 57, battery_floating_charge_voltage: 58 } };
-  const firstRun = afterConfirmRun(state, floatStillOld, seconds(6));
+  const firstRun = afterConfirmRun(state, floatStillOld, seconds(9));
   state = firstRun.state;
-  const partial = reportConfirmOutcome(tracker, firstRun.result, "interleaved", seconds(6), traffic(5, 12));
+  const partial = reportConfirmOutcome(tracker, firstRun.result, seconds(9), traffic(5, 12));
   check(
     "MCHGV: CV visible but float still old → no verdict yet",
     partial.length === 0 && tracker.get("MCHGV0570,0570")?.readbacksStillOld === 1
   );
   const bothApplied = { BATS: { "battery_constant_charge_voltage(c.v.)": 57, battery_floating_charge_voltage: 57 } };
-  const secondRun = afterConfirmRun(state, bothApplied, seconds(10));
-  const [record] = reportConfirmOutcome(tracker, secondRun.result, "interleaved", seconds(10), traffic(8, 19));
+  const secondRun = afterConfirmRun(state, bothApplied, seconds(13));
+  const [record] = reportConfirmOutcome(tracker, secondRun.result, seconds(13), traffic(8, 19));
   check(
     "MCHGV: confirmed once both fields show — one record for the command",
     record?.verdict === "confirmed" && record.command === "MCHGV0570,0570" && tracker.size === 0
@@ -163,13 +161,7 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
   const state = afterSetterSent(initialSchedulerState(), "DAT261025120000", [], seconds(1), true);
   reportAckedSetter(
     tracker,
-    {
-      command: "DAT261025120000",
-      quietGapAfterWriteMs: 12_000,
-      ackLatencyMs: 80,
-      ackAttempts: 1,
-      ackedAtMs: seconds(1),
-    },
+    { command: "DAT261025120000", ackLatencyMs: 80, ackAttempts: 1, ackedAtMs: seconds(1) },
     state.confirm,
     traffic(0, 0)
   );
@@ -179,40 +171,37 @@ const traffic = (pollRoundsCompleted: number, framesWritten: number): LineTraffi
 // ---------- a write too young to judge is not counted as still old ----------
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
+  let state = ackedWrite(initialSchedulerState(), tracker, "GPMP000550", seconds(0), 0);
   state = ackedWrite(state, tracker, "MUCHGC0100", seconds(4.5), 0);
   const stillOldEverywhere = { ...gpmp(350), BATS: { "max._ac_charging_current": 6 } };
-  const confirmRun = afterConfirmRun(state, stillOldEverywhere, seconds(6));
-  reportConfirmOutcome(tracker, confirmRun.result, "interleaved", seconds(6), traffic(5, 12));
+  const confirmRun = afterConfirmRun(state, stillOldEverywhere, seconds(9));
+  reportConfirmOutcome(tracker, confirmRun.result, seconds(9), traffic(5, 12));
   check(
-    "gap 0: at 6 s GPMP (6 s old) counts a still-old readback, MUCHGC (1.5 s old) waits uncounted",
+    "at 9 s GPMP (9 s old) counts a still-old readback, MUCHGC (4.5 s old) waits uncounted",
     tracker.get("GPMP000550")?.readbacksStillOld === 1 && tracker.get("MUCHGC0100")?.readbacksStillOld === 0,
     `GPMP ${tracker.get("GPMP000550")?.readbacksStillOld}, MUCHGC ${tracker.get("MUCHGC0100")?.readbacksStillOld}`
   );
 }
 
-// ---------- the starvation fallback is its own errorLog (P2) ----------
+// ---------- the give-up is one errorLog (P2), and nothing falls back ----------
 {
   const tracker: SetterCommitTracker = new Map();
-  let state = ackedWrite(initialSchedulerState({ quietGapAfterWriteMs: 0 }), tracker, "GPMP000550", seconds(0), 0);
-  for (let confirmAtSeconds = 6; confirmAtSeconds < 55; confirmAtSeconds += 4) {
+  let state = ackedWrite(initialSchedulerState(), tracker, "GPMP000550", seconds(0), 0);
+  for (let confirmAtSeconds = 9; confirmAtSeconds < 55; confirmAtSeconds += 4) {
     state = afterConfirmRun(state, gpmp(350), seconds(confirmAtSeconds)).state;
   }
   const errorLogsBefore = errorLogsCaptured.length;
   const giveUp = afterConfirmRun(state, gpmp(350), seconds(55));
-  reportConfirmOutcome(tracker, giveUp.result, "interleaved", seconds(55), traffic(44, 99));
+  reportConfirmOutcome(tracker, giveUp.result, seconds(55), traffic(44, 99));
   const logged = errorLogsCaptured.slice(errorLogsBefore);
   check(
-    "gap 0 give-up: one never-applied errorLog and one auto-revert errorLog recommending 12000",
-    logged.length === 2 &&
-      logged[0]!.startsWith("Inverter ACKed but never applied within the interleaved confirm window:") &&
-      logged[1]!.startsWith("Inverter quiet gap 0 auto-reverted: GPMP000550 starved") &&
-      logged[1]!.includes("then use the 12000 ms quiet gap") &&
-      logged[1]!.includes("wait for any still-running gap-0 confirm phase") &&
-      logged[1]!.includes("not saved") &&
-      logged[1]!.includes("Set it back to 12000 now"),
+    "give-up: exactly one never-applied errorLog naming the write",
+    logged.length === 1 &&
+      logged[0]!.startsWith("Inverter ACKed but never applied within the confirm window:") &&
+      logged[0]!.includes("GPMP000550 (wanted maximum_feeding_grid_power=550)"),
     logged.join(" | ")
   );
+  check("…and the phase is over", giveUp.state.confirm === undefined);
 }
 
 console.log(
@@ -231,13 +220,7 @@ function ackedWrite(
   const armed = afterSetterSent(state, command, ["GPMP"], ackedAtMs, true);
   reportAckedSetter(
     tracker,
-    {
-      command,
-      quietGapAfterWriteMs: armed.timing.quietGapAfterWriteMs,
-      ackLatencyMs: 87.4,
-      ackAttempts: 1,
-      ackedAtMs,
-    },
+    { command, ackLatencyMs: 87.4, ackAttempts: 1, ackedAtMs },
     armed.confirm,
     traffic(2, framesWrittenAtAck + 5)
   );

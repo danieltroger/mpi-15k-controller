@@ -63,10 +63,11 @@ check(
 );
 
 {
-  // The issue's case (#63's narrow review): commits take 45 s, quiet gap 12 s. The window ends at 0
-  // (MUCHGC0100 at 0.3 s, lands 45.3 s), is re-entered at 5 s (MUCHGC2610 at 5.3 s, lands 50.3 s) and ends
-  // again at 8 s (that MUCHGC0100 is gated until 61 s, lands 106 s). The backoff re-check at 47.3 s reads
-  // 10 A: the 12 s margin took it as proof and released at 50.3 s — as MUCHGC2610 landed, at full current.
+  // The issue's case (#63's narrow review, under the since-retired 12 s quiet gap): commits take 45 s.
+  // The window ends at 0 (MUCHGC0100 at 0.3 s, lands 45.3 s), is re-entered at 5 s (MUCHGC2610 at 5.3 s,
+  // lands 50.3 s) and ends again at 8 s (that MUCHGC0100 is gated until 61 s, lands 106 s). The backoff
+  // re-check at 47.3 s reads 10 A: the 12 s margin took it as proof and released at 50.3 s — as MUCHGC2610
+  // landed, at full current.
   const simulation = slowCommitExtendAndReEnd();
   stepAt(simulation, 47_300, { hallBatteryAmps: 10, ...batsAt(simulation, 10, 47_300) });
   const heldWhileHigherUnproven = holdsAtEveryStep(simulation, 47_550, 50_250, () => ({}));
@@ -146,7 +147,7 @@ check(
     "…the confirm read 261 A after the hall settled: a request once that readback is 10 s old",
     beforeInterval === 0 && settingsReadbackRequests(simulation.state) === 1
   );
-  // The silent backoff holds the session off until 42.5 s: the request stays open, nothing more is asked
+  // No readback until 42.5 s (a line busy with retries, say): the request stays open, nothing more is asked
   holdsAtEveryStep(simulation, 22_750, 42_250, () => ({}));
   const whileOpen = settingsReadbackRequests(simulation.state);
   stepAt(simulation, 42_500, batsAt(simulation, 261, 42_500));

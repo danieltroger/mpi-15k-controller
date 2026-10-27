@@ -1,7 +1,7 @@
 /**
  * Pure self-test of the buy-window end step-down, main paths: EDB0 only once the 10 A cap has really
  * taken effect — a BATS readback at the cap with no unproven higher-limit write left in #62's write chain,
- * and the hall — at night, with PV, at #48's quiet gap and #62's gap 0, when the confirm gives up, without
+ * and the hall — at night, with PV, with a 12 s and a 9 s confirm, when the confirm gives up, without
  * a hall sensor, and the timeout and its extension when the hall shows the cap isn't in effect.
  * The released phase's EDB0 retries: buyWindowEndRelease.selftest.ts. Window extensions, shrinks, new
  * windows, restarts and readback races: buyWindowEndStepDownEdgeCases.selftest.ts. A→B→A readbacks and the
@@ -27,6 +27,7 @@ import {
   SETTLED_FOR_MS,
 } from "./buyWindowEndEvidence.ts";
 import { MAX_LIMIT_REASSERTIONS } from "./buyWindowEndAsks.ts";
+import { FIRST_CONFIRM_AFTER_WRITE_MS } from "../inverterComms/schedulerTiming.ts";
 import {
   batsAt,
   buyingFor,
@@ -93,7 +94,7 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
       released.allowedHallAmps === 30,
     JSON.stringify(released)
   );
-  // EDB0 goes out; its HECS confirm lands after the next quiet gap. Until then HECS still says "enabled".
+  // EDB0 goes out; its HECS confirm lands 12 s later. Until then HECS still says "enabled".
   stepAt(simulation, 12_800, sentAt(simulation, "EDB0", 12_800));
   const heldOnStaleHecs = heldAtAnyStep(simulation, 13_000, 25_000, () => ({ hallBatteryAmps: 0 }));
   check(
@@ -113,32 +114,37 @@ check("a fresh state holds nothing", !holdsAcChargingOn(initialBuyWindowEndStepD
 {
   // A real window's amps wiggle, so its last higher-limit write can be seconds before the end (here
   // MUCHGC2600 at -3 s, still unproven). Its value differs from the cap's, so a 10 A readback can only
-  // mean both landed, in send order: proof at the first readback, whatever the quiet gap.
-  const quietGap = buyingFor(nightBuying);
-  stepAt(quietGap, -3_000, sentAt(quietGap, "MUCHGC2600", -3_000));
-  endWindow(quietGap);
-  holdsAtEveryStep(quietGap, 750, CONFIRM_AFTER_WRITE_MS - 250, atMs => ({
+  // mean both landed, in send order: proof at the first readback, whenever it comes.
+  const lateConfirm = buyingFor(nightBuying);
+  stepAt(lateConfirm, -3_000, sentAt(lateConfirm, "MUCHGC2600", -3_000));
+  endWindow(lateConfirm);
+  holdsAtEveryStep(lateConfirm, 750, CONFIRM_AFTER_WRITE_MS - 250, atMs => ({
     hallBatteryAmps: atMs < CAP_SENT_AFTER_END_MS + COMMIT_AFTER_WRITE_MS ? 280 : 11,
   }));
-  stepAt(quietGap, CONFIRM_AFTER_WRITE_MS, batsAt(quietGap, 10, CONFIRM_AFTER_WRITE_MS));
+  stepAt(lateConfirm, CONFIRM_AFTER_WRITE_MS, batsAt(lateConfirm, 10, CONFIRM_AFTER_WRITE_MS));
   check(
-    "quiet gap, last higher-limit write 3 s before the end → released at the confirm",
-    lastEvent(quietGap, "released")?.afterMs === CONFIRM_AFTER_WRITE_MS
+    "12 s confirm, last higher-limit write 3 s before the end → released at the confirm",
+    lastEvent(lateConfirm, "released")?.afterMs === CONFIRM_AFTER_WRITE_MS
   );
-  // #62's gap 0: the interleaved confirm reads 10 A 6 s after the cap went out — proof at once, so the
-  // release only waits for the hall's 3 s settle, no fixed margin past the last higher-limit write
-  const gapZero = buyingFor(nightBuying);
-  stepAt(gapZero, -3_000, sentAt(gapZero, "MUCHGC2600", -3_000));
-  endWindow(gapZero);
-  const firstRecheckAtMs = CAP_SENT_AFTER_END_MS + COMMIT_AFTER_WRITE_MS;
-  stepAt(gapZero, firstRecheckAtMs, { hallBatteryAmps: 11, ...batsAt(gapZero, 10, firstRecheckAtMs) });
-  const heldWhileSettling = holdsAtEveryStep(gapZero, firstRecheckAtMs + 250, firstRecheckAtMs + 2_750, () => ({}));
-  stepAt(gapZero, firstRecheckAtMs + SETTLED_FOR_MS, {});
+  // The first confirm reads 10 A 9 s after the cap went out, by when the hall has been
+  // at ~10 A for 3 s since the 6.5 s commit — proof and settle together, so released right there, no
+  // fixed margin past the last higher-limit write
+  const firstConfirm9s = buyingFor(nightBuying);
+  stepAt(firstConfirm9s, -3_000, sentAt(firstConfirm9s, "MUCHGC2600", -3_000));
+  endWindow(firstConfirm9s);
+  const capCommittedAtMs = CAP_SENT_AFTER_END_MS + COMMIT_AFTER_WRITE_MS;
+  const firstConfirmAtMs = CAP_SENT_AFTER_END_MS + FIRST_CONFIRM_AFTER_WRITE_MS;
+  const heldUntilProof = holdsAtEveryStep(firstConfirm9s, 750, firstConfirmAtMs - 250, atMs => ({
+    hallBatteryAmps: atMs < capCommittedAtMs ? 280 : 11,
+  }));
+  stepAt(firstConfirm9s, firstConfirmAtMs, batsAt(firstConfirm9s, 10, firstConfirmAtMs));
   check(
-    "gap 0: the 6.5 s re-check proves the cap; released 3 s later, once the hall has settled",
-    heldWhileSettling &&
-      lastEvent(gapZero, "limit_confirmed")?.afterMs === firstRecheckAtMs &&
-      lastEvent(gapZero, "released")?.afterMs === firstRecheckAtMs + SETTLED_FOR_MS
+    "9 s confirm: the 9.5 s first confirm proves the cap, the hall settled since the 6.5 s commit → released at once",
+    heldUntilProof &&
+      firstConfirmAtMs - capCommittedAtMs >= SETTLED_FOR_MS &&
+      lastEvent(firstConfirm9s, "limit_confirmed")?.afterMs === firstConfirmAtMs &&
+      lastEvent(firstConfirm9s, "released")?.afterMs === firstConfirmAtMs,
+    JSON.stringify(lastEvent(firstConfirm9s, "released"))
   );
 }
 
