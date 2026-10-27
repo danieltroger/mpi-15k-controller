@@ -17,6 +17,10 @@ import {
   withSettingsReadback,
 } from "../inverterComms/schedulerCore.ts";
 import { wireBuyingSetters } from "./buyingSetterWiring.ts";
+import {
+  DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
+  type SetterChangeThrottleSettings,
+} from "../inverterComms/setterChangeThrottle.ts";
 
 /** The simulated wall clock runs this far ahead of the monotonic one, so mixing them up shows */
 const WALL_CLOCK_OFFSET_MS = 1_800_000_000_000;
@@ -41,6 +45,8 @@ export type WiringHarness = {
   setSolarWatts: Setter<number | undefined>;
   setClockTick: Setter<number>;
   clockTick: Accessor<number>;
+  /** The write-throttle knobs as the config page would change them (the defaults to start with) */
+  setSetterChangeThrottle: Setter<SetterChangeThrottleSettings>;
 };
 
 export type WiringHarnessStart = {
@@ -81,6 +87,7 @@ export function createWiringHarness(
     );
     const [solarWatts, setSolarWatts] = createSignal<number | undefined>(start.solarWatts ?? 0);
     const [clockTick, setClockTick] = createSignal(0);
+    const [setterChangeThrottle, setSetterChangeThrottle] = createSignal(DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS);
     const harness = { scheduler: initialSchedulerState() };
     const wiring = wireBuyingSetters({
       stillFeedingIn,
@@ -105,6 +112,7 @@ export function createWiringHarness(
       clockTick,
       monotonicNowMs: () => clock.monotonicMs,
       wallClockNowMs: () => wallClockMs(clock),
+      setterChangeThrottle,
     });
     return Object.assign(harness, {
       clock,
@@ -120,6 +128,7 @@ export function createWiringHarness(
       setSolarWatts,
       setClockTick,
       clockTick,
+      setSetterChangeThrottle,
     });
   });
 }

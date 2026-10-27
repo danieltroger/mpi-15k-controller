@@ -203,13 +203,13 @@ expectError(
   const predatingTheKnob = {
     ...structuredClone(default_config),
     usb_parameter_setting: { min_seconds_between_commands: 60, poll_values_interval_seconds: 120 },
-  } as Partial<Config>;
+  } as unknown as Partial<Config>;
   const merged = mergeWithDefaults(predatingTheKnob);
   check(
-    "a config.json without quiet_gap_after_write_ms boots with the 12000 default, keeping its own keys",
+    "a config.json without quiet_gap_after_write_ms boots with the 12000 default, keeping its poll interval (the retired command spacing is dropped)",
     merged.usb_parameter_setting.quiet_gap_after_write_ms === 12_000 &&
       merged.usb_parameter_setting.poll_values_interval_seconds === 120 &&
-      merged.usb_parameter_setting.min_seconds_between_commands === 60
+      !("min_seconds_between_commands" in merged.usb_parameter_setting)
   );
   const toZero = applyConfigPatch(merged, {
     path: ["usb_parameter_setting", "quiet_gap_after_write_ms"],

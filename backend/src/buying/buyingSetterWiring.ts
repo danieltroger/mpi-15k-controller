@@ -21,6 +21,11 @@ import {
 } from "./acChargingReadbacks.ts";
 import { logStepDownEvent } from "./buyWindowEndStepDownLog.ts";
 import { warnLog } from "../utilities/logging.ts";
+import {
+  acChargingCurrentThrottleLimits,
+  type SetterChangeThrottleSettings,
+} from "../inverterComms/setterChangeThrottle.ts";
+import { createThrottledSetterTarget } from "../inverterComms/throttledSetterTarget.ts";
 
 /** A hall reading older than this doesn't describe the battery any more (it arrives at ~4 Hz) */
 export const HALL_READING_MAX_AGE_MS = 5_000;
@@ -49,7 +54,12 @@ export type BuyingSetterEnvironment = {
   monotonicNowMs: () => number;
   /** For the hall samples' wall-clock timestamps (Date.now() in production) */
   wallClockNowMs: () => number;
+  /** The usb_parameter_setting write-throttle knobs, live (useSetterChangeThrottleSettings) */
+  setterChangeThrottle: Accessor<SetterChangeThrottleSettings>;
 };
+
+/** "idle_cap" is whenever no buy window wants charging: boot, between windows, and the step-down */
+type AcChargingLimitMode = "buy_window" | "idle_cap";
 
 /**
  * The EDB and MUCHGC setters plus the buy-window end step-down: a window end first caps the charge
@@ -60,6 +70,21 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
   const { stillFeedingIn, chargingAmperageForBuying, queueSetter } = environment;
   const shouldBuy = createMemo(() => !stillFeedingIn() && !!chargingAmperageForBuying());
   const wantedLimitAmps = createMemo(() => wantedAcChargingLimitAmps(shouldBuy(), chargingAmperageForBuying()));
+  // Within a window the wanted limit follows the per-phase load, and it chased that noise with a write
+  // every ~14 s (2026-10-27): the throttle holds small moves. A window starting or ending (the end is the
+  // step-down's cap) is a mode change, and a large decrease protects the fuse: both go out in their tick.
+  const throttledLimitAmps = createThrottledSetterTarget<AcChargingLimitMode>({
+    setter: "MUCHGC",
+    unit: "A",
+    wish: () => ({ target: wantedLimitAmps(), mode: shouldBuy() ? "buy_window" : "idle_cap" }),
+    limits: () => acChargingCurrentThrottleLimits(environment.setterChangeThrottle()),
+    modeChangeReasons: {
+      buy_window: "buy window start",
+      idle_cap: "no buy window wants charging (window end: the step-down's idle cap)",
+    },
+    clockTick: environment.clockTick,
+    monotonicNowMs: environment.monotonicNowMs,
+  });
   const { acChargingLimitReadback, acChargingReading } = createAcChargingReadbacks({
     ...environment,
     sessionAcChargingReadAtMs: () => environment.settingsReadbackAtMs("HECS"),
@@ -113,7 +138,10 @@ export function wireBuyingSetters(environment: BuyingSetterEnvironment) {
     }
   });
 
-  createEffect(() => queueAcChargingLimit(queueSetter, wantedLimitAmps()));
+  createEffect(() => {
+    const limitAmps = throttledLimitAmps();
+    if (limitAmps !== undefined) queueAcChargingLimit(queueSetter, limitAmps);
+  });
 
   // The step-down's bounded re-asks (#48 leaves re-sending a write whose confirm gave up to its owner).
   // Queued only when the count grows: a reset at the phase change must not queue anything.

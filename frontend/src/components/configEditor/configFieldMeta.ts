@@ -3,6 +3,10 @@ import {
   THERMOMETER_SWEEP_SETTING_BOUNDS,
   type ThermometerSweepSettingName,
 } from "../../../../backend/src/temperatureMeasuring/thermometerSweepSettings";
+import {
+  SETTER_CHANGE_THROTTLE_BOUNDS,
+  type SetterChangeThrottleSettingName,
+} from "../../../../backend/src/inverterComms/setterChangeThrottle";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -89,6 +93,17 @@ function sweepSettingInput(settingName: ThermometerSweepSettingName): Partial<Co
 
 function describeSweepSettingBounds(settingName: ThermometerSweepSettingName): string {
   const { min, max, unit, defaultValue } = THERMOMETER_SWEEP_SETTING_BOUNDS[settingName];
+  return `${min}–${max} ${unit}, default ${defaultValue}.`;
+}
+
+/** Number-input hints for a write-throttle setting: the bounds the backend clamps to */
+function throttleSettingInput(settingName: SetterChangeThrottleSettingName): Partial<ConfigFieldMeta> {
+  const { min, max, unit } = SETTER_CHANGE_THROTTLE_BOUNDS[settingName];
+  return { unit, min, max, step: 1 };
+}
+
+function describeThrottleSettingBounds(settingName: SetterChangeThrottleSettingName): string {
+  const { min, max, unit, defaultValue } = SETTER_CHANGE_THROTTLE_BOUNDS[settingName];
   return `${min}–${max} ${unit}, default ${defaultValue}.`;
 }
 
@@ -1004,10 +1019,16 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     rootKeys: ["usb_parameter_setting", "mqtt_host"],
     fields: [
       f(
-        ["usb_parameter_setting", "min_seconds_between_commands"],
-        "Command spacing (unused)",
-        "Retired with the mpp-solar CLI queue — the native serial engine paces itself (see the quiet gap below). Kept only so existing config files load.",
-        { unit: "s" }
+        ["usb_parameter_setting", "min_seconds_between_setting_changes"],
+        "Time between setting changes",
+        `How long the AC charging current (MUCHGC) and the feed-in limit (GPMP) each keep a target before the next change is written. During a buy window the charging current follows the house load, and without a pause it was rewritten every ~14 s over 1–2 A of noise. In the evening of 2026-10-27 that coincided with the inverter dropping off the grid five times ("AC input island"). Never held: a buy window starting or ending (the end's 10 A step-down included), feeding switching between solar only, the battery and selling, switching AC charging or feeding on or off, the first value after a restart, and a large charging-current decrease (next setting). Longer means fewer writes, but a higher target (more charging, a peak boost) arrives later, and a small decrease can overshoot the max grid draw by up to the next setting's amount for that long. 0 writes every change at once, like before. Applies at once. ${describeThrottleSettingBounds("min_seconds_between_setting_changes")}`,
+        throttleSettingInput("min_seconds_between_setting_changes")
+      ),
+      f(
+        ["usb_parameter_setting", "ac_charging_current_immediate_decrease_amps"],
+        "Charging decrease written at once",
+        `A charging current target at least this many amps (battery side) below the last one is written straight away, ignoring the time between changes, so a load coming on during a buy window (the EV, a kettle) can never overload a phase. Smaller decreases wait like increases. 10 A is about 180 W, or 0.8 A, per phase, which is the most a held decrease can put the busiest phase over the max grid draw. Lower lets more of the noise through as writes. 0 writes every decrease at once. Higher lets a bigger overshoot wait, so it stops at 30 A (about 2.3 A per phase). Applies at once. ${describeThrottleSettingBounds("ac_charging_current_immediate_decrease_amps")}`,
+        throttleSettingInput("ac_charging_current_immediate_decrease_amps")
       ),
       f(
         ["usb_parameter_setting", "poll_values_interval_seconds"],
