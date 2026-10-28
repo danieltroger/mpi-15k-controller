@@ -1,8 +1,8 @@
 /**
  * THE one persistent PI17 session: a single command mutex over the serial device, with priority
- * control writes > confirm queries > background polls, and the post-write quiet gap the inverter's
- * commit behaviour demands (see schedulerTiming.ts for the measured numbers; the gap is the live
- * knob usb_parameter_setting.quiet_gap_after_write_ms, 0 = keep polling). Replaces both the
+ * control writes > confirm queries > background polls, and every write confirmed by reading it back
+ * while polling carries on (the inverter commits seconds after its ACK — see schedulerTiming.ts for
+ * the measured numbers). Replaces both the
  * external mpp-solar MQTT daemon and the per-command mpp-solar CLI spawns — and with them the
  * stop-daemon/run-CLI/start-daemon dance (5m48s MQTT blackout on 2026-07-18). No systemctl calls
  * anywhere in this path: the mpp-solar unit is retired at cutover.
@@ -17,7 +17,7 @@
  * function declarations). Scheduling times are monotonic (performance.now()); only the
  * externally visible timestamps (round decodedAt, lastWriteAt) are wall-clock.
  */
-import { type Accessor, createEffect, createSignal, on, onCleanup, type Setter, untrack } from "solid-js";
+import { type Accessor, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import { debugLog, errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type {
   DecodedFields,
@@ -40,8 +40,10 @@ import {
   afterPollRound,
   afterSetterSent,
   decideNextAction,
+  giveUpsAlreadyPaged,
   hasEligibleSetter,
   initialSchedulerState,
+  takeStarvedWriteReports,
   withSettingsReadbackRequested,
   withSettingsReadback,
   withSetterDequeued,
@@ -50,10 +52,10 @@ import {
 } from "./schedulerCore.ts";
 import type { SchedulerTiming } from "./schedulerTiming.ts";
 import { type FieldWrite, unprovenWritesIn } from "./fieldWriteChains.ts";
-import { quietGapFromConfig, schedulerWithQuietGapSetting } from "./quietGapSetting.ts";
 import {
   reportAckedSetter,
   reportConfirmOutcome,
+  reportStarvedWrites,
   type LineTraffic,
   type SetterCommitTracker,
 } from "./setterCommitTiming.ts";
@@ -87,21 +89,18 @@ const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HE
 
 export function createInverterSession({
   poll_values_interval_seconds,
-  quiet_gap_after_write_ms,
   onDecodedRound,
   devicePath = INVERTER_SERIAL_DEVICE,
   schedulerTimingOverrides = {},
 }: {
   /** Cadence of the slow settings poll — config().usb_parameter_setting.poll_values_interval_seconds */
   poll_values_interval_seconds: Accessor<number>;
-  /** config().usb_parameter_setting.quiet_gap_after_write_ms — live, from the first write after any running confirm */
-  quiet_gap_after_write_ms: Accessor<number>;
   /** Only ever called with rounds that passed the plausibility gate, and never after disposal */
   onDecodedRound: (round: DecodedRound) => void;
   /** Overridable only so harnesses can point the whole engine at a pty instead of the inverter */
   devicePath?: string;
   /** Harnesses only (they scale the windows down) — production passes nothing */
-  schedulerTimingOverrides?: Partial<Omit<SchedulerTiming, "quietGapAfterWriteMs">>;
+  schedulerTimingOverrides?: Partial<SchedulerTiming>;
 }) {
   const [lastWriteAt, setLastWriteAt] = createSignal<number | undefined>(undefined);
   const [serialIsOpen, setSerialIsOpen] = createSignal(false);
@@ -112,10 +111,7 @@ export function createInverterSession({
     setSerialIsOpen,
     // onOpen can only fire after stty's await, by when `state` is initialized
     serialExchange: createSerialExchange({ devicePath, onOpen: () => onSerialOpened(state) }),
-    scheduler: initialSchedulerState({
-      ...schedulerTimingOverrides,
-      quietGapAfterWriteMs: quietGapFromConfig(untrack(quiet_gap_after_write_ms)),
-    }),
+    scheduler: initialSchedulerState(schedulerTimingOverrides),
     statusPollPlan: initialStatusPollPlan(),
     queuedSetterItems: new Map(),
     commitTracker: new Map(),
@@ -134,14 +130,6 @@ export function createInverterSession({
   };
   state.countersAtLastStatsLog = currentCounters(state);
   const statsTimer = setInterval(() => logStats(state), STATS_LOG_INTERVAL_MS);
-  // Deferred: the initializer above already took (and, if needed, corrected) the boot value
-  createEffect(
-    on(
-      quiet_gap_after_write_ms,
-      configuredMs => (state.scheduler = schedulerWithQuietGapSetting(state.scheduler, configuredMs)),
-      { defer: true }
-    )
-  );
   void runPump(state);
 
   onCleanup(() => {
@@ -166,7 +154,7 @@ export function createInverterSession({
       state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
     },
     /**
-     * Read GPMP + HECS + BATS on the next poll rounds (after any silent confirm phase) until `query` has
+     * Read GPMP + HECS + BATS on the next poll rounds until `query` has
      * decoded, ahead of poll_values_interval_seconds, for at most SETTINGS_READBACK_REQUEST_LIFETIME_MS —
      * for a consumer whose proof waits on a readback nothing else will take. Nothing here bounds how often
      * it is called: each call slows GS/PS by a settings round or more, so callers must bound their asking.
@@ -174,7 +162,7 @@ export function createInverterSession({
     requestSettingsReadback: (query: SettingsQueryCommandName) => {
       state.scheduler = withSettingsReadbackRequested(state.scheduler, query, performance.now());
     },
-    /** When the last control write went out — the signal behind the quiet-gap poll suppression */
+    /** When the last control write went out (wall clock) */
     lastWriteAt,
     /**
      * Read-only, not reactive: the writes to one readback field that no readback has proven landed yet,
@@ -301,7 +289,9 @@ async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Prom
   }
   recordGateAccept(state, command);
   if (isSettingsQuery(command)) {
-    state.scheduler = withSettingsReadback(state.scheduler, command, fields, performance.now());
+    const recorded = takeStarvedWriteReports(withSettingsReadback(state.scheduler, command, fields, performance.now()));
+    state.scheduler = recorded.state;
+    reportStarvedWrites(recorded.reports);
   }
   state.onDecodedRound({ command, wireCommand, fields, decodedAt: Date.now() });
   return { kind: "decoded", fields };
@@ -333,9 +323,6 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
       state.commitTracker,
       {
         command,
-        // The gap the phase was armed with: a merged write keeps it, the starvation fallback replaces 0
-        quietGapAfterWriteMs:
-          state.scheduler.confirm?.quietGapAfterWriteMs ?? state.scheduler.timing.quietGapAfterWriteMs,
         ackLatencyMs: result.answeredAfterWriteMs,
         ackAttempts: result.attempts,
         ackedAtMs: sentAt,
@@ -370,16 +357,18 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
     if (fields) decodedByQuery[query] = fields;
   }
   if (state.disposed) return;
-  const strategy = state.scheduler.confirm?.strategy;
+  const hadConfirmPhase = state.scheduler.confirm !== undefined;
   const nowMs = performance.now();
+  const schedulerBeforeRun = state.scheduler;
   const { state: scheduler, result } = afterConfirmRun(state.scheduler, decodedByQuery, nowMs, runStartedAtMs);
   state.scheduler = scheduler;
-  if (!strategy) {
+  if (!hadConfirmPhase) {
     // run_confirms is only ever decided from a confirm phase — reaching this is a scheduler bug
     errorLog("Inverter session: ran confirm queries", queries.join(", "), "without a confirm phase");
     return;
   }
-  for (const record of reportConfirmOutcome(state.commitTracker, result, strategy, nowMs, lineTraffic(state))) {
+  const alreadyPaged = giveUpsAlreadyPaged(schedulerBeforeRun, result.gaveUpChecks);
+  for (const record of reportConfirmOutcome(state.commitTracker, result, nowMs, lineTraffic(state), alreadyPaged)) {
     if (record.verdict === "confirmed") state.writesConfirmed++;
     if (record.verdict === "never_applied") state.writesNeverApplied++;
   }

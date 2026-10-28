@@ -26,7 +26,7 @@ export function prematureFloatBugWorkaround({
     return ((100 - soc) / 100) * capacity_ah * v_discharge;
   });
   // Confirmed values come from the periodic BATS readback over serial (plus the session's targeted
-  // BATS confirm after every write's quiet gap), which replaced the old Shinemonitor cloud readback.
+  // BATS confirm after every write), which replaced the old Shinemonitor cloud readback.
   const localStateOfConfiguredVoltageFloat = createMemo(() =>
     parseConfirmedVoltage($usbValues.battery_floating_charge_voltage, "battery_floating_charge_voltage")
   );
@@ -119,10 +119,9 @@ export function prematureFloatBugWorkaround({
   const retryInterval = setInterval(
     () => {
       // The inverter ACKs MCHGV immediately but commits it only seconds later, and the session's
-      // confirm sequence (by default a 12 s quiet gap + one 30 s backoff re-check; with the quiet
-      // gap at 0, re-checks every 4 s for up to 55 s) may still be in flight — a
-      // tick landing in that window would see stale values and re-send a write that already
-      // succeeded, so skip while a recent write's confirmation may still be pending.
+      // confirm sequence (re-checks from 9 s after the write, every 4 s, for up to 55 s) may still
+      // be in flight — a tick landing in that window would see stale values and re-send a write that
+      // already succeeded, so skip while a recent write's confirmation may still be pending.
       if (+new Date() - lastVoltageSetAt < 90_000) return;
       untrack(() =>
         queueVoltageSyncIfNeeded({
@@ -245,8 +244,8 @@ function queueChargeVoltagesCommand(targetVoltage: number, queueSetter: (item: S
     // Replace any not-yet-sent MCHGV so a stale target can't be applied after this newer one
     replacesPrefix: "MCHGV",
     // Confirm via BATS readback, which feeds localStateOfConfiguredVoltage*. The session runs it
-    // after the post-write quiet gap the inverter's delayed commit requires (ACK ≠ applied — see
-    // inverterComms/schedulerTiming.ts for the measured behaviour).
+    // from 9 s after the write, when the inverter's delayed commit has usually landed (ACK ≠ applied —
+    // see inverterComms/schedulerTiming.ts for the measured behaviour).
     refreshAfterSend: ["BATS"],
     onResult: ({ acknowledged }) => {
       // The session classifies the raw ^1/^0 frame — no CLI stdout parsing anymore. NAKs and

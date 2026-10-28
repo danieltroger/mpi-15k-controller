@@ -240,8 +240,10 @@ export type Config = {
     /**
      * Minimum time between two changes of the same analog setter target: the AC charging current
      * (MUCHGC) and the feed-in limit (GPMP). A buy window starting or ending, feeding switching
-     * mode, the first target after a start and the on/off switches are never held. 0 = every
-     * change goes out at once. Default 45, 0–300. Live. See inverterComms/setterChangeThrottle.ts.
+     * mode, the first target after a start and the on/off switches are never held. At least 15:
+     * nothing else spaces writes since #52, and a shorter blip can page a field as never applied (a
+     * smaller value is raised to 15 with a warning). Default 45, 15–300. Live. See
+     * inverterComms/setterChangeThrottle.ts.
      */
     min_seconds_between_setting_changes: number;
     /**
@@ -255,16 +257,6 @@ export type Config = {
      * engine's own natural rate; targeted confirms after writes happen regardless of this value.
      */
     poll_values_interval_seconds: number;
-    /**
-     * Radio silence after every setter before the confirm readback (the inverter ACKs at once but
-     * commits seconds later, and continuous traffic seemed to starve that in July 2026). Default
-     * 12000. 0 = GS/PS polling continues through writes and the confirm readbacks interleave with
-     * it (#52); one write that never applies at 0 falls back to 12000 until this value changes or
-     * the controller restarts (not saved). Live: a change applies from the first write after any
-     * running confirm phase; leaving 0 holds new writes until a running gap-0 phase ends (≤ 55 s).
-     * See inverterComms/schedulerTiming.ts.
-     */
-    quiet_gap_after_write_ms: number;
   };
   current_measuring: {
     table: string;

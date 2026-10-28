@@ -1,11 +1,13 @@
 /**
  * Test harness for the buy-window end step-down selftests: drives the pure state machine through
  * timelines of input changes. Timelines follow the native PI17 session: a write commits ~6 s after it
- * goes out, its BATS confirm is decoded after the 12 s quiet gap (at #62's gap 0 from 6 s after the write,
- * re-read every 4 s), a failed confirm re-checks after 30 s more, and an identical setter is re-sent no
- * sooner than 60 s after the last one. The session's write chains come from the real scheduler: sentAt,
- * batsAt and hecsAt feed it exactly as the session's sends and decodes do, and hand the step-down the
- * drop-trust chains the session exposes.
+ * goes out, its BATS confirm is decoded 9–12 s after it and re-read every few seconds while still old,
+ * and an identical setter is re-sent no sooner than 60 s after the last one. Most timelines put the
+ * confirm at 12 s (#48's retired quiet gap); the early-readback ones read BATS 6–9 s after a write, as a
+ * settings poll or another write's confirm can. The state machine judges a readback by its time against
+ * the write chains, not by when a confirm was due, so both are placements it must get right. The
+ * session's write chains come from the real scheduler: sentAt, batsAt and hecsAt feed it exactly as the
+ * session's sends and decodes do, and hand the step-down the drop-trust chains the session exposes.
  */
 import { unprovenWritesIn } from "../inverterComms/fieldWriteChains.ts";
 import {
@@ -47,12 +49,12 @@ export const nightBuying: BuyWindowEndInputs = {
 /** What changes when a window ends: nothing wants grid charging any more */
 export const windowEnd: Partial<BuyWindowEndInputs> = { gridChargingWanted: false };
 export const COMMIT_AFTER_WRITE_MS = 6_000;
-/** #48's post-write radio silence: its confirm readback is decoded this long after a write */
-export const QUIET_GAP_AFTER_WRITE_MS = 12_000;
+/** Where the timelines decode a write's confirm readback: 12 s after it */
+export const LATE_CONFIRM_AFTER_WRITE_MS = 12_000;
 /** The window-end tick queues the cap; the session's exchange of it is done this much later */
 export const CAP_SENT_AFTER_END_MS = 500;
-/** From the window-end tick: the cap goes out ~0.5 s later, its confirm a quiet gap after that */
-export const CONFIRM_AFTER_WRITE_MS = CAP_SENT_AFTER_END_MS + QUIET_GAP_AFTER_WRITE_MS;
+/** From the window-end tick: the cap goes out ~0.5 s later, its confirm 12 s after that */
+export const CONFIRM_AFTER_WRITE_MS = CAP_SENT_AFTER_END_MS + LATE_CONFIRM_AFTER_WRITE_MS;
 /** #48's identical-setter gate: the same command string goes out again no sooner than this */
 export const IDENTICAL_SETTER_GATE_MS = 60_000;
 

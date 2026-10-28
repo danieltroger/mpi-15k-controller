@@ -13,7 +13,12 @@
  */
 import type { DecodedFieldValue, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 
-export type FieldWrite = { value: DecodedFieldValue; sentAtMs: number };
+export type FieldWrite = {
+  value: DecodedFieldValue;
+  sentAtMs: number;
+  /** The inverter ACKed it. A NAKed or unanswered send is chained too (it can still have committed), but never pages as starved */
+  acknowledged: boolean;
+};
 
 export type FieldWriteChain = {
   /** What the field held before `writes`: the last readback or proven write; undefined if never read */
@@ -106,13 +111,39 @@ export function chainAfterReadback(
 }
 
 /**
+ * The oldest unproven ACKed write of another value than `readValue` sent at least `starvedAfterMs` ago,
+ * with the field's readback unchanged since it went out (`fieldChangedAtMs`: when a readback last
+ * showed the field at a new value): the field never moved, for a minute of writes. Judged on the chain
+ * before crediting the readback. Not "a later write explains the value": a target that keeps returning
+ * to what the field already holds (the buy current bouncing off its cap) would then hide a field stuck
+ * there. What can page falsely is a single A→B→A blip no readback caught: B landing and overwritten
+ * by A between two reads leaves the field reading A throughout. The write throttle's 15 s floor keeps
+ * B on the register longer than that.
+ */
+export function starvedWriteInReadback(
+  chain: FieldWriteChain | undefined,
+  readValue: DecodedFieldValue,
+  decodedAtMs: number,
+  starvedAfterMs: number,
+  fieldChangedAtMs: number
+): FieldWrite | undefined {
+  return chain?.writes.find(
+    write =>
+      write.acknowledged &&
+      write.value !== readValue &&
+      write.sentAtMs + starvedAfterMs <= decodedAtMs &&
+      fieldChangedAtMs <= write.sentAtMs
+  );
+}
+
+/**
  * Does a readback of `readValue` (already credited with chainAfterReadback) prove `write` landed?
  * Only if it shows the write's value and no earlier write of another value is still unproven —
  * with one pending, the field may simply not have moved yet.
  */
 export function readbackProvesWrite(
   chain: FieldWriteChain | undefined,
-  write: FieldWrite,
+  write: Pick<FieldWrite, "value" | "sentAtMs">,
   readValue: DecodedFieldValue | undefined
 ): boolean {
   if (readValue !== write.value) return false;

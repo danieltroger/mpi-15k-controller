@@ -58,7 +58,7 @@ const failedChecks: string[] = [];
   stepAt(simulation, CONFIRM_AFTER_WRITE_MS, batsAt(simulation, 10, CONFIRM_AFTER_WRITE_MS));
   const releasedAtMs = CONFIRM_AFTER_WRITE_MS;
   stepAt(simulation, releasedAtMs + 300, sentAt(simulation, "EDB0", releasedAtMs + 300));
-  // EDB0's confirm and its backoff re-check, both inside the retry spacing → no retry yet
+  // EDB0's confirm readbacks, both inside the retry spacing → no retry yet
   stepAt(simulation, releasedAtMs + 12_500, hecsAt(simulation, "enabled", releasedAtMs + 12_500));
   stepAt(simulation, releasedAtMs + 42_500, hecsAt(simulation, "enabled", releasedAtMs + 42_500));
   check("EDB0's own confirm + re-check showing 'enabled' → no retry yet", edb0RetryRequests(simulation.state) === 0);

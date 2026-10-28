@@ -97,7 +97,7 @@ function setterSendsBetween(state: SchedulerState, fromMs: number, toMs: number)
   );
 }
 {
-  // A confirm still in its backoff: the ACKed write may yet commit, so the old readback can't be trusted
+  // A confirm still re-checking: the ACKed write may yet commit, so the old readback can't be trusted
   let state = initialSchedulerState();
   state = withSettingsReadback(state, "GPMP", gpmpReadback(290), seconds(0));
   state = send(state, "GPMP001290", "GPMP0", seconds(1));
@@ -168,7 +168,7 @@ function pumpSetters(state: SchedulerState, atMs: number, log: string[]): Schedu
   throw new Error("pump did not settle");
 }
 {
-  // Evening feed starts with G already enabled; the effect re-runs 5 s into EDF1's quiet gap
+  // Evening feed starts with G already enabled; the effect re-runs 5 s into EDF1's confirm phase
   const log: string[] = [];
   let state = withSettingsReadback(initialSchedulerState(), "HECS", hecsReadback("disabled", "enabled"), seconds(0));
   state = withSetterQueued(state, "EDG1", "EDG", seconds(1));
@@ -178,7 +178,7 @@ function pumpSetters(state: SchedulerState, atMs: number, log: string[]): Schedu
   state = withSetterQueued(state, "EDF1", "EDF", seconds(6));
   state = pumpSetters(state, seconds(6), log);
   check(
-    "EDG1 re-queued 5 s into EDF1's quiet gap, G already enabled → dropped, not sent",
+    "EDG1 re-queued 5 s into EDF1's confirm phase, G already enabled → dropped, not sent",
     log.join(", ") === "drop EDG1@1s, send EDF1@1s, drop EDG1@6s",
     log.join(", ")
   );

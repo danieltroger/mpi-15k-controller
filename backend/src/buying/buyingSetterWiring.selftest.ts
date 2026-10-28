@@ -184,8 +184,8 @@ const failedChecks: string[] = [];
       clock: { monotonicMs: restartAtMs },
       unprovenWrites: query =>
         query === "HECS"
-          ? [{ value: "enabled", sentAtMs: restartAtMs - 2_000 }]
-          : [{ value: 261, sentAtMs: restartAtMs - 1_700 }],
+          ? [{ value: "enabled", sentAtMs: restartAtMs - 2_000, acknowledged: true }]
+          : [{ value: 261, sentAtMs: restartAtMs - 1_700, acknowledged: true }],
       settingsReadbackAtMs: query => (query === "HECS" ? restartAtMs - 30_000 : undefined),
     }
   );

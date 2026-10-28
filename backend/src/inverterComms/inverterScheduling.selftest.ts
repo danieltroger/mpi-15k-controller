@@ -1,7 +1,7 @@
 /**
- * Pure self-test for the session scheduling brain: setter→readback mapping, and the quiet-gap
- * state machine (write → gap → confirm → converged/backoff/give-up) with the identical-setter
- * gate. No hardware, no timers — everything runs on fake timestamps. Run from backend/ with:
+ * Pure self-test for the session scheduling brain: setter→readback mapping, and the confirm
+ * state machine (write → polling continues → confirm → converged/re-check/give-up) with the
+ * identical-setter gate. No hardware, no timers — everything runs on fake timestamps. Run from backend/ with:
  *   yarn node src/inverterComms/inverterScheduling.selftest.ts
  */
 import process from "process";
@@ -16,12 +16,13 @@ import {
   withSetterQueued,
 } from "./schedulerCore.ts";
 import {
-  CONFIRM_BACKOFF_MS,
+  CONFIRM_GIVE_UP_AFTER_WRITE_MS,
+  CONFIRM_RECHECK_INTERVAL_MS,
   DEFAULT_SCHEDULER_TIMING,
+  FIRST_CONFIRM_AFTER_WRITE_MS,
   IDENTICAL_SETTER_MIN_INTERVAL_MS,
   POLL_ROUND_GAP_AFTER_FAILURE_MS,
   POLL_ROUND_GAP_MS,
-  QUIET_GAP_AFTER_WRITE_MS,
 } from "./schedulerTiming.ts";
 import { classifyFrame } from "./pi17Frames.ts";
 import { decodeQueryPayload } from "./pi17Decode.ts";
@@ -106,7 +107,7 @@ check("unknown setter has no readback checks", expectedReadbackChecksForSetter("
   check("missing query counts as unconfirmed", !checkIsSatisfied(cvCheck!, {}));
 }
 
-// ---------- the quiet-gap state machine ----------
+// ---------- the confirm state machine ----------
 const bootTime = 1_000_000;
 {
   let state = initialSchedulerState();
@@ -144,56 +145,65 @@ const bootTime = 1_000_000;
     setterDecision.action === "send_setter" && setterDecision.command === "MCHGV0580,0580"
   );
 
-  // Send it: quiet gap starts, confirm scheduled
+  // Send it: polling carries on, the confirm is scheduled
   state = withSetterDequeued(state, "MCHGV0580,0580");
   check("dequeue removes the sent setter", state.queuedSetters.length === 0);
   const sentAt = bootTime + 1_200;
   state = afterSetterSent(state, "MCHGV0580,0580", ["BATS"], sentAt, true);
-  const quietDecision = decideNextAction(state, sentAt + 100, SETTINGS_POLL_INTERVAL_MS);
+  state = afterPollRound(state, {
+    startedAtMs: bootTime + 100,
+    endedAtMs: sentAt,
+    includedSettingsPoll: false,
+    hadFailures: false,
+  });
+  const afterWriteDecision = decideNextAction(state, sentAt + POLL_ROUND_GAP_MS, SETTINGS_POLL_INTERVAL_MS);
+  check("polling continues right after a write", afterWriteDecision.action === "poll_round");
+  check("the first confirm is due 9 s after the write", state.confirm?.dueAt === sentAt + FIRST_CONFIRM_AFTER_WRITE_MS);
+  const confirmDecision = decideNextAction(state, sentAt + FIRST_CONFIRM_AFTER_WRITE_MS, SETTINGS_POLL_INTERVAL_MS);
   check(
-    "quiet gap suppresses polling after a write",
-    quietDecision.action === "wait" &&
-      quietDecision.untilMs === sentAt + QUIET_GAP_AFTER_WRITE_MS &&
-      quietDecision.reason === "quiet gap after write"
-  );
-  const confirmDecision = decideNextAction(state, sentAt + QUIET_GAP_AFTER_WRITE_MS, SETTINGS_POLL_INTERVAL_MS);
-  check(
-    "confirm queries run after the quiet gap",
+    "the confirm query runs when due, ahead of the next poll round",
     confirmDecision.action === "run_confirms" &&
       confirmDecision.queries.length === 1 &&
       confirmDecision.queries[0] === "BATS"
   );
 
-  // Readback still shows the old values → silent backoff, then re-check
+  // Readback still shows the old values → re-checked every 4 s, polling in between
   const staleReadback = { BATS: { "battery_constant_charge_voltage(c.v.)": 57, battery_floating_charge_voltage: 57 } };
-  const confirmTime = sentAt + QUIET_GAP_AFTER_WRITE_MS + 300;
+  let confirmTime = sentAt + FIRST_CONFIRM_AFTER_WRITE_MS + 300;
   const retryResult = afterConfirmRun(state, staleReadback, confirmTime);
   state = retryResult.state;
   check(
-    "unconfirmed write backs off",
-    retryResult.result.retry?.retryAt === confirmTime + CONFIRM_BACKOFF_MS &&
+    "an unconfirmed write is re-checked 4 s later",
+    retryResult.result.retry?.retryAt === confirmTime + CONFIRM_RECHECK_INTERVAL_MS &&
       retryResult.result.retry.pendingChecks.length === 2 &&
       retryResult.result.gaveUpChecks.length === 0
   );
-  const backoffDecision = decideNextAction(state, confirmTime + 1_000, SETTINGS_POLL_INTERVAL_MS);
-  check(
-    "backoff stays quiet (no polls)",
-    backoffDecision.action === "wait" && backoffDecision.reason === "confirm backoff"
-  );
+  const betweenDecision = decideNextAction(state, confirmTime + 1_000, SETTINGS_POLL_INTERVAL_MS);
+  check("polling continues between the re-checks", betweenDecision.action === "poll_round");
 
-  // Second failed confirm → give up loudly, polling resumes
-  const giveUpResult = afterConfirmRun(state, staleReadback, confirmTime + CONFIRM_BACKOFF_MS);
-  state = giveUpResult.state;
-  check(
-    "second failed confirm gives up",
-    giveUpResult.result.retry === undefined && giveUpResult.result.gaveUpChecks.length === 2
-  );
+  // Still old at its 55 s give-up → give up loudly, polling carries on
+  let reChecks = 0;
+  while (state.confirm && confirmTime < sentAt + CONFIRM_GIVE_UP_AFTER_WRITE_MS) {
+    confirmTime = state.confirm.dueAt;
+    const run = afterConfirmRun(state, staleReadback, confirmTime);
+    state = run.state;
+    reChecks++;
+    if (run.result.gaveUpChecks.length) {
+      check(
+        "a write still old at its 55 s give-up gives up — never past it",
+        confirmTime === sentAt + CONFIRM_GIVE_UP_AFTER_WRITE_MS &&
+          run.result.retry === undefined &&
+          run.result.gaveUpChecks.length === 2,
+        `gave up ${confirmTime - sentAt} ms after the write, after ${reChecks} re-checks`
+      );
+    }
+  }
   check("give-up clears the confirm phase", state.confirm === undefined);
-  const afterGiveUp = decideNextAction(state, confirmTime + CONFIRM_BACKOFF_MS + 10, SETTINGS_POLL_INTERVAL_MS);
-  check("polling resumes after give-up", afterGiveUp.action === "poll_round");
+  const afterGiveUp = decideNextAction(state, confirmTime + 10, SETTINGS_POLL_INTERVAL_MS);
+  check("polling carries on after the give-up", afterGiveUp.action === "poll_round");
 
   // The identical-setter gate: the same command can't go out again within 60 s of the last send
-  const requeueTime = confirmTime + CONFIRM_BACKOFF_MS + 1_000;
+  const requeueTime = confirmTime + 1_000;
   state = withSetterQueued(state, "MCHGV0580,0580", "MCHGV", requeueTime);
   check(
     "identical setter is gated to sentAt + 60 s",
@@ -247,21 +257,27 @@ const bootTime = 1_000_000;
 // ---------- timing: production defaults are the measured constants; overrides are harness-only ----------
 {
   check(
-    "default timing keeps the measured quiet gap + backoff",
-    DEFAULT_SCHEDULER_TIMING.quietGapAfterWriteMs === QUIET_GAP_AFTER_WRITE_MS &&
-      QUIET_GAP_AFTER_WRITE_MS === 12_000 &&
-      DEFAULT_SCHEDULER_TIMING.confirmBackoffMs === CONFIRM_BACKOFF_MS &&
-      CONFIRM_BACKOFF_MS === 30_000
+    "default timing: first confirm 9 s after the write (#52), re-checks every 4 s, give-up at 55 s",
+    DEFAULT_SCHEDULER_TIMING.firstConfirmAfterWriteMs === FIRST_CONFIRM_AFTER_WRITE_MS &&
+      FIRST_CONFIRM_AFTER_WRITE_MS === 9_000 &&
+      DEFAULT_SCHEDULER_TIMING.confirmRecheckIntervalMs === CONFIRM_RECHECK_INTERVAL_MS &&
+      CONFIRM_RECHECK_INTERVAL_MS === 4_000 &&
+      DEFAULT_SCHEDULER_TIMING.confirmGiveUpAfterWriteMs === CONFIRM_GIVE_UP_AFTER_WRITE_MS &&
+      CONFIRM_GIVE_UP_AFTER_WRITE_MS === 55_000
+  );
+  check(
+    "the give-up lands before the identical-setter gate opens (a rewrite would replace the pending check)",
+    CONFIRM_GIVE_UP_AFTER_WRITE_MS < IDENTICAL_SETTER_MIN_INTERVAL_MS
   );
   check(
     "initialSchedulerState() without overrides uses the defaults",
-    initialSchedulerState().timing.quietGapAfterWriteMs === QUIET_GAP_AFTER_WRITE_MS
+    initialSchedulerState().timing.firstConfirmAfterWriteMs === FIRST_CONFIRM_AFTER_WRITE_MS
   );
-  let state = initialSchedulerState({ quietGapAfterWriteMs: 1_500, confirmBackoffMs: 3_000 });
+  let state = initialSchedulerState({ firstConfirmAfterWriteMs: 1_500, confirmRecheckIntervalMs: 3_000 });
   state = afterSetterSent(state, "GPMP000950", ["GPMP"], bootTime, true);
-  check("quiet-gap override is honoured", state.confirm!.dueAt === bootTime + 1_500);
+  check("first-confirm override is honoured", state.confirm!.dueAt === bootTime + 1_500);
   const retry = afterConfirmRun(state, { GPMP: { maximum_feeding_grid_power: 350 } }, bootTime + 1_600);
-  check("backoff override is honoured", retry.result.retry?.retryAt === bootTime + 1_600 + 3_000);
+  check("re-check override is honoured", retry.result.retry?.retryAt === bootTime + 1_600 + 3_000);
 }
 
 // ---------- multi-setter bursts merge into one confirm phase ----------
@@ -272,8 +288,8 @@ const bootTime = 1_000_000;
   const secondSentAt = bootTime + 1_300;
   state = afterSetterSent(state, "EDG1", ["HECS"], secondSentAt, true);
   check(
-    "burst re-arms the quiet gap from the LAST write",
-    state.confirm!.dueAt === secondSentAt + QUIET_GAP_AFTER_WRITE_MS
+    "a burst keeps the first write's confirm due (a stream of writes can't push it out)",
+    state.confirm!.dueAt === firstSentAt + FIRST_CONFIRM_AFTER_WRITE_MS
   );
   check(
     "burst merges confirm queries without duplicates",
@@ -286,7 +302,7 @@ const bootTime = 1_000_000;
       battery_discharge_to_feed_grid_when_solar_input_loss: "enabled",
     },
   };
-  const converged = afterConfirmRun(state, bothApplied, secondSentAt + QUIET_GAP_AFTER_WRITE_MS);
+  const converged = afterConfirmRun(state, bothApplied, secondSentAt + FIRST_CONFIRM_AFTER_WRITE_MS);
   check(
     "burst converges when both readbacks match",
     converged.result.confirmedChecks.length === 2 &&
@@ -307,19 +323,19 @@ const bootTime = 1_000_000;
   );
 }
 
-// ---------- NAK/timeout path: quiet gap + readback but no convergence expectation ----------
+// ---------- NAK/timeout path: a readback but no convergence expectation ----------
 {
   let state = initialSchedulerState();
   state = afterSetterSent(state, "MCHGV0580,0580", ["BATS"], bootTime, false);
   check(
-    "unacknowledged write still schedules the quiet gap",
-    state.confirm !== undefined && state.confirm.dueAt === bootTime + QUIET_GAP_AFTER_WRITE_MS
+    "unacknowledged write still schedules the confirm readback",
+    state.confirm !== undefined && state.confirm.dueAt === bootTime + FIRST_CONFIRM_AFTER_WRITE_MS
   );
   check(
     "unacknowledged write has refresh queries but no checks",
     state.confirm!.queries.length === 1 && state.confirm!.checks.length === 0
   );
-  const vacuous = afterConfirmRun(state, {}, bootTime + QUIET_GAP_AFTER_WRITE_MS);
+  const vacuous = afterConfirmRun(state, {}, bootTime + FIRST_CONFIRM_AFTER_WRITE_MS);
   check(
     "checkless confirm converges vacuously (no false 'never applied' alarm)",
     vacuous.result.gaveUpChecks.length === 0 &&

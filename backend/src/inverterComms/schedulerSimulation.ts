@@ -1,7 +1,7 @@
 /**
  * Test helper for the scheduler selftests (not a selftest itself): runs schedulerCore through a
  * simulated pump against fake settings registers whose writes commit when the scenario says, with
- * scenario events (queued setters, knob changes) applied at their times. Actions take their
+ * scenario events (queued setters) applied at their times. Actions take their
  * 2400-baud wire time; setters are ACKed at once. Pure, no timers. Grown from the review harness of
  * PR #62, whose scenarios run through it in confirmPhaseScenarios.selftest.ts.
  */
@@ -11,15 +11,16 @@ import {
   afterPollRound,
   afterSetterSent,
   decideNextAction,
+  giveUpsAlreadyPaged,
   initialSchedulerState,
-  withQuietGapAfterWrite,
   withSettingsReadback,
   withSetterDequeued,
   withSetterQueued,
-  type ConfirmOutcome,
   type ConfirmPhase,
+  type PendingReadbackCheck,
   type SchedulerState,
 } from "./schedulerCore.ts";
+import type { ConfirmVerdicts } from "./confirmVerdicts.ts";
 import type { SchedulerTiming } from "./schedulerTiming.ts";
 import { expectedReadbackChecksForSetter } from "./setterConfirmation.ts";
 
@@ -59,7 +60,9 @@ export type SimulatedStep =
       queries: readonly SettingsQueryCommandName[];
       startedAtMs: number;
       endedAtMs: number;
-      result: ConfirmOutcome;
+      result: ConfirmVerdicts;
+      /** The give-ups that page: their field's starvation episode wasn't open yet (giveUpsAlreadyPaged) */
+      pagedGiveUps: readonly PendingReadbackCheck[];
       /** The scheduler right after the run */
       stateAfter: SchedulerState;
     };
@@ -117,6 +120,7 @@ export function simulatePump({
       for (const query of decision.queries)
         state = withSettingsReadback(state, query, decodedByQuery[query] ?? {}, nowMs);
       const confirmRun = afterConfirmRun(state, decodedByQuery, nowMs, startedAtMs);
+      const alreadyPaged = giveUpsAlreadyPaged(state, confirmRun.result.gaveUpChecks);
       state = confirmRun.state;
       steps.push({
         action: "run_confirms",
@@ -124,6 +128,7 @@ export function simulatePump({
         startedAtMs,
         endedAtMs: nowMs,
         result: confirmRun.result,
+        pagedGiveUps: confirmRun.result.gaveUpChecks.filter(check => !alreadyPaged.includes(check)),
         stateAfter: state,
       });
     } else {
@@ -200,10 +205,6 @@ export function commitsLandAfter(
 
 export function queueSetterAt(atMs: number, command: string, replacesPrefix: string): ScenarioEvent {
   return { atMs, apply: (state, nowMs) => withSetterQueued(state, command, replacesPrefix, nowMs) };
-}
-
-export function knobChangeAt(atMs: number, quietGapAfterWriteMs: number): ScenarioEvent {
-  return { atMs, apply: state => withQuietGapAfterWrite(state, quietGapAfterWriteMs) };
 }
 
 export function readRegisters(

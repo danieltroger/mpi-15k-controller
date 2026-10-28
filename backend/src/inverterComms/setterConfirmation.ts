@@ -76,7 +76,7 @@ export function expectedReadbackChecksForSetter(command: string): readonly Sette
       },
     ];
   }
-  // Setter without a known readback (none today) — the quiet gap still applies, just no convergence check
+  // Setter without a known readback (none today) — its refresh queries still run, just no convergence check
   return [];
 }
 

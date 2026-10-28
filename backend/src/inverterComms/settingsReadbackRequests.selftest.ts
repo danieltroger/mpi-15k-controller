@@ -1,8 +1,8 @@
 /**
  * Pure self-test of a consumer's settings readback request (settingsReadbackRequests.ts) through the
  * scheduler: it makes poll rounds settings rounds until its query decodes — a round a setter cut short,
- * or one whose BATS went unanswered, doesn't use it up (#70's review) — waits out a silent confirm phase,
- * and lapses after SETTINGS_READBACK_REQUEST_LIFETIME_MS.
+ * or one whose BATS went unanswered, doesn't use it up (#70's review) — isn't held off by a write's
+ * confirm phase, and lapses after SETTINGS_READBACK_REQUEST_LIFETIME_MS.
  * Run from backend/ with:  yarn node src/inverterComms/settingsReadbackRequests.selftest.ts
  */
 import process from "process";
@@ -52,20 +52,22 @@ check(
 );
 
 {
-  // A silent confirm phase (the default 12 s gap) holds every poll round off; the request waits it out
+  // A write's confirm phase doesn't pause polling: the requested settings round goes out meanwhile
   const writtenAtMs = 20_000;
-  const silent = afterSetterSent(requested, "GPMP001000", ["GPMP"], writtenAtMs, true);
-  const duringSilence = decideNextAction(silent, writtenAtMs + 5_000, SETTINGS_POLL_INTERVAL_MS);
-  check("a silent confirm phase holds the requested round off", duringSilence.action === "wait");
+  const confirming = afterSetterSent(requested, "GPMP001000", ["GPMP"], writtenAtMs, true);
+  check(
+    "a write's confirm phase doesn't hold the requested round off",
+    includesSettings(confirming, writtenAtMs + 5_000) === true
+  );
   const confirmed = withSettingsReadback(
-    { ...silent, confirm: undefined },
+    { ...confirming, confirm: undefined },
     "GPMP",
     { maximum_feeding_grid_power: 1_000 },
-    writtenAtMs + 12_500
+    writtenAtMs + 9_500
   );
   check(
-    "…and the round after it reads the settings (the GPMP confirm didn't answer BATS)",
-    includesSettings(confirmed, writtenAtMs + 13_000) === true
+    "…and a GPMP confirm doesn't answer it: the next round still reads the settings (BATS was asked for)",
+    includesSettings(confirmed, writtenAtMs + 10_000) === true
   );
 }
 

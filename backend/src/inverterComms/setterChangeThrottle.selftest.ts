@@ -150,8 +150,9 @@ check(
     lastChange(run) === "12000:264:interval_elapsed",
     lastChange(run)
   );
+  // Below the config's 15 s floor (effectiveSetterChangeThrottleSetting raises it); the step takes any interval
   evaluate(run, { target: 261, mode: "buy_window" }, { ...defaultLimits, minIntervalMs: 0 }, 12_500);
-  check("0 s: every change at once (throttle off)", lastChange(run) === "12500:261:interval_elapsed");
+  check("an interval of 0 lets every change through", lastChange(run) === "12500:261:interval_elapsed");
   const widerMargin = acChargingCurrentThrottleLimits({
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     ac_charging_current_immediate_decrease_amps: 30,
@@ -170,7 +171,9 @@ check(
 
 // ——— bounds: config.json is hand-editable ———
 checkSetting("min_seconds_between_setting_changes", 45, { value: 45, corrected: false });
-checkSetting("min_seconds_between_setting_changes", 0, { value: 0, corrected: false });
+checkSetting("min_seconds_between_setting_changes", 15, { value: 15, corrected: false });
+checkSetting("min_seconds_between_setting_changes", 0, { value: 15, corrected: true });
+checkSetting("min_seconds_between_setting_changes", 10, { value: 15, corrected: true });
 checkSetting("min_seconds_between_setting_changes", 900, { value: 300, corrected: true });
 checkSetting("min_seconds_between_setting_changes", -5, { value: 45, corrected: true });
 checkSetting("min_seconds_between_setting_changes", "45", { value: 45, corrected: true });

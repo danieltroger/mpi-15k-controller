@@ -27,11 +27,9 @@ export function useInverterValues(config: Accessor<Config>) {
   // Rounds only arrive once the device is open (after stty's await), by when `session` is assigned
   const statusTracker = createInverterStatusTracker(queries => session.requestStatusQueries(queries));
 
-  // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts), and the
-  // quiet gap comes live from config
+  // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts)
   const session = createInverterSession({
     poll_values_interval_seconds: createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds),
-    quiet_gap_after_write_ms: createMemo(() => config().usb_parameter_setting.quiet_gap_after_write_ms),
     onDecodedRound: round =>
       // One batch per round: consumers must never observe half a round. A BATS parse used to
       // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.

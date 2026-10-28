@@ -35,8 +35,11 @@ export type SetterChangeThrottleBounds = { defaultValue: number; min: number; ma
 export const SETTER_CHANGE_THROTTLE_BOUNDS = {
   // 45 s is about three of the 2026-10-27 write cadences, and well past the inverter's ~7–11 s commit.
   // Past 5 min, an increase (more headroom on the fuse, a bigger anti-peak bump) waits too long to be
-  // worth making.
-  min_seconds_between_setting_changes: { defaultValue: 45, min: 0, max: 300, unit: "s" },
+  // worth making. At least 15 s, past a commit plus one 4 s re-read: a target blip any shorter can land
+  // and be overwritten between two readbacks, an A→B→A the starved-write page (schedulerTiming.ts) takes
+  // for a field that never moved, and whose unseen B the drop-trust chain may credit before its 60 s
+  // mark (#75's delta review: about one false P2 an hour at the cap with no throttle).
+  min_seconds_between_setting_changes: { defaultValue: 45, min: 15, max: 300, unit: "s" },
   // Battery amps, which the three-phase charger draws evenly from all phases: at the top of a charge
   // (57.6 V, ~93 % charger efficiency) 10 A is ~0.9 A at 230 V per phase. The held limit always stays
   // less than this margin above the wish (a decrease is measured against the target last let through, so

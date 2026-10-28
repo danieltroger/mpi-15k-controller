@@ -4,7 +4,6 @@ import path from "path";
 import process from "process";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
-import { QUIET_GAP_AFTER_WRITE_MS } from "../inverterComms/schedulerTiming.ts";
 import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 
@@ -121,7 +120,6 @@ export const default_config: Config = {
   usb_parameter_setting: {
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     poll_values_interval_seconds: 60 * 5,
-    quiet_gap_after_write_ms: QUIET_GAP_AFTER_WRITE_MS,
   },
   scheduled_power_selling: {
     schedule: {
@@ -215,9 +213,8 @@ export const default_config: Config = {
  * before a knob existed must still pick up its default (the planner, the elpatron load model and the
  * SOC ledger do raw arithmetic on these — a missing knob would silently NaN every projection; a
  * missing alerting threshold would silently never alert; a missing inverter-temperature limit would
- * silently never stop selling; a missing usb_parameter_setting.quiet_gap_after_write_ms would leave
- * the serial scheduler without its measured 12 s default; a missing temperature_saving.thermometer_*
- * setting would warn and fall back on every boot).
+ * silently never stop selling; a missing temperature_saving.thermometer_* setting would warn and fall
+ * back on every boot).
  * soc_calculations.ah_ledger (and its soft_empty) is the newest such section, so a config
  * predating it still boots with the validated defaults. Orphaned keys from the deleted Wh fitter
  * (the fitter's persisted capacity/parasitic state and its search-range knobs) are harmless — the
@@ -228,6 +225,8 @@ export const default_config: Config = {
  * tuned it keeps its value) and is dropped. It leaves the disk at the first boot: the config writer
  * sees the merged config differ from the file text and rewrites it ~300 ms in, keeping the old file
  * as config_pre_*.backup.json.
+ * usb_parameter_setting.min_seconds_between_commands and quiet_gap_after_write_ms are dropped the same
+ * way (withoutRetiredUsbParameterSettingKeys).
  */
 export function mergeWithDefaults(partial: Partial<Config>): Config {
   const { inverter_temp_p1_celsius: retiredInverterTempP1, ...alerting }: AlertingConfig & RetiredAlertingKeys = {
@@ -271,16 +270,25 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
 /** Keys older config.json files may still carry that mergeWithDefaults migrates away */
 type RetiredAlertingKeys = { inverter_temp_p1_celsius?: unknown };
 
+/** usb_parameter_setting keys older config.json files may still carry (the live pi has both) */
+type RetiredUsbParameterSettingKeys = { min_seconds_between_commands?: unknown; quiet_gap_after_write_ms?: unknown };
+
 /**
- * min_seconds_between_commands spaced every command of the retired mpp-solar queue (the live pi had 40).
- * The native engine (#48) never read it, and min_seconds_between_setting_changes isn't the same knob:
- * it spaces only analog target changes per setter. Dropped so the config page can't show a do-nothing
- * field; it leaves the disk at the next config write.
+ * Dropped so the config page can't show a do-nothing field; they leave the disk at the next config write.
+ * - min_seconds_between_commands spaced every command of the retired mpp-solar queue (the live pi had 40).
+ *   The native engine (#48) never read it, and min_seconds_between_setting_changes isn't the same knob:
+ *   it spaces only analog target changes per setter.
+ * - quiet_gap_after_write_ms was the post-write radio silence, gone since #52: every write is confirmed
+ *   with polling running.
  */
 function withoutRetiredUsbParameterSettingKeys(
-  merged: Config["usb_parameter_setting"] & { min_seconds_between_commands?: unknown }
+  merged: Config["usb_parameter_setting"] & RetiredUsbParameterSettingKeys
 ): Config["usb_parameter_setting"] {
-  const { min_seconds_between_commands: retiredCommandSpacing, ...usbParameterSetting } = merged;
+  const {
+    min_seconds_between_commands: retiredCommandSpacing,
+    quiet_gap_after_write_ms: retiredQuietGap,
+    ...usbParameterSetting
+  } = merged;
   return usbParameterSetting;
 }
 

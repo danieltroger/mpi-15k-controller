@@ -9,7 +9,10 @@
  * Run from backend/ with:  yarn node src/buying/buyingSetterThrottle.selftest.ts
  */
 import process from "process";
-import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
+import {
+  DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
+  SETTER_CHANGE_THROTTLE_BOUNDS,
+} from "../inverterComms/setterChangeThrottle.ts";
 import {
   advanceTo,
   createWiringHarness,
@@ -118,23 +121,26 @@ const failedChecks: string[] = [];
     harness.setSetterChangeThrottle(DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS)
   );
   check("…and goes out the moment the margin is back at 10 A", marginBack.includes("MUCHGC2480"), marginBack.join(" "));
+  // The interval at its 15 s floor (config can't go lower): a blip back and forth inside it is never written
   harness.setSetterChangeThrottle({
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
-    min_seconds_between_setting_changes: 0,
+    min_seconds_between_setting_changes: SETTER_CHANGE_THROTTLE_BOUNDS.min_seconds_between_setting_changes.min,
   });
-  const offWrites: string[] = [];
+  const blipWrites: string[] = [];
   for (const [atMs, amps] of [
     [23_000, 251],
     [24_000, 249],
     [25_000, 252],
   ] as const) {
     advanceTo(harness, atMs);
-    offWrites.push(...queuedDuring(harness, () => harness.setChargingAmperage(amps)).filter(isLimitWrite));
+    blipWrites.push(...queuedDuring(harness, () => harness.setChargingAmperage(amps)).filter(isLimitWrite));
   }
+  // The clock ticks while advancing: the held 252 goes out on the first tick 15 s after the last write (22 s)
+  const afterFloor = queuedDuring(harness, () => advanceTo(harness, 38_000)).filter(isLimitWrite);
   check(
-    "interval 0: every change written at once, as before the throttle",
-    offWrites.join(" ") === "MUCHGC2510 MUCHGC2490 MUCHGC2520",
-    offWrites.join(" ")
+    "interval at its 15 s floor: changes within 15 s of the last write are held, the latest goes out once it has passed",
+    blipWrites.length === 0 && afterFloor.join(" ") === "MUCHGC2520",
+    `held: ${blipWrites.join(" ") || "nothing written"}; by 38 s: ${afterFloor.join(" ")}`
   );
   harness.dispose();
 }

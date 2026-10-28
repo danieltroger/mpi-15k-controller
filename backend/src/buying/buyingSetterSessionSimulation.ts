@@ -1,7 +1,7 @@
 /**
  * Runs the real buying-setter graph (via buyingSetterWiringHarness.ts) against the real pure scheduler
  * (schedulerCore.ts) and a modelled inverter, in simulated time: setters are queued, gated, sent,
- * confirmed after the quiet gap and polled exactly as the session would, their readbacks flow back into
+ * confirmed by readback and polled exactly as the session would, their readbacks flow back into
  * the graph, and the graph sees the session's write chains and can ask it for a settings readback.
  * Only the wire is faked. The modelled inverter commits every write a fixed time after it went out, so
  * in send order.
@@ -34,12 +34,15 @@ import {
 
 /** The live config's usb_parameter_setting.poll_values_interval_seconds */
 const SETTINGS_POLL_INTERVAL_MS = 180_000;
-/** Write → ACK at 2400 baud; the quiet gap counts from the ACK */
+/** Write → ACK at 2400 baud; the confirm counts from the ACK */
 const SETTER_EXCHANGE_MS = 300;
 const QUERY_EXCHANGE_MS = 500;
 const POLL_ROUND_MS = 1_100;
 const SETTINGS_POLL_ROUND_MS = 2_500;
-/** Measured: a setter applies on the inverter's housekeeping cycle ~6 s after the write */
+/**
+ * Measured in July: a setter applies on the inverter's housekeeping cycle ~6 s after the write. #52 saw
+ * 7–11.5 s with polling running; the session checks pass commitAfterWriteMs for slower commits.
+ */
 const COMMIT_AFTER_WRITE_MS = 6_000;
 const STEP_MS = 250;
 
@@ -64,8 +67,8 @@ export type SessionSimulation = {
   inverter: InverterModel;
   sent: SentSetter[];
   busyUntilMs: number;
-  /** Time spent in quiet gaps and confirm backoffs, i.e. with GS/PS polling paused */
-  pollingPausedMs: number;
+  /** Line time spent on setters and their confirm queries, i.e. not on GS/PS rounds */
+  lineTimeOnWritesMs: number;
 };
 
 export function createSessionSimulation({
@@ -109,7 +112,7 @@ export function createSessionSimulation({
     inverter: { ...inverter, pendingCommits: [] },
     sent: [],
     busyUntilMs: clock.monotonicMs,
-    pollingPausedMs: 0,
+    lineTimeOnWritesMs: 0,
   };
 }
 
@@ -146,10 +149,12 @@ function runSchedulerStep(simulation: SessionSimulation, nowMs: number): void {
     }
     if (decision.action === "send_setter") {
       sendSetter(simulation, decision.command, nowMs);
+      simulation.lineTimeOnWritesMs += SETTER_EXCHANGE_MS;
     } else if (decision.action === "run_confirms") {
       const decodedByQuery = readSettings(simulation, decision.queries, nowMs);
       session.scheduler = afterConfirmRun(session.scheduler, decodedByQuery, nowMs).state;
       simulation.busyUntilMs = nowMs + QUERY_EXCHANGE_MS * decision.queries.length;
+      simulation.lineTimeOnWritesMs += QUERY_EXCHANGE_MS * decision.queries.length;
     } else if (decision.action === "poll_round") {
       const roundMs = decision.includeSettingsPoll ? SETTINGS_POLL_ROUND_MS : POLL_ROUND_MS;
       if (decision.includeSettingsPoll) readSettings(simulation, ["HECS", "BATS"], nowMs);
@@ -160,8 +165,6 @@ function runSchedulerStep(simulation: SessionSimulation, nowMs: number): void {
         hadFailures: false,
       });
       simulation.busyUntilMs = nowMs + roundMs;
-    } else if (decision.reason !== "poll pacing") {
-      simulation.pollingPausedMs += STEP_MS;
     }
     return;
   }
