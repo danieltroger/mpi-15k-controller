@@ -214,13 +214,13 @@ check(
   !("min_seconds_between_commands" in default_config.usb_parameter_setting) &&
     !("quiet_gap_after_write_ms" in default_config.usb_parameter_setting)
 );
-const throttleOff = mergeWithDefaults({
+const shortInterval = mergeWithDefaults({
   ...structuredClone(default_config),
-  usb_parameter_setting: { ...default_config.usb_parameter_setting, min_seconds_between_setting_changes: 0 },
+  usb_parameter_setting: { ...default_config.usb_parameter_setting, min_seconds_between_setting_changes: 20 },
 });
 check(
-  "merge: a stored interval of 0 (throttle off) wins over the default",
-  throttleOff.usb_parameter_setting.min_seconds_between_setting_changes === 0
+  "merge: a stored interval (20 s) wins over the default",
+  shortInterval.usb_parameter_setting.min_seconds_between_setting_changes === 20
 );
 const throttleSettingPatches: [keyof Config["usb_parameter_setting"], number][] = [
   ["min_seconds_between_setting_changes", 90],

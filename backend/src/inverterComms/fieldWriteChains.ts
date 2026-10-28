@@ -116,8 +116,9 @@ export function chainAfterReadback(
  * showed the field at a new value): the field never moved, for a minute of writes. Judged on the chain
  * before crediting the readback. Not "a later write explains the value": a target that keeps returning
  * to what the field already holds (the buy current bouncing off its cap) would then hide a field stuck
- * there. A value every readback missed for that long — writes landing and overwritten between reads
- * 4 s apart, for a minute on end — is what could page falsely.
+ * there. What can page falsely is a single A→B→A blip no readback caught: B landing and overwritten
+ * by A between two reads leaves the field reading A throughout. The write throttle's 15 s floor keeps
+ * B on the register longer than that.
  */
 export function starvedWriteInReadback(
   chain: FieldWriteChain | undefined,

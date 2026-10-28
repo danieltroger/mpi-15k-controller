@@ -138,9 +138,9 @@ export function reportConfirmOutcome(
 }
 
 /**
- * One errorLog (P2) per starved field: a readback STARVED_WRITE_PAGE_AFTER_MS after an ACKed write that
- * shows neither it nor any later write to the field, whose checks newer writes kept superseding before
- * their own give-up. The field pages again only after it has moved to a written value.
+ * One errorLog (P2) per starved field: its readback hasn't changed for STARVED_WRITE_PAGE_AFTER_MS since
+ * an ACKed write of another value, whose check newer writes may have superseded before its own give-up.
+ * The field pages again only after a readback has shown it at a new value.
  */
 export function reportStarvedWrites(reports: readonly StarvedWriteReport[]): void {
   for (const { query, field, write, laterWrites, readValue, decodedAtMs } of reports) {
@@ -149,7 +149,7 @@ export function reportStarvedWrites(reports: readonly StarvedWriteReport[]): voi
       `${query} ${field}:`,
       `it still reads ${readValue} ${Math.round((decodedAtMs - write.sentAtMs) / 1000)} s after the write of ${write.value}`,
       laterWrites ? `and ${laterWrites} later write(s) to it` : "",
-      "— none showed in a readback while GS/PS polling continued; leaving any re-send to the owning control loop",
+      "— the field's readback hasn't changed since, while GS/PS polling continued; leaving any re-send to the owning control loop",
       "(paged once until the field moves)"
     );
   }

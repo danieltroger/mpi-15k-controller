@@ -240,9 +240,10 @@ export type Config = {
     /**
      * Minimum time between two changes of the same analog setter target: the AC charging current
      * (MUCHGC) and the feed-in limit (GPMP). A buy window starting or ending, feeding switching
-     * mode, the first target after a start and the on/off switches are never held. 0 = every
-     * change goes out at once, unpaced (nothing else spaces writes since #52). Default 45, 0–300.
-     * Live. See inverterComms/setterChangeThrottle.ts.
+     * mode, the first target after a start and the on/off switches are never held. At least 15:
+     * nothing else spaces writes since #52, and a shorter blip can page a field as never applied (a
+     * smaller value is raised to 15 with a warning). Default 45, 15–300. Live. See
+     * inverterComms/setterChangeThrottle.ts.
      */
     min_seconds_between_setting_changes: number;
     /**
