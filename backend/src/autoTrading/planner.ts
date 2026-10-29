@@ -62,7 +62,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const lastDaySpots = pricedSlots
     .slice(-96)
     .map(slot => slot.spot!)
-    .sort((a, b) => a - b);
+    .sort((lower, higher) => lower - higher);
   const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
 
   const sellW = new Array(slots.length).fill(0);
@@ -116,11 +116,11 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
 
   // ---- Package result ----
-  const spotsAll = pricedSlots.map(slot => slot.spot!).sort((a, b) => a - b);
+  const spotsAll = pricedSlots.map(slot => slot.spot!).sort((lower, higher) => lower - higher);
   const packaging: PackagingContext = {
     input,
     slots,
-    current,
+    finalResult: current,
     spotsAll,
     arbitrageBuySlots: arbitrage.arbitrageBuySlots,
   };
@@ -177,7 +177,7 @@ export function projectWithFixedWindows(input: PlannerInput): {
   const lastDaySpots = pricedSlots
     .slice(-96)
     .map(slot => slot.spot!)
-    .sort((a, b) => a - b);
+    .sort((lower, higher) => lower - higher);
   const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
   const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), tailSpot);
   return {
@@ -206,7 +206,9 @@ function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): 
 export function buildSlots(input: PlannerInput): Slot[] {
   const { prices, nowMs, constraintTailHours, houseLoadWattsAt, fixedSells, fixedBuys } = input;
   const slots: Slot[] = [];
-  const relevantPrices = prices.filter(price => price.startMs + SLOT_MS > nowMs).sort((a, b) => a.startMs - b.startMs);
+  const relevantPrices = prices
+    .filter(price => price.startMs + SLOT_MS > nowMs)
+    .sort((earlier, later) => earlier.startMs - later.startMs);
   const pricedEndMs = relevantPrices.length ? relevantPrices[relevantPrices.length - 1].startMs + SLOT_MS : nowMs;
   const tailEndMs = pricedEndMs + constraintTailHours * 3600 * 1000;
 

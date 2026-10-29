@@ -32,7 +32,7 @@ export function allocateSellsGreedily(
     .filter(
       ({ slot }) => slotTradableForSell(slot, input.sellVetoWindows) && slot.spot! >= knobs.min_sell_spot_sek_per_kwh
     )
-    .sort((a, b) => b.slot.spot! - a.slot.spot!);
+    .sort((pricier, cheaper) => cheaper.slot.spot! - pricier.slot.spot!);
 
   let current = base;
   const acceptedSell: number[] = [];
@@ -99,7 +99,7 @@ export function bridgeSellValleys(
   const maxSmoothingLossSekPerSlot = 1;
   for (let pass = 0, changed = true; pass < 4 && changed; pass++) {
     changed = false;
-    const acceptedSorted = [...new Set(acceptedSell)].sort((a, b) => a - b);
+    const acceptedSorted = [...new Set(acceptedSell)].sort((earlierIndex, laterIndex) => earlierIndex - laterIndex);
     for (let idx = 0; idx + 1 < acceptedSorted.length; idx++) {
       const before = acceptedSorted[idx];
       const after = acceptedSorted[idx + 1];

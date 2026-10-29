@@ -20,7 +20,7 @@ export type PackagingContext = {
   input: PlannerInput;
   slots: Slot[];
   /** The final plan's simulation: the SOC trajectory a window's reason quotes */
-  current: SimResult;
+  finalResult: SimResult;
   /** Every priced slot's spot, ascending — what a window's P-percentile ranks against */
   spotsAll: number[];
   /** Buy slots the arbitrage pass accepted: their windows explain themselves as arbitrage */
@@ -37,7 +37,7 @@ export function mergeAcceptedSlots(
   windows: MergedWindow[];
   droppedShort: number;
 } {
-  const sorted = [...accepted].sort((a, b) => a - b);
+  const sorted = [...accepted].sort((earlierIndex, laterIndex) => earlierIndex - laterIndex);
   // Group into time-contiguous chains first: a power step mid-chain later splits into adjacent
   // windows that are still one continuous feed, so the minimum-length rule judges whole chains.
   const chains: number[][] = [];
@@ -75,15 +75,16 @@ export function mergeAcceptedSlots(
 }
 
 export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContext): PlannedWindow {
-  const { input, slots, current, spotsAll, arbitrageBuySlots } = packaging;
+  const { input, slots, finalResult, spotsAll, arbitrageBuySlots } = packaging;
   const knobs = input.knobs;
   const cap = input.capacityWh;
   const spots = mergedWindow.slotIndexes.map(slotIndex => slots[slotIndex].spot!).filter(spot => spot !== undefined);
   const avgSpot = spots.reduce((sum, spot) => sum + spot, 0) / Math.max(spots.length, 1);
   // A window in the current slot starts from the input SOC, not from the SOC after its own first slot
   const firstSlotIndex = mergedWindow.slotIndexes[0];
-  const socBefore = firstSlotIndex === 0 ? (input.socPercent / 100) * cap : current.socAfterSlot[firstSlotIndex - 1];
-  const socAfter = current.socAfterSlot[mergedWindow.slotIndexes[mergedWindow.slotIndexes.length - 1]];
+  const socBefore =
+    firstSlotIndex === 0 ? (input.socPercent / 100) * cap : finalResult.socAfterSlot[firstSlotIndex - 1];
+  const socAfter = finalResult.socAfterSlot[mergedWindow.slotIndexes[mergedWindow.slotIndexes.length - 1]];
   let expectedKwh: number;
   if (mergedWindow.kind === "sell") {
     expectedKwh = mergedWindow.slotIndexes.reduce((sum, slotIndex) => {

@@ -133,6 +133,7 @@ export type SimResult = {
   /** Average auto-export watts per slot (battery-full PV overflow) — 0 in slots without it */
   autoExportWPerSlot: number[];
 };
+
 /**
  * What generatePlan's sell and buy allocation passes (sellAllocation.ts, buyAllocation.ts) work on.
  * sellW and buyW are the candidate schedule, per slot: the passes trial a change by setting it,
