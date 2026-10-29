@@ -42,14 +42,7 @@ export function simulate(
   // at a fixed rate on a start and on a mid-run step-up alike, and drops at once). Slot 0 starts
   // where a window that is already running has got to.
   const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
-  let reachedExportW = slots.length
-    ? feedInReachedAtNow(
-        [...input.fixedSells, ...(input.runningSellSchedule ?? [])],
-        input.nowMs,
-        knobs.inverter_max_ac_output_watts - slots[0].houseW,
-        rampWattsPerMinute
-      )
-    : 0;
+  let reachedExportW = feedInAtStart(input, slots, rampWattsPerMinute);
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -145,6 +138,27 @@ export function simulate(
     socAfterSlot,
     autoExportWPerSlot,
   };
+}
+
+/**
+ * feedInReachedAtNow for slot 0, once per slots array: it depends only on the input and slot 0, which
+ * stay the same over the hundreds of simulations one plan runs on one slots array.
+ */
+const feedInAtStartBySlots = new WeakMap<Slot[], { input: PlannerInput; feedInW: number }>();
+
+function feedInAtStart(input: PlannerInput, slots: Slot[], rampWattsPerMinute: number): number {
+  const cached = feedInAtStartBySlots.get(slots);
+  if (cached?.input === input) return cached.feedInW;
+  const feedInW = slots.length
+    ? feedInReachedAtNow(
+        [...input.fixedSells, ...(input.runningSellSchedule ?? [])],
+        input.nowMs,
+        input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
+        rampWattsPerMinute
+      )
+    : 0;
+  feedInAtStartBySlots.set(slots, { input, feedInW });
+  return feedInW;
 }
 
 export function overlapsVeto(

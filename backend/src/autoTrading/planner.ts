@@ -25,7 +25,12 @@
 
 import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
-import { joinedChainMinutes, largestFeasibleSellPower, type SellPowerSearch } from "./reducedSellPower.ts";
+import {
+  joinedChainMinutes,
+  largestFeasibleSellPower,
+  SELL_POWER_STEP_WATTS,
+  type SellPowerSearch,
+} from "./reducedSellPower.ts";
 import type {
   FixedWindow,
   PlannedWindow,
@@ -78,9 +83,16 @@ export function generatePlan(input: PlannerInput): PlanResult {
   let current = base;
   const acceptedSell: number[] = [];
   const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, tailSpot, feasible: feasibleVsBase };
+  // The largest fitting power of the last reduced slot rejected for too little gain. Its leftover
+  // stays where it was, and the candidates after it are no pricier: one that can't take more power
+  // than that can't gain more either, so its search starts just above (one simulation to rule it
+  // out). Without this, a leftover just too small to clear min_gain_sek_per_slot sent every
+  // remaining candidate through a full search.
+  let gainRejectedWatts: number | undefined;
   for (const { slotIndex } of sellCandidates) {
     sellW[slotIndex] = knobs.max_sell_power_watts;
     let trial = simulate(input, slots, sellW, buyW, tailSpot);
+    let reducedWatts: number | undefined;
     if (!feasibleVsBase(trial)) {
       // Full power overdraws the remaining budget: sell what still fits here, so a leftover lands in
       // the best remaining quarter rather than in whichever cheaper slot is small enough at full
@@ -94,18 +106,21 @@ export function generatePlan(input: PlannerInput): PlanResult {
       const reduced = largestFeasibleSellPower(
         powerSearch,
         [slotIndex],
-        knobs.min_sell_power_watts,
+        gainRejectedWatts !== undefined ? gainRejectedWatts + SELL_POWER_STEP_WATTS : knobs.min_sell_power_watts,
         knobs.max_sell_power_watts
       );
       if (!reduced) continue;
       trial = reduced.result;
+      reducedWatts = reduced.watts;
     }
     const gain = trial.revenueSek - current.revenueSek;
     if (gain >= knobs.min_gain_sek_per_slot) {
       current = trial;
       acceptedSell.push(slotIndex);
+      gainRejectedWatts = undefined;
     } else {
       sellW[slotIndex] = 0;
+      if (reducedWatts !== undefined) gainRejectedWatts = reducedWatts;
     }
   }
 
