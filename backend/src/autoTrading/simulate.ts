@@ -1,8 +1,8 @@
 /**
  * The planner's battery/revenue simulation core: replay a candidate schedule (per-slot sell/buy
  * setpoints + fixed windows) over the forecast horizon and report revenue, floor violations and
- * the SOC trajectory. Shared by the greedy allocation in planner.ts and the local search in
- * sellConsolidation.ts, which is why it lives in its own module.
+ * the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts) and the
+ * local search in sellConsolidation.ts, which is why it lives in its own module.
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";

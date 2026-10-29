@@ -1,5 +1,5 @@
 /**
- * The greedy's fallback for a sell slot that would breach the reserve floor at full power (planner.ts):
+ * The greedy's fallback for a sell slot that would breach the reserve floor at full power (sellAllocation.ts):
  * sell the largest power that still fits. Without it a leftover budget smaller than a full-power quarter
  * skipped every good quarter and fell through to whatever cheaper slot happened to be small enough at full
  * power: on 2026-10-28 and 2026-10-29 that was the current slot with ~7 min left, sold at 1.62 and 1.49 SEK
