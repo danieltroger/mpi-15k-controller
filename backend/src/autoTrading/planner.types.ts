@@ -57,11 +57,17 @@ export type PlannerInput = {
   fixedSells: FixedWindow[];
   /**
    * The sell entries the runtime is executing: the whole config schedule, the user's and ours, ended
-   * ones included. Only tells the simulation how far feed-in has already ramped up at nowMs
-   * (feedInReachedAtNow) — what may be planned is still decided by fixedSells. Without it, fixedSells
-   * stand in.
+   * ones included. Only tells the simulation which window is feeding at nowMs and, without a
+   * measuredFeedInW, how far its feed-in has ramped up (runningFeedAtNow) — what may be planned is
+   * still decided by fixedSells. Without it, fixedSells stand in.
    */
   runningSellSchedule?: FixedWindow[];
+  /**
+   * The grid export the inverter measured at nowMs (W, ≥ 0), when the trader has a fresh reading
+   * (measuredFeedIn.ts). A sell window running at nowMs starts the simulation from it, capped at the
+   * window's target, instead of from a ramp replayed over the schedule (runningFeedAtNow).
+   */
+  measuredFeedInW?: number;
   fixedBuys: FixedWindow[];
   /** Time ranges where the user deleted an auto-created window — the planner must not re-add there. */
   sellVetoWindows: { startMs: number; endMs: number }[];
@@ -114,10 +120,15 @@ export type Slot = {
   fixedBuyW: number;
   /**
    * Feed-in a sell window running at nowMs has already ramped up to when this slot starts
-   * (feedInReachedAtNow). Only slot 0's is read — the simulation carries the feed level on from
+   * (runningFeedAtNow). Only slot 0's is read — the simulation carries the feed level on from
    * there — so buildSlots leaves the others at 0.
    */
   feedInAtStartW: number;
+  /**
+   * When the sell window running at nowMs started (its schedule key), undefined when none is. Only
+   * slot 0's is set: a new window that continues that feed is keyed no earlier (planWindows.ts).
+   */
+  runningWindowStartMs: number | undefined;
 };
 export type SimResult = {
   revenueSek: number;
@@ -126,6 +137,11 @@ export type SimResult = {
   minSocMs: number;
   endSocWh: number;
   sellExportWh: number;
+  /**
+   * sellExportWh per slot: what a sell exports there, the ramp and the house-load cap included — 0 in
+   * slots without a sell. A planned window's expected energy is the sum over its slots.
+   */
+  sellExportWhPerSlot: number[];
   autoExportWh: number;
   importWh: number;
   boughtWh: number;
@@ -133,6 +149,7 @@ export type SimResult = {
   /** Average auto-export watts per slot (battery-full PV overflow) — 0 in slots without it */
   autoExportWPerSlot: number[];
 };
+
 /**
  * What generatePlan's sell and buy allocation passes (sellAllocation.ts, buyAllocation.ts) work on.
  * sellW and buyW are the candidate schedule, per slot: the passes trial a change by setting it,

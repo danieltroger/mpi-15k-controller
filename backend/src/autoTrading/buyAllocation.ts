@@ -36,7 +36,7 @@ export function preBuyAgainstUnavoidableImport(
           sellW[slotIndex] === 0 &&
           !overlapsVeto(slot, input.buyVetoWindows)
       )
-      .sort((a, b) => a.slot.spot! - b.slot.spot!);
+      .sort((cheaper, pricier) => cheaper.slot.spot! - pricier.slot.spot!);
     for (const { slotIndex } of buyCandidates) {
       if (sellW[slotIndex] > 0) continue;
       buyW[slotIndex] = knobs.max_buy_power_watts;
@@ -81,7 +81,7 @@ export function allocateArbitragePairs(
         ({ slot, slotIndex }) =>
           slotTradableForArbitrage(context, slotIndex) && !overlapsVeto(slot, input.buyVetoWindows)
       )
-      .sort((a, b) => a.slot.spot! - b.slot.spot!);
+      .sort((cheaper, pricier) => cheaper.slot.spot! - pricier.slot.spot!);
     // A sold slot moves more energy out than one bought slot puts in (after losses), so a
     // 1:1 pairing is net-battery-negative and would always fail under a binding reserve floor.
     // Buy enough slots per sell slot to keep the pair battery-neutral or better.
@@ -107,7 +107,7 @@ export function allocateArbitragePairs(
             slot.spot! >= knobs.min_sell_spot_sek_per_kwh &&
             !overlapsVeto(slot, input.sellVetoWindows)
         )
-        .sort((a, b) => b.slot.spot! - a.slot.spot!);
+        .sort((pricier, cheaper) => cheaper.slot.spot! - pricier.slot.spot!);
       if (!sellPool.length) break;
       // Even the best possible pairing must clear the margin on prices alone, else nothing can
       const avgBuySpot = buyGroup.reduce((sum, slotIndex) => sum + slots[slotIndex].spot!, 0) / buyGroup.length;

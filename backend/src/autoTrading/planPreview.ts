@@ -20,6 +20,8 @@ import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { generatePlan } from "./planner.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
 import { sellScheduleWindows } from "./sellScheduleWindows.ts";
+import { freshMeasuredFeedInW } from "./measuredFeedIn.ts";
+import type { MqttValue } from "../sharedTypes.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
@@ -74,6 +76,21 @@ console.log(
 );
 const consumption = await fetchConsumptionForecast(influxClient, at.fallback_house_load_watts, elpatronConfig);
 
+// The live trader starts a running sell window from the inverter's measured feed-in; Influx's newest
+// grid power point stands in for its in-memory reading here
+let gridPowerReading: MqttValue | undefined;
+if (influxClient) {
+  const [row] = (await influxClient.query(
+    `SELECT last(ac_input_total_active_power) AS grid FROM "mpp-solar" WHERE time > now() - 5m`
+  )) as unknown as { time: Date; grid: number | null }[];
+  if (typeof row?.grid === "number") gridPowerReading = { value: row.grid, time: +row.time };
+}
+const previewNowMs = Date.now();
+const measuredFeedInW = freshMeasuredFeedInW(gridPowerReading, previewNowMs);
+console.log(
+  `Measured feed-in: ${measuredFeedInW === undefined ? "no fresh grid power reading, a running sell window's ramp is replayed from the schedule" : `${measuredFeedInW} W (grid ${gridPowerReading?.value} W, ${((previewNowMs - (gridPowerReading?.time ?? previewNowMs)) / 1000).toFixed(0)} s old)`}\n`
+);
+
 const runningSellSchedule = sellScheduleWindows(config.scheduled_power_selling.schedule);
 const fixedSells = runningSellSchedule.filter(window => window.endMs > Date.now());
 const fixedBuys = Object.entries(config.scheduled_power_buying.schedule)
@@ -81,7 +98,7 @@ const fixedBuys = Object.entries(config.scheduled_power_buying.schedule)
   .filter(w => w.endMs > Date.now());
 
 const input: PlannerInput = {
-  nowMs: Date.now(),
+  nowMs: previewNowMs,
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
   solarAverageWattsBetween: solar.averageWattsBetween,
@@ -93,6 +110,7 @@ const input: PlannerInput = {
   fixedSells,
   fixedBuys,
   runningSellSchedule,
+  measuredFeedInW,
   sellVetoWindows: [],
   buyVetoWindows: [],
   // Backfill knobs the config file predates and correct bounded ones, same as the live trader does

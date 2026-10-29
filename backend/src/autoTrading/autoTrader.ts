@@ -7,6 +7,8 @@ import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { useInfluxClient } from "../utilities/InfluxClientProvider.ts";
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedValues.ts";
+import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
+import type { MqttValue } from "../sharedTypes.ts";
 import { fetchPrices, type FetchedPrices, getCachedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
@@ -22,6 +24,7 @@ import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
 import { sellScheduleWindows } from "./sellScheduleWindows.ts";
+import { freshMeasuredFeedInW, MEASURED_FEED_IN_MAX_AGE_MS } from "./measuredFeedIn.ts";
 import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.ts";
 
 /**
@@ -34,6 +37,8 @@ type TraderCtx = {
   setConfig: Awaited<ReturnType<typeof get_config_object>>[1];
   /** Ah-ledger SOC clamped to [0,100] — the planner must never project from a nonsensical <0 / >100 start. */
   clampedSocAh: Accessor<number | undefined>;
+  /** The inverter's latest ac_input_total_active_power (negative while feeding) and when it arrived */
+  gridPowerReading: Accessor<MqttValue | undefined>;
   influxClient: ReturnType<typeof useInfluxClient>;
   enabled: Accessor<boolean>;
   nextDailyRunAt: Accessor<string | undefined>;
@@ -53,6 +58,7 @@ type TraderCtx = {
 export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnType<typeof get_config_object>> }) {
   const [config, setConfig] = configSignal;
   const { clampedSocAh } = useBatteryValuesProvider();
+  const { mqttValues } = useFromMqttProvider();
   const [status, setStatus] = createSignal<AutoTraderStatus>({ enabled: false, note: "starting" });
   const [nextDailyRunAt, setNextDailyRunAt] = createSignal<string | undefined>();
   const enabled = createMemo(() => !!config().automatic_trading?.enabled);
@@ -61,6 +67,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
     config,
     setConfig,
     clampedSocAh,
+    gridPowerReading: () => mqttValues.ac_input_total_active_power,
     influxClient: useInfluxClient(),
     enabled,
     nextDailyRunAt,
@@ -334,6 +341,15 @@ async function buildPlannerInput(
 ): Promise<PlannerInput> {
   const tradingConfig = cfg.automatic_trading;
   const nowMs = Date.now();
+  // Sampled together with nowMs: a sell window running now starts the simulation where the inverter
+  // measurably is, not where replaying the schedule puts it (runningFeedAtNow)
+  const gridPowerReading = untrack(ctx.gridPowerReading);
+  const measuredFeedInW = freshMeasuredFeedInW(gridPowerReading, nowMs);
+  if (measuredFeedInW === undefined) {
+    logLog(
+      `Auto trader: no grid power reading within ${MEASURED_FEED_IN_MAX_AGE_MS / 1000} s (last ${gridPowerReading ? new Date(gridPowerReading.time).toISOString() : "never"}) — a running sell window's ramp is replayed from the schedule`
+    );
+  }
   const solar = await fetchSolarForecast(tradingConfig, ctx.influxClient());
   // The water heater element is our own scheduled load, not a forecastable one: model it forward
   // and strip its share out of the learned baseline so it isn't counted twice
@@ -366,6 +382,7 @@ async function buildPlannerInput(
     // Everything the runtime is executing, ours included: a window running at nowMs has already
     // ramped up, and the simulation must not credit that ramp a second time
     runningSellSchedule: sellScheduleWindows(cfg.scheduled_power_selling.schedule),
+    measuredFeedInW,
     sellVetoWindows: ctx.state.vetoes
       .filter(veto => veto.kind === "sell")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),

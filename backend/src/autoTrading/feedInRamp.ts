@@ -42,9 +42,52 @@ export function rampedSlotExport(
   return { averageW: (rampWattMinutes + heldWattMinutes) / slotMinutes, endW: targetW };
 }
 
+/** The sell feed running at nowMs, as buildSlots hands it to the simulation and window packaging */
+export type RunningFeed = {
+  /** The feed-in level reached at nowMs (W): where the simulation's slot 0 starts. 0 when none runs. */
+  levelW: number;
+  /** When the sell window covering nowMs started (the earliest, if several do); undefined when none does */
+  windowStartMs: number | undefined;
+};
+
 /**
- * The feed-in level that sell windows already running at nowMs have reached. A plan made mid-window
- * (the opportunistic replan, the guard's re-plan, a daily run that lands in a window) starts the
+ * The sell feed running at nowMs. With a fresh measurement (PlannerInput.measuredFeedInW) its level is
+ * the inverter's measured grid export, capped at the running window's target: the reading also carries
+ * the baseline night feed and battery-full solar export, which aren't the window's ramp. Only without
+ * one is the ramp replayed over the schedule (feedInReachedAtNow), and the schedule can misstate the
+ * feed both ways: applyPlan deletes our ended entries, so a chain's earlier links are gone and the
+ * replay starts too late (too low, PR #77's chain-history gap), while a window paused by the runtime
+ * SOC cutoff or the overheat stop, or still held back by the setter throttle, replays as if it fed
+ * (too high).
+ */
+export function runningFeedAtNow({
+  sellWindows,
+  nowMs,
+  maxExportW,
+  rampWattsPerMinute,
+  measuredFeedInW,
+}: {
+  sellWindows: FixedWindow[];
+  nowMs: number;
+  /** What the inverter can export after the house load: caps every window's target */
+  maxExportW: number;
+  rampWattsPerMinute: number;
+  measuredFeedInW: number | undefined;
+}): RunningFeed {
+  const coveringNow = sellWindows.filter(window => window.watts > 0 && window.startMs <= nowMs && window.endMs > nowMs);
+  if (!coveringNow.length) return { levelW: 0, windowStartMs: undefined };
+  const windowStartMs = Math.min(...coveringNow.map(window => window.startMs));
+  if (measuredFeedInW === undefined) {
+    return { levelW: feedInReachedAtNow(sellWindows, nowMs, maxExportW, rampWattsPerMinute), windowStartMs };
+  }
+  const targetW = Math.max(0, Math.min(Math.max(...coveringNow.map(window => window.watts)), maxExportW));
+  return { levelW: Math.min(Math.max(0, measuredFeedInW), targetW), windowStartMs };
+}
+
+/**
+ * The feed-in level that sell windows already running at nowMs have reached, as far as the schedule
+ * tells (runningFeedAtNow's fallback when nothing measured it). A plan made mid-window (the
+ * opportunistic replan, the guard's re-plan, a daily run that lands in a window) starts the
  * simulation's slot 0 here, not at 0: ramping a running 15 kW window from 0 again under-credits it by
  * up to ~1.25 kWh, which the planner would see as spare budget and sell. Replays the ramp over the
  * chain of schedule entries leading up to nowMs without a gap (the runtime starts a window before

@@ -24,7 +24,7 @@
  */
 
 import { simulate } from "./simulate.ts";
-import { feedInReachedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
+import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import { allocateArbitragePairs, preBuyAgainstUnavoidableImport } from "./buyAllocation.ts";
@@ -62,7 +62,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const lastDaySpots = pricedSlots
     .slice(-96)
     .map(slot => slot.spot!)
-    .sort((a, b) => a - b);
+    .sort((lower, higher) => lower - higher);
   const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
 
   const sellW = new Array(slots.length).fill(0);
@@ -116,11 +116,11 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
 
   // ---- Package result ----
-  const spotsAll = pricedSlots.map(slot => slot.spot!).sort((a, b) => a - b);
+  const spotsAll = pricedSlots.map(slot => slot.spot!).sort((lower, higher) => lower - higher);
   const packaging: PackagingContext = {
     input,
     slots,
-    current,
+    finalResult: current,
     spotsAll,
     arbitrageBuySlots: arbitrage.arbitrageBuySlots,
   };
@@ -177,7 +177,7 @@ export function projectWithFixedWindows(input: PlannerInput): {
   const lastDaySpots = pricedSlots
     .slice(-96)
     .map(slot => slot.spot!)
-    .sort((a, b) => a - b);
+    .sort((lower, higher) => lower - higher);
   const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
   const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), tailSpot);
   return {
@@ -201,12 +201,15 @@ function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): 
 /**
  * The plan's 15-min slots from the current one (partial: it starts at nowMs) through the constraint
  * tail, with their forecasts and fixed windows. Slot 0 also carries the feed-in level a sell window
- * running at nowMs has reached, so the simulation doesn't ramp it from 0 a second time.
+ * running at nowMs has reached, so the simulation doesn't ramp it from 0 a second time, and when that
+ * window started, so a new window continuing it isn't keyed earlier.
  */
 export function buildSlots(input: PlannerInput): Slot[] {
   const { prices, nowMs, constraintTailHours, houseLoadWattsAt, fixedSells, fixedBuys } = input;
   const slots: Slot[] = [];
-  const relevantPrices = prices.filter(price => price.startMs + SLOT_MS > nowMs).sort((a, b) => a.startMs - b.startMs);
+  const relevantPrices = prices
+    .filter(price => price.startMs + SLOT_MS > nowMs)
+    .sort((earlier, later) => earlier.startMs - later.startMs);
   const pricedEndMs = relevantPrices.length ? relevantPrices[relevantPrices.length - 1].startMs + SLOT_MS : nowMs;
   const tailEndMs = pricedEndMs + constraintTailHours * 3600 * 1000;
 
@@ -226,6 +229,7 @@ export function buildSlots(input: PlannerInput): Slot[] {
       fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
       fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
       feedInAtStartW: 0,
+      runningWindowStartMs: undefined,
     });
   };
 
@@ -234,12 +238,15 @@ export function buildSlots(input: PlannerInput): Slot[] {
     pushSlot(slotStartMs, undefined);
   }
   if (slots.length) {
-    slots[0].feedInAtStartW = feedInReachedAtNow(
-      [...fixedSells, ...(input.runningSellSchedule ?? [])],
+    const runningFeed = runningFeedAtNow({
+      sellWindows: [...fixedSells, ...(input.runningSellSchedule ?? [])],
       nowMs,
-      input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
-      sellRampWattsPerMinute(input.knobs)
-    );
+      maxExportW: input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
+      rampWattsPerMinute: sellRampWattsPerMinute(input.knobs),
+      measuredFeedInW: input.measuredFeedInW,
+    });
+    slots[0].feedInAtStartW = runningFeed.levelW;
+    slots[0].runningWindowStartMs = runningFeed.windowStartMs;
   }
   return slots;
 }

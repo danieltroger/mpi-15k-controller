@@ -12,10 +12,8 @@ import {
 import type { FetchedPrices } from "../../../backend/src/autoTrading/priceService.types";
 import type { Config } from "../../../backend/src/config/config.types";
 import type { AutoTraderStatus } from "../../../backend/src/autoTrading/autoTraderState.types";
+import { SLOT_MS } from "../../../backend/src/autoTrading/slotDuration";
 import "./PricePlanChart.scss";
-
-/** Mirrors the backend planner's SLOT_MS (planner.ts is a runtime module the frontend can't import). */
-const SLOT_MS = 15 * 60_000;
 
 const VIEW_W = 1000;
 const VIEW_H = 240;
