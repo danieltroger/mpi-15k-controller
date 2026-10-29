@@ -111,8 +111,8 @@ function describeThrottleSettingBounds(settingName: SetterChangeThrottleSettingN
   return `${min}–${max} ${unit}, default ${defaultValue}.`;
 }
 function plannerKnobInput(knobName: BoundedPlannerKnobName): Partial<ConfigFieldMeta> {
-  const { min, max, unit } = PLANNER_KNOB_BOUNDS[knobName];
-  return { unit, min, max, step: 100 };
+  const { min, max, unit, step } = PLANNER_KNOB_BOUNDS[knobName];
+  return { unit, min, max, step };
 }
 function describePlannerKnobBounds(knobName: BoundedPlannerKnobName): string {
   const { min, max, unit, defaultValue } = PLANNER_KNOB_BOUNDS[knobName];
@@ -330,8 +330,14 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "min_window_minutes"],
         "Minimum window",
-        "Planned windows shorter than this are dropped — inverter command churn isn't free.",
+        "Planned selling stretches shorter than this are dropped, and the plan sells their energy in the ones that stay where it can — inverter command churn isn't free.",
         { unit: "min" }
+      ),
+      f(
+        ["automatic_trading", "fragmentation_tolerance_sek_per_window"],
+        "Fragmentation tolerance",
+        `How much projected revenue the plan's cleanup may give up for each separate selling stretch it merges away. On zigzagging 15-minute prices a comb of single quarters can out-earn one longer window by a few öre in the projection, less than the model's own error: every start is a feed-in ramp the plan over-credits slightly (~90 Wh per 15 kW start), and it costs two schedule writes and a ramp for real. Higher gives calmer schedules with fewer, longer windows, at up to this much projected revenue per stretch removed; 0 merges only when the projection gains. Applies from the next plan run. ${describePlannerKnobBounds("fragmentation_tolerance_sek_per_window")}`,
+        plannerKnobInput("fragmentation_tolerance_sek_per_window")
       ),
       f(
         ["automatic_trading", "constraint_tail_hours"],

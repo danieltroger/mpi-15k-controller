@@ -1,58 +1,15 @@
 /**
  * Synthetic-scenario self-test for the planner. Run from backend/ with:
  *   yarn node src/autoTrading/planner.selftest.ts
+ * The feed-in ramp and its slot-0 seed are covered by simulate.selftest.ts, the reduced-power
+ * fallback by reducedSellPower.selftest.ts and the knob bounds by plannerKnobBounds.selftest.ts.
  */
 import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
 import { buildElpatronLoadModel, MANUAL_ON_MODEL_HORIZON_MS } from "./elpatronForecast.ts";
 import { estimateElpatronWattsByHour } from "./consumptionForecast.ts";
-import { rampedSlotExport, sellRampWattsPerMinute, simulate } from "./simulate.ts";
-import { effectivePlannerKnob } from "./plannerKnobBounds.ts";
-import type { PlannerInput, Slot } from "./planner.types.ts";
-
-const H = 3600_000;
-const baseKnobs = {
-  max_sell_power_watts: 15000,
-  min_sell_power_watts: 1500,
-  inverter_max_ac_output_watts: 15000,
-  max_buy_power_watts: 10000,
-  planner_soc_floor_percent: 20,
-  runtime_soc_floor_percent: 15,
-  emergency_soc_floor_percent: 3,
-  extra_reserve_kwh: 0,
-  min_sell_spot_sek_per_kwh: 0.08,
-  min_gain_sek_per_slot: 0.25,
-  min_window_minutes: 30,
-  charge_efficiency: 0.95,
-  discharge_efficiency: 0.93,
-  buy_surcharges_sek_per_kwh: 1.186,
-  vat_multiplier: 1.25,
-  sell_bonus_sek_per_kwh: 0.092,
-  min_buy_saving_sek_per_kwh: 0.3,
-  baseline_feed_watts: 350,
-  // Existing scenarios predate ramp modeling, arbitrage and the sunny floor — keep them
-  // isolated (sunny floor == planner floor disables the relaxation)
-  sell_ramp_minutes: 0,
-  allow_arbitrage_buying: false,
-  planner_soc_floor_sunny_percent: 20,
-};
-
-// t0 = a midnight-aligned "now"
-const t0 = Math.floor(Date.now() / (24 * H)) * 24 * H;
-
-function mkPrices(hours: number, priceAtHour: (h: number) => number) {
-  const out: { startMs: number; spot: number }[] = [];
-  for (let ms = t0; ms < t0 + hours * H; ms += SLOT_MS) {
-    out.push({ startMs: ms, spot: priceAtHour((ms - t0) / H) });
-  }
-  return out;
-}
-
-const fails: string[] = [];
-function check(name: string, cond: boolean, detail = "") {
-  console.log(`${cond ? "PASS" : "FAIL"}: ${name} ${detail}`);
-  if (!cond) fails.push(name);
-}
+import { baseKnobs, check, finishSelftest, H, mkPrices, t0 } from "./plannerSelftestFixtures.ts";
+import type { PlannerInput } from "./planner.types.ts";
 
 // ---------- Scenario 1: winter deficit → pre-buy at cheap night hours ----------
 {
@@ -395,25 +352,26 @@ function check(name: string, cond: boolean, detail = "") {
 
 // ---------- Scenario 10: tight budget + zigzagging 15-min prices → consolidation cleans up ----------
 // The 2026-07-07/08 shape: the greedy takes the top-priced quarters, which zigzag scatters, and
-// near budget exhaustion only ramp-crippled isolated slots still "fit". Combs that genuinely
-// price better are kept (a stop/start costs nothing but the ramp), but consolidation must
-// harvest what the greedy strands: ramp-recovering merges and — key — fractional leftover
-// budget as reduced-power window extensions instead of nothing.
+// near budget exhaustion only ramp-crippled isolated slots still "fit". Consolidation must harvest
+// what the greedy strands: ramp-recovering merges and — key — fractional leftover budget as
+// reduced-power sells instead of nothing. A comb of single quarters that out-earns the merged plan
+// by less than the ramp model's own error is noise; the fragmentation tolerance merges it (PR #77
+// review: a 7-tooth comb at +0.2 SEK cost 14 window-edge writes and 7 ramp restarts against 5 and 2).
 {
-  const sunnyDay = (h: number) => {
-    const hh = h % 24;
-    return hh >= 6 && hh <= 20 ? Math.max(0, Math.sin(((hh - 6) / 14) * Math.PI)) * 12000 : 0;
+  const sunnyDay = (hour: number) => {
+    const hourOfDay = hour % 24;
+    return hourOfDay >= 6 && hourOfDay <= 20 ? Math.max(0, Math.sin(((hourOfDay - 6) / 14) * Math.PI)) * 12000 : 0;
   };
   // Evening peak with per-quarter zigzag (öre-level, like real 15-min day-ahead prices)
-  const priceCurve = (h: number) => {
-    const hh = h % 24;
-    if (hh >= 19 && hh < 22.01) {
-      const quarter = Math.round((hh % 1) * 4) % 4;
-      return 1.0 + [0.03, 0, 0.02, -0.01][quarter] - 0.005 * (hh - 19);
+  const priceCurve = (hour: number) => {
+    const hourOfDay = hour % 24;
+    if (hourOfDay >= 19 && hourOfDay < 22.01) {
+      const quarter = Math.round((hourOfDay % 1) * 4) % 4;
+      return 1.0 + [0.03, 0, 0.02, -0.01][quarter] - 0.005 * (hourOfDay - 19);
     }
     return 0.35;
   };
-  const input: PlannerInput = {
+  const mk = (fragmentationToleranceSek: number): PlannerInput => ({
     nowMs: t0 + 17 * H,
     prices: mkPrices(36, priceCurve),
     solarWattsAt: ms => sunnyDay((ms - t0) / H),
@@ -426,15 +384,21 @@ function check(name: string, cond: boolean, detail = "") {
     fixedBuys: [],
     sellVetoWindows: [],
     buyVetoWindows: [],
-    knobs: { ...baseKnobs, sell_ramp_minutes: 10, min_window_minutes: 15 },
-  };
-  const plan = generatePlan(input);
-  const sells = [...plan.sells].sort((a, b) => a.startMs - b.startMs);
+    knobs: {
+      ...baseKnobs,
+      sell_ramp_minutes: 10,
+      min_window_minutes: 15,
+      fragmentation_tolerance_sek_per_window: fragmentationToleranceSek,
+    },
+  });
+  const strictPlan = generatePlan(mk(0));
+  const plan = generatePlan(mk(0.2)); // the default tolerance
+  const sells = [...plan.sells].sort((earlier, later) => earlier.startMs - later.startMs);
   check("consolidate: sells exist under tight budget", sells.length > 0, `(${sells.length} windows)`);
   check(
     "consolidate: fractional budget captured at reduced power",
-    sells.some(w => w.watts < baseKnobs.max_sell_power_watts),
-    `(watts: ${sells.map(w => w.watts).join(", ")})`
+    sells.some(window => window.watts < baseKnobs.max_sell_power_watts),
+    `(watts: ${sells.map(window => window.watts).join(", ")})`
   );
   check(
     "consolidate: floor respected",
@@ -446,7 +410,26 @@ function check(name: string, cond: boolean, detail = "") {
     plan.projection.plannedSellKwh > 8,
     `(${plan.projection.plannedSellKwh} kWh)`
   );
-  console.log("  sells:", sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W`).join(", "));
+  const strictRuns = sellRunCount(strictPlan.sells);
+  const tolerantRuns = sellRunCount(plan.sells);
+  check(
+    "consolidate: the fragmentation tolerance merges the comb",
+    tolerantRuns <= 3 && tolerantRuns < strictRuns,
+    `(${tolerantRuns} selling runs vs ${strictRuns} with no tolerance)`
+  );
+  check(
+    "consolidate: at no more than the tolerance per run merged away",
+    plan.projection.estimatedRevenueSek >=
+      strictPlan.projection.estimatedRevenueSek - 0.2 * (strictRuns - tolerantRuns) - 0.05,
+    `(${plan.projection.estimatedRevenueSek} vs ${strictPlan.projection.estimatedRevenueSek} SEK)`
+  );
+  const describe = (planned: typeof sells) =>
+    planned.map(window => `h${(window.startMs - t0) / H}-h${(window.endMs - t0) / H}@${window.watts}W`).join(", ");
+  console.log("  sells:", describe(sells));
+  console.log(
+    "  no tolerance:",
+    describe([...strictPlan.sells].sort((earlier, later) => earlier.startMs - later.startMs))
+  );
 }
 
 // ---------- Scenario 11: sunny floor — morning selling may dip below the night floor ----------
@@ -638,173 +621,13 @@ function check(name: string, cond: boolean, detail = "") {
   check("history: post-firing dwell in the band attributes nothing", atHour(34) === 0, `(${atHour(34)} W)`);
 }
 
-// ---------- Scenario 15: leftover budget → reduced power in the best evening quarter (2026-10-29 08:07) ----------
-// The reserve floor binds at dawn tomorrow; 16:45 and 17:00 take most of the budget at full power and
-// the leftover fits no full evening quarter. The full-power-only greedy then rejected every evening
-// quarter and accepted the current slot (~7 min left, small enough at full power) at 1.49 SEK. With the
-// reduced-power fallback the leftover goes to the best remaining evening quarter instead.
-{
-  const eveningSpotsByHour = new Map([
-    [16, 2.28],
-    [16.25, 2.29],
-    [16.5, 2.22],
-    [16.75, 2.8],
-    [17, 2.31],
-    [17.25, 1.94],
-    [17.5, 2.2],
-    [17.75, 2.11],
-    [18, 2.22],
-  ]);
-  const spotAtHour = (hour: number) => {
-    const eveningSpot = eveningSpotsByHour.get(hour);
-    if (eveningSpot !== undefined) return eveningSpot;
-    if (hour >= 8 && hour < 8.25) return 1.49; // the current slot
-    if (hour >= 18.25 && hour < 20) return 1.9;
-    if (hour >= 15 && hour < 16) return 1.7;
-    return 1.2;
-  };
-  const autumnSun = (ms: number) => {
-    const hourOfDay = ((ms - t0) / H) % 24;
-    return hourOfDay >= 7 && hourOfDay <= 15 ? Math.sin(((hourOfDay - 7) / 8) * Math.PI) * 4500 : 0;
-  };
-  const nowMs = t0 + 8 * H + 7.65 * 60_000; // 08:07:39, ~7.4 min of the 08:00 slot left
-  const mk = (minSellPowerWatts: number): PlannerInput => ({
-    nowMs,
-    prices: mkPrices(24, spotAtHour),
-    solarWattsAt: autumnSun,
-    houseLoadWattsAt: () => 600,
-    parasiticWatts: 230,
-    socPercent: 27.5,
-    capacityWh: 65000,
-    constraintTailHours: 18,
-    fixedSells: [],
-    fixedBuys: [],
-    sellVetoWindows: [],
-    buyVetoWindows: [],
-    // The live knobs of 2026-10-29
-    knobs: {
-      ...baseKnobs,
-      min_sell_power_watts: minSellPowerWatts,
-      planner_soc_floor_percent: 7,
-      planner_soc_floor_sunny_percent: 3,
-      runtime_soc_floor_percent: 5,
-      emergency_soc_floor_percent: 0,
-      min_sell_spot_sek_per_kwh: 0.8,
-      min_gain_sek_per_slot: 0.5,
-      min_window_minutes: 15,
-      sell_ramp_minutes: 10,
-    },
-  });
-  const currentSlotStartMs = t0 + 8 * H;
-  const sellsInCurrentSlot = (plan: ReturnType<typeof generatePlan>) =>
-    plan.sells.filter(w => w.startMs <= currentSlotStartMs && w.endMs > currentSlotStartMs);
-  const describeSells = (plan: ReturnType<typeof generatePlan>) =>
-    plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W/${w.avgSpot.toFixed(2)}`);
-  // min_sell_power_watts at the full sell power switches the fallback off: the old greedy
-  const fullPowerOnly = generatePlan(mk(15000));
-  const withFallback = generatePlan(mk(1500));
-  check(
-    "leftover: full-power-only greedy reproduces the incident (sells the current partial slot)",
-    sellsInCurrentSlot(fullPowerOnly).length === 1,
-    `(${describeSells(fullPowerOnly).join(", ")})`
-  );
-  check(
-    "leftover: with the fallback nothing is sold in the current slot",
-    sellsInCurrentSlot(withFallback).length === 0,
-    `(${describeSells(withFallback).join(", ")})`
-  );
-  check(
-    "leftover: sold at reduced power in an evening quarter",
-    withFallback.sells.some(w => w.watts < 15000 && w.watts >= 1500 && w.avgSpot >= 2.2),
-    `(${describeSells(withFallback).join(", ")})`
-  );
-  check(
-    "leftover: every sell is in the evening peak",
-    withFallback.sells.every(w => w.avgSpot >= 2.2),
-    `(${describeSells(withFallback).join(", ")})`
-  );
-  check(
-    "leftover: floor respected",
-    withFallback.projection.minSocPercent >= 6.95,
-    `(min SOC ${withFallback.projection.minSocPercent}%)`
-  );
-  check(
-    "leftover: revenue beats the full-power-only plan",
-    withFallback.projection.estimatedRevenueSek > fullPowerOnly.projection.estimatedRevenueSek + 1,
-    `(${withFallback.projection.estimatedRevenueSek} vs ${fullPowerOnly.projection.estimatedRevenueSek} SEK)`
-  );
-  console.log("  full power only:", describeSells(fullPowerOnly).join(", "));
-  console.log("  with fallback:  ", describeSells(withFallback).join(", "));
-}
-
-// ---------- Scenario 16: the feed-in ramp is a rate, also for mid-run step-ups ----------
-// Measured ~1.4 kW/min whatever the target: a 5 kW target is reached in ~3.5 min, and a 5 → 15 kW
-// step-up mid-run climbs for ~7 min (2026-09-14). Decreases are immediate.
-{
-  const rampKnobs = { ...baseKnobs, sell_ramp_minutes: 10 }; // 15 kW / 10 min = 1.5 kW/min
-  const quarterSlots: Slot[] = [0, 1, 2].map(index => ({
-    startMs: t0 + index * SLOT_MS,
-    endMs: t0 + (index + 1) * SLOT_MS,
-    durationH: 0.25,
-    spot: 1,
-    pvW: 0,
-    houseW: 0,
-    fixedSellW: 0,
-    fixedBuyW: 0,
-  }));
-  const rampInput: PlannerInput = {
-    nowMs: t0,
-    prices: [],
-    solarWattsAt: () => 0,
-    houseLoadWattsAt: () => 0,
-    parasiticWatts: 0,
-    socPercent: 90,
-    capacityWh: 65000,
-    constraintTailHours: 0,
-    fixedSells: [],
-    fixedBuys: [],
-    sellVetoWindows: [],
-    buyVetoWindows: [],
-    knobs: rampKnobs,
-  };
-  const exportedWh = (sellWatts: number[]) => simulate(rampInput, quarterSlots, sellWatts, [0, 0, 0], 1).sellExportWh;
-  // 0 → 5 kW in 3.33 min, then 11.67 min held: (2.5 kW × 3.33 + 5 kW × 11.67) / 60 = 1111 Wh.
-  // The old model stretched every start over the full 10 min whatever the target: 833 Wh.
-  const fiveKwQuarterWh = exportedWh([5000, 0, 0]);
-  check(
-    "ramp rate: a 5 kW window delivers more in its first quarter than the old 10-min model",
-    Math.abs(fiveKwQuarterWh - 1111.1) < 1 && fiveKwQuarterWh > 833.3 + 200,
-    `(${fiveKwQuarterWh.toFixed(1)} Wh, old model 833.3 Wh)`
-  );
-  // 5 → 15 kW climbs for 6.67 min: (10 kW × 6.67 + 15 kW × 8.33) / 60 = 3194 Wh, not a full 3750 Wh
-  const stepUpQuarterWh = exportedWh([5000, 15000, 0]) - fiveKwQuarterWh;
-  check(
-    "ramp rate: a mid-run step-up ramps",
-    Math.abs(stepUpQuarterWh - 3194.4) < 1,
-    `(${stepUpQuarterWh.toFixed(1)} Wh, full power would be 3750 Wh)`
-  );
-  const stepDownQuarterWh = exportedWh([15000, 5000, 0]) - exportedWh([15000, 0, 0]);
-  check(
-    "ramp rate: a step-down is immediate",
-    Math.abs(stepDownQuarterWh - 1250) < 1,
-    `(${stepDownQuarterWh.toFixed(1)} Wh)`
-  );
-  // The 2026-10-29 08:07:40 start: ~7.3 min left of the slot at 15 kW never gets past ~11 kW
-  const partialSlot = rampedSlotExport(0, 15000, 7.35, sellRampWattsPerMinute(rampKnobs));
-  check(
-    "ramp rate: a short slot ends mid-ramp",
-    Math.abs(partialSlot.endW - 11025) < 1 && Math.abs(partialSlot.averageW - 5512.5) < 1,
-    `(end ${partialSlot.endW} W, average ${partialSlot.averageW} W)`
-  );
-}
-
-// ---------- Scenario 17: window SOC text for a window in the current slot ----------
+// ---------- Scenario 15: window SOC text for a window in the current slot ----------
 // The log read "SOC 29%→29%" for 2026-10-29's 08:00 window: the start SOC was taken after the
 // window's own first slot. A window in slot 0 starts from the input SOC.
 {
   const input: PlannerInput = {
     nowMs: t0 + 18 * H,
-    prices: mkPrices(30, h => (h >= 18 && h < 19 ? 3.0 : 0.5)),
+    prices: mkPrices(30, hour => (hour >= 18 && hour < 19 ? 3.0 : 0.5)),
     solarWattsAt: () => 0,
     houseLoadWattsAt: () => 600,
     parasiticWatts: 230,
@@ -818,11 +641,11 @@ function check(name: string, cond: boolean, detail = "") {
     knobs: { ...baseKnobs, min_window_minutes: 15, sell_ramp_minutes: 10 },
   };
   const plan = generatePlan(input);
-  const currentSlotWindow = plan.sells.find(w => w.startMs === input.nowMs);
+  const currentSlotWindow = plan.sells.find(window => window.startMs === input.nowMs);
   check(
     "soc text: a window starts in the current slot",
     !!currentSlotWindow,
-    `(${plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W ${w.reason}`).join(", ")})`
+    `(${plan.sells.map(window => `h${(window.startMs - t0) / H}-h${(window.endMs - t0) / H}@${window.watts}W ${window.reason}`).join(", ")})`
   );
   // The first quarter alone takes ~4 pp, so the old text read "SOC 86%→…"
   check(
@@ -832,29 +655,11 @@ function check(name: string, cond: boolean, detail = "") {
   );
 }
 
-// ---------- Scenario 18: min_sell_power_watts is clamped to its bounds ----------
-{
-  const inBounds = effectivePlannerKnob("min_sell_power_watts", 2000);
-  const tooLow = effectivePlannerKnob("min_sell_power_watts", 300);
-  const tooHigh = effectivePlannerKnob("min_sell_power_watts", 20000);
-  const notANumber = effectivePlannerKnob("min_sell_power_watts", "1500");
-  check("knob: an in-bounds value passes unchanged", inBounds.value === 2000 && !inBounds.correction);
-  check(
-    "knob: below the minimum is raised to it",
-    tooLow.value === 500 && !!tooLow.correction,
-    `(${tooLow.correction})`
-  );
-  check(
-    "knob: above the maximum is lowered to it",
-    tooHigh.value === 15000 && !!tooHigh.correction,
-    `(${tooHigh.correction})`
-  );
-  check(
-    "knob: a non-number falls back to the default",
-    notANumber.value === 1500 && !!notANumber.correction,
-    `(${notANumber.correction})`
-  );
-}
+finishSelftest();
 
-console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");
-process.exit(fails.length ? 1 : 0);
+/** Separate selling runs (time-contiguous chains) — each one is a feed-in ramp and two window-edge writes */
+function sellRunCount(sells: { startMs: number; endMs: number }[]): number {
+  const starts = new Set(sells.map(window => window.startMs));
+  return sells.filter(window => !sells.some(earlier => earlier.endMs === window.startMs) && starts.has(window.startMs))
+    .length;
+}

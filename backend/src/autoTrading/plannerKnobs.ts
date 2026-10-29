@@ -16,6 +16,10 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
   return {
     ...tradingConfig,
     min_sell_power_watts: boundedKnobValue("min_sell_power_watts", tradingConfig.min_sell_power_watts),
+    fragmentation_tolerance_sek_per_window: boundedKnobValue(
+      "fragmentation_tolerance_sek_per_window",
+      tradingConfig.fragmentation_tolerance_sek_per_window
+    ),
     runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
   };

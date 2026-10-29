@@ -20,6 +20,7 @@ export type PlannerKnobs = Pick<
   | "min_sell_spot_sek_per_kwh"
   | "min_gain_sek_per_slot"
   | "min_window_minutes"
+  | "fragmentation_tolerance_sek_per_window"
   | "charge_efficiency"
   | "discharge_efficiency"
   | "buy_surcharges_sek_per_kwh"
@@ -54,6 +55,13 @@ export type PlannerInput = {
   constraintTailHours: number;
   /** Schedule windows owned by the user — treated as immutable and simulated as given. */
   fixedSells: FixedWindow[];
+  /**
+   * The sell entries the runtime is executing: the whole config schedule, the user's and ours, ended
+   * ones included. Only tells the simulation how far feed-in has already ramped up at nowMs
+   * (feedInReachedAtNow) — what may be planned is still decided by fixedSells. Without it, fixedSells
+   * stand in.
+   */
+  runningSellSchedule?: FixedWindow[];
   fixedBuys: FixedWindow[];
   /** Time ranges where the user deleted an auto-created window — the planner must not re-add there. */
   sellVetoWindows: { startMs: number; endMs: number }[];

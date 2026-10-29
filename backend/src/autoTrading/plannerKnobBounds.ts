@@ -5,9 +5,12 @@
  */
 import type { AutomaticTradingConfig } from "../config/config.types.ts";
 
-export type BoundedPlannerKnobName = keyof Pick<AutomaticTradingConfig, "min_sell_power_watts">;
+export type BoundedPlannerKnobName = keyof Pick<
+  AutomaticTradingConfig,
+  "min_sell_power_watts" | "fragmentation_tolerance_sek_per_window"
+>;
 
-export type PlannerKnobBounds = { defaultValue: number; min: number; max: number; unit: "W" };
+export type PlannerKnobBounds = { defaultValue: number; min: number; max: number; unit: "W" | "SEK"; step: number };
 
 export const PLANNER_KNOB_BOUNDS = {
   // A leftover budget the greedy can't fit at full power is sold at the largest power that still keeps the
@@ -15,7 +18,13 @@ export const PLANNER_KNOB_BOUNDS = {
   // min-gain bar, so anything smaller is crumbs that still cost a setpoint write and a ramp. The 500 W floor stays
   // clear of the 350 W baseline night feed, which the inverter feeds anyway. At or above max_sell_power_watts
   // the fallback is off: a slot is sold at full power or not at all.
-  min_sell_power_watts: { defaultValue: 1500, min: 500, max: 15000, unit: "W" },
+  min_sell_power_watts: { defaultValue: 1500, min: 500, max: 15000, unit: "W", step: 100 },
+  // What consolidation may give up per separate selling run it merges away (sellConsolidation.ts). Each
+  // run costs a ramp restart and two window-edge writes for real, and the simulation over-credits every
+  // 15 kW restart by ~90 Wh (planned at 1.5 kW/min, measured 1.4): ~0.2 SEK at a 2 SEK peak, so a comb
+  // that out-earns a merged plan by less than that is model noise. 0 = merge only for a strict gain. Past
+  // 1 SEK per run the planner would give up real money to tidy the schedule.
+  fragmentation_tolerance_sek_per_window: { defaultValue: 0.2, min: 0, max: 1, unit: "SEK", step: 0.05 },
 } as const satisfies Record<BoundedPlannerKnobName, PlannerKnobBounds>;
 
 /**

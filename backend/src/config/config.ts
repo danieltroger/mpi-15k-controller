@@ -78,6 +78,7 @@ export const default_config: Config = {
     allow_arbitrage_buying: true,
     sell_ramp_minutes: 10,
     min_window_minutes: 15,
+    fragmentation_tolerance_sek_per_window: PLANNER_KNOB_BOUNDS.fragmentation_tolerance_sek_per_window.defaultValue,
     charge_efficiency: 0.95,
     discharge_efficiency: 0.93,
     // E.ON 2026: elöverföring 0.734 + energiskatt 0.36 + rörliga kostnader ~0.052 + fast påslag 0.04

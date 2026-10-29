@@ -12,8 +12,9 @@
  * highest spot price down, keeping every accepted plan feasible (SOC never below the planner floor + user
  * reserve). A slot that full power would overdraw gets the largest power that still fits (down to
  * min_sell_power_watts, reducedSellPower.ts), so the last fraction of a budget goes to the best remaining
- * quarter. Selling energy the battery couldn't have absorbed anyway (would have auto-exported when full)
- * is naturally handled by the simulation's revenue accounting.
+ * quarter that can still make a window of min_window_minutes. Selling energy the battery couldn't have
+ * absorbed anyway (would have auto-exported when full) is naturally handled by the simulation's revenue
+ * accounting.
  *
  * Fragmented schedules are allowed when they genuinely price better (a stop/start costs nothing but the
  * modeled ramp), but a consolidation pass (sellConsolidation.ts) repairs fragmentation the greedy's
@@ -24,7 +25,7 @@
 
 import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
-import { largestFeasibleSellPower, type SellPowerSearch } from "./reducedSellPower.ts";
+import { joinedChainMinutes, largestFeasibleSellPower, type SellPowerSearch } from "./reducedSellPower.ts";
 import type {
   FixedWindow,
   PlannedWindow,
@@ -82,8 +83,20 @@ export function generatePlan(input: PlannerInput): PlanResult {
     let trial = simulate(input, slots, sellW, buyW, tailSpot);
     if (!feasibleVsBase(trial)) {
       // Full power overdraws the remaining budget: sell what still fits here, so a leftover lands in
-      // the best remaining quarter rather than in whichever cheaper slot is small enough at full power
-      const reduced = largestFeasibleSellPower(powerSearch, slotIndex, knobs.max_sell_power_watts);
+      // the best remaining quarter rather than in whichever cheaper slot is small enough at full
+      // power. Not where the chain would stay shorter than min_window_minutes: the merge would drop
+      // it and the budget with it, so the leftover waits for a slot next to a run (or for
+      // consolidation's edge extension).
+      if (joinedChainMinutes(slots, sellW, slotIndex) < knobs.min_window_minutes) {
+        sellW[slotIndex] = 0;
+        continue;
+      }
+      const reduced = largestFeasibleSellPower(
+        powerSearch,
+        [slotIndex],
+        knobs.min_sell_power_watts,
+        knobs.max_sell_power_watts
+      );
       if (!reduced) continue;
       trial = reduced.result;
     }
@@ -134,7 +147,13 @@ export function generatePlan(input: PlannerInput): PlanResult {
 
   // Defragment what the greedy scattered (see sellConsolidation.ts) — sellW is the source of
   // truth afterwards, so rebuild the accepted list from it
-  current = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
+  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
+  current = consolidated.result;
+  if (consolidated.droppedShortRuns) {
+    notes.push(
+      `Dropped ${consolidated.droppedShortRuns} sell run(s) shorter than ${knobs.min_window_minutes} min and re-spent their budget`
+    );
+  }
   acceptedSell.length = 0;
   for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
 

@@ -21,6 +21,7 @@ import {
 import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
+import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.ts";
 
 /**
@@ -362,6 +363,9 @@ async function buildPlannerInput(
     constraintTailHours: tradingConfig.constraint_tail_hours,
     fixedSells: sells,
     fixedBuys: buys,
+    // Everything the runtime is executing, ours included: a window running at nowMs has already
+    // ramped up, and the simulation must not credit that ramp a second time
+    runningSellSchedule: sellScheduleWindows(cfg.scheduled_power_selling.schedule),
     sellVetoWindows: ctx.state.vetoes
       .filter(veto => veto.kind === "sell")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),

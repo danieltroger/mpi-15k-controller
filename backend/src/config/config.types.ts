@@ -48,6 +48,11 @@ export type AutomaticTradingConfig = {
   sell_ramp_minutes: number;
   /** Generated windows shorter than this are dropped (inverter command churn isn't free) */
   min_window_minutes: number;
+  /**
+   * Simulated revenue the plan's cleanup may give up per separate selling run it merges away (each
+   * run is a ramp restart and two window-edge writes). Bounds in plannerKnobBounds.ts, clamped.
+   */
+  fragmentation_tolerance_sek_per_window: number;
   charge_efficiency: number;
   discharge_efficiency: number;
   /** Per-kWh surcharges when buying, before VAT: grid transfer + energy tax + supplier markups */
