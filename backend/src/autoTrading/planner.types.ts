@@ -5,10 +5,12 @@ export type FixedWindow = { startMs: number; endMs: number; watts: number };
 /**
  * Knobs are the automatic_trading config section verbatim (spread it in), plus two values
  * that live elsewhere in the config: the runtime sell cutoff and the baseline night feed.
+ * The callers pass the knobs of plannerKnobBounds.ts corrected to their bounds.
  */
 export type PlannerKnobs = Pick<
   AutomaticTradingConfig,
   | "max_sell_power_watts"
+  | "min_sell_power_watts"
   | "inverter_max_ac_output_watts"
   | "max_buy_power_watts"
   | "planner_soc_floor_percent"

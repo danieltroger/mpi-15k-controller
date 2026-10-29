@@ -20,6 +20,7 @@ import {
 } from "./autoTraderState.ts";
 import { captureForecastLog, settleRecentDays } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
+import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
 import type { FixedWindow, PlannedWindow, PlannerInput } from "./planner.types.ts";
 
 /**
@@ -367,11 +368,7 @@ async function buildPlannerInput(
     buyVetoWindows: ctx.state.vetoes
       .filter(veto => veto.kind === "buy")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),
-    knobs: {
-      ...tradingConfig,
-      runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
-      baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
-    },
+    knobs: plannerKnobsFromConfig(cfg),
   };
 }
 

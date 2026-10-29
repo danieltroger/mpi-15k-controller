@@ -6,11 +6,14 @@ import { generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { computeRealizedRevenue } from "./tradingPerformance.ts";
 import { buildElpatronLoadModel, MANUAL_ON_MODEL_HORIZON_MS } from "./elpatronForecast.ts";
 import { estimateElpatronWattsByHour } from "./consumptionForecast.ts";
-import type { PlannerInput } from "./planner.types.ts";
+import { rampedSlotExport, sellRampWattsPerMinute, simulate } from "./simulate.ts";
+import { effectivePlannerKnob } from "./plannerKnobBounds.ts";
+import type { PlannerInput, Slot } from "./planner.types.ts";
 
 const H = 3600_000;
 const baseKnobs = {
   max_sell_power_watts: 15000,
+  min_sell_power_watts: 1500,
   inverter_max_ac_output_watts: 15000,
   max_buy_power_watts: 10000,
   planner_soc_floor_percent: 20,
@@ -479,9 +482,11 @@ function check(name: string, cond: boolean, detail = "") {
   });
   const strict = generatePlan(mk(20)); // sunny floor == planner floor → old behavior
   const relaxed = generatePlan(mk(5));
+  // The relaxed plan already sells the whole peak at full power (32.4 kWh); the strict one sells its
+  // leftover at reduced power since the greedy's fallback (26.5 → 27.5 kWh), so the gap is ~4.9 kWh
   check(
     "sunnyfloor: relaxed floor sells more at the morning peak",
-    relaxed.projection.plannedSellKwh > strict.projection.plannedSellKwh + 5,
+    relaxed.projection.plannedSellKwh > strict.projection.plannedSellKwh + 4,
     `(${relaxed.projection.plannedSellKwh} vs ${strict.projection.plannedSellKwh} kWh)`
   );
   check(
@@ -631,6 +636,224 @@ function check(name: string, cond: boolean, detail = "") {
     `(${atHour(30)}/${atHour(31)} W)`
   );
   check("history: post-firing dwell in the band attributes nothing", atHour(34) === 0, `(${atHour(34)} W)`);
+}
+
+// ---------- Scenario 15: leftover budget → reduced power in the best evening quarter (2026-10-29 08:07) ----------
+// The reserve floor binds at dawn tomorrow; 16:45 and 17:00 take most of the budget at full power and
+// the leftover fits no full evening quarter. The full-power-only greedy then rejected every evening
+// quarter and accepted the current slot (~7 min left, small enough at full power) at 1.49 SEK. With the
+// reduced-power fallback the leftover goes to the best remaining evening quarter instead.
+{
+  const eveningSpotsByHour = new Map([
+    [16, 2.28],
+    [16.25, 2.29],
+    [16.5, 2.22],
+    [16.75, 2.8],
+    [17, 2.31],
+    [17.25, 1.94],
+    [17.5, 2.2],
+    [17.75, 2.11],
+    [18, 2.22],
+  ]);
+  const spotAtHour = (hour: number) => {
+    const eveningSpot = eveningSpotsByHour.get(hour);
+    if (eveningSpot !== undefined) return eveningSpot;
+    if (hour >= 8 && hour < 8.25) return 1.49; // the current slot
+    if (hour >= 18.25 && hour < 20) return 1.9;
+    if (hour >= 15 && hour < 16) return 1.7;
+    return 1.2;
+  };
+  const autumnSun = (ms: number) => {
+    const hourOfDay = ((ms - t0) / H) % 24;
+    return hourOfDay >= 7 && hourOfDay <= 15 ? Math.sin(((hourOfDay - 7) / 8) * Math.PI) * 4500 : 0;
+  };
+  const nowMs = t0 + 8 * H + 7.65 * 60_000; // 08:07:39, ~7.4 min of the 08:00 slot left
+  const mk = (minSellPowerWatts: number): PlannerInput => ({
+    nowMs,
+    prices: mkPrices(24, spotAtHour),
+    solarWattsAt: autumnSun,
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent: 27.5,
+    capacityWh: 65000,
+    constraintTailHours: 18,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    // The live knobs of 2026-10-29
+    knobs: {
+      ...baseKnobs,
+      min_sell_power_watts: minSellPowerWatts,
+      planner_soc_floor_percent: 7,
+      planner_soc_floor_sunny_percent: 3,
+      runtime_soc_floor_percent: 5,
+      emergency_soc_floor_percent: 0,
+      min_sell_spot_sek_per_kwh: 0.8,
+      min_gain_sek_per_slot: 0.5,
+      min_window_minutes: 15,
+      sell_ramp_minutes: 10,
+    },
+  });
+  const currentSlotStartMs = t0 + 8 * H;
+  const sellsInCurrentSlot = (plan: ReturnType<typeof generatePlan>) =>
+    plan.sells.filter(w => w.startMs <= currentSlotStartMs && w.endMs > currentSlotStartMs);
+  const describeSells = (plan: ReturnType<typeof generatePlan>) =>
+    plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W/${w.avgSpot.toFixed(2)}`);
+  // min_sell_power_watts at the full sell power switches the fallback off: the old greedy
+  const fullPowerOnly = generatePlan(mk(15000));
+  const withFallback = generatePlan(mk(1500));
+  check(
+    "leftover: full-power-only greedy reproduces the incident (sells the current partial slot)",
+    sellsInCurrentSlot(fullPowerOnly).length === 1,
+    `(${describeSells(fullPowerOnly).join(", ")})`
+  );
+  check(
+    "leftover: with the fallback nothing is sold in the current slot",
+    sellsInCurrentSlot(withFallback).length === 0,
+    `(${describeSells(withFallback).join(", ")})`
+  );
+  check(
+    "leftover: sold at reduced power in an evening quarter",
+    withFallback.sells.some(w => w.watts < 15000 && w.watts >= 1500 && w.avgSpot >= 2.2),
+    `(${describeSells(withFallback).join(", ")})`
+  );
+  check(
+    "leftover: every sell is in the evening peak",
+    withFallback.sells.every(w => w.avgSpot >= 2.2),
+    `(${describeSells(withFallback).join(", ")})`
+  );
+  check(
+    "leftover: floor respected",
+    withFallback.projection.minSocPercent >= 6.95,
+    `(min SOC ${withFallback.projection.minSocPercent}%)`
+  );
+  check(
+    "leftover: revenue beats the full-power-only plan",
+    withFallback.projection.estimatedRevenueSek > fullPowerOnly.projection.estimatedRevenueSek + 1,
+    `(${withFallback.projection.estimatedRevenueSek} vs ${fullPowerOnly.projection.estimatedRevenueSek} SEK)`
+  );
+  console.log("  full power only:", describeSells(fullPowerOnly).join(", "));
+  console.log("  with fallback:  ", describeSells(withFallback).join(", "));
+}
+
+// ---------- Scenario 16: the feed-in ramp is a rate, also for mid-run step-ups ----------
+// Measured ~1.4 kW/min whatever the target: a 5 kW target is reached in ~3.5 min, and a 5 → 15 kW
+// step-up mid-run climbs for ~7 min (2026-09-14). Decreases are immediate.
+{
+  const rampKnobs = { ...baseKnobs, sell_ramp_minutes: 10 }; // 15 kW / 10 min = 1.5 kW/min
+  const quarterSlots: Slot[] = [0, 1, 2].map(index => ({
+    startMs: t0 + index * SLOT_MS,
+    endMs: t0 + (index + 1) * SLOT_MS,
+    durationH: 0.25,
+    spot: 1,
+    pvW: 0,
+    houseW: 0,
+    fixedSellW: 0,
+    fixedBuyW: 0,
+  }));
+  const rampInput: PlannerInput = {
+    nowMs: t0,
+    prices: [],
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 0,
+    parasiticWatts: 0,
+    socPercent: 90,
+    capacityWh: 65000,
+    constraintTailHours: 0,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: rampKnobs,
+  };
+  const exportedWh = (sellWatts: number[]) => simulate(rampInput, quarterSlots, sellWatts, [0, 0, 0], 1).sellExportWh;
+  // 0 → 5 kW in 3.33 min, then 11.67 min held: (2.5 kW × 3.33 + 5 kW × 11.67) / 60 = 1111 Wh.
+  // The old model stretched every start over the full 10 min whatever the target: 833 Wh.
+  const fiveKwQuarterWh = exportedWh([5000, 0, 0]);
+  check(
+    "ramp rate: a 5 kW window delivers more in its first quarter than the old 10-min model",
+    Math.abs(fiveKwQuarterWh - 1111.1) < 1 && fiveKwQuarterWh > 833.3 + 200,
+    `(${fiveKwQuarterWh.toFixed(1)} Wh, old model 833.3 Wh)`
+  );
+  // 5 → 15 kW climbs for 6.67 min: (10 kW × 6.67 + 15 kW × 8.33) / 60 = 3194 Wh, not a full 3750 Wh
+  const stepUpQuarterWh = exportedWh([5000, 15000, 0]) - fiveKwQuarterWh;
+  check(
+    "ramp rate: a mid-run step-up ramps",
+    Math.abs(stepUpQuarterWh - 3194.4) < 1,
+    `(${stepUpQuarterWh.toFixed(1)} Wh, full power would be 3750 Wh)`
+  );
+  const stepDownQuarterWh = exportedWh([15000, 5000, 0]) - exportedWh([15000, 0, 0]);
+  check(
+    "ramp rate: a step-down is immediate",
+    Math.abs(stepDownQuarterWh - 1250) < 1,
+    `(${stepDownQuarterWh.toFixed(1)} Wh)`
+  );
+  // The 2026-10-29 08:07:40 start: ~7.3 min left of the slot at 15 kW never gets past ~11 kW
+  const partialSlot = rampedSlotExport(0, 15000, 7.35, sellRampWattsPerMinute(rampKnobs));
+  check(
+    "ramp rate: a short slot ends mid-ramp",
+    Math.abs(partialSlot.endW - 11025) < 1 && Math.abs(partialSlot.averageW - 5512.5) < 1,
+    `(end ${partialSlot.endW} W, average ${partialSlot.averageW} W)`
+  );
+}
+
+// ---------- Scenario 17: window SOC text for a window in the current slot ----------
+// The log read "SOC 29%→29%" for 2026-10-29's 08:00 window: the start SOC was taken after the
+// window's own first slot. A window in slot 0 starts from the input SOC.
+{
+  const input: PlannerInput = {
+    nowMs: t0 + 18 * H,
+    prices: mkPrices(30, h => (h >= 18 && h < 19 ? 3.0 : 0.5)),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent: 90,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: { ...baseKnobs, min_window_minutes: 15, sell_ramp_minutes: 10 },
+  };
+  const plan = generatePlan(input);
+  const currentSlotWindow = plan.sells.find(w => w.startMs === input.nowMs);
+  check(
+    "soc text: a window starts in the current slot",
+    !!currentSlotWindow,
+    `(${plan.sells.map(w => `h${(w.startMs - t0) / H}-h${(w.endMs - t0) / H}@${w.watts}W ${w.reason}`).join(", ")})`
+  );
+  // The first quarter alone takes ~4 pp, so the old text read "SOC 86%→…"
+  check(
+    "soc text: it starts from the input SOC",
+    !!currentSlotWindow?.reason.includes("SOC 90%→"),
+    `(${currentSlotWindow?.reason})`
+  );
+}
+
+// ---------- Scenario 18: min_sell_power_watts is clamped to its bounds ----------
+{
+  const inBounds = effectivePlannerKnob("min_sell_power_watts", 2000);
+  const tooLow = effectivePlannerKnob("min_sell_power_watts", 300);
+  const tooHigh = effectivePlannerKnob("min_sell_power_watts", 20000);
+  const notANumber = effectivePlannerKnob("min_sell_power_watts", "1500");
+  check("knob: an in-bounds value passes unchanged", inBounds.value === 2000 && !inBounds.correction);
+  check(
+    "knob: below the minimum is raised to it",
+    tooLow.value === 500 && !!tooLow.correction,
+    `(${tooLow.correction})`
+  );
+  check(
+    "knob: above the maximum is lowered to it",
+    tooHigh.value === 15000 && !!tooHigh.correction,
+    `(${tooHigh.correction})`
+  );
+  check(
+    "knob: a non-number falls back to the default",
+    notANumber.value === 1500 && !!notANumber.correction,
+    `(${notANumber.correction})`
+  );
 }
 
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll scenarios passed");

@@ -7,6 +7,10 @@ import {
   SETTER_CHANGE_THROTTLE_BOUNDS,
   type SetterChangeThrottleSettingName,
 } from "../../../../backend/src/inverterComms/setterChangeThrottle";
+import {
+  type BoundedPlannerKnobName,
+  PLANNER_KNOB_BOUNDS,
+} from "../../../../backend/src/autoTrading/plannerKnobBounds";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -105,6 +109,14 @@ function throttleSettingInput(settingName: SetterChangeThrottleSettingName): Par
 function describeThrottleSettingBounds(settingName: SetterChangeThrottleSettingName): string {
   const { min, max, unit, defaultValue } = SETTER_CHANGE_THROTTLE_BOUNDS[settingName];
   return `${min}–${max} ${unit}, default ${defaultValue}.`;
+}
+function plannerKnobInput(knobName: BoundedPlannerKnobName): Partial<ConfigFieldMeta> {
+  const { min, max, unit } = PLANNER_KNOB_BOUNDS[knobName];
+  return { unit, min, max, step: 100 };
+}
+function describePlannerKnobBounds(knobName: BoundedPlannerKnobName): string {
+  const { min, max, unit, defaultValue } = PLANNER_KNOB_BOUNDS[knobName];
+  return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
 }
 
 function hourAfterNextFullHourIso(): string {
@@ -215,6 +227,12 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         heading: "Power limits",
       }),
       f(
+        ["automatic_trading", "min_sell_power_watts"],
+        "Minimum reduced sell power",
+        `When selling a quarter at full power would take the battery below the reserve, the planner sells that quarter at the most power that still fits, so the last bit of the day's sellable energy goes into the best remaining quarter. This is the least power it writes into any reduced-power sell window. Lower lets smaller leftovers be sold, but a window that small moves little energy (1.5 kW for 15 min is ~0.4 kWh) for a setpoint change and a ramp. Higher leaves more leftovers unsold or puts them into a cheaper slot that happens to be short enough (the current, partly gone quarter). At or above the sell power above, reduced-power windows are off. Applies from the next plan run. ${describePlannerKnobBounds("min_sell_power_watts")}`,
+        plannerKnobInput("min_sell_power_watts")
+      ),
+      f(
         ["automatic_trading", "max_buy_power_watts"],
         "Buy charging power",
         "Charging power written into planner buy windows (mostly used to avert unavoidable imports).",
@@ -306,7 +324,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "sell_ramp_minutes"],
         "Feed-in ramp",
-        "The inverter ramps grid feed-in from zero to full over about this long (grid safety) — plans account for it.",
+        "Minutes the inverter takes to ramp grid feed-in from zero to the full inverter AC ceiling (grid safety). Plans treat it as a rate: a smaller target gets there proportionally sooner (5 kW in a third of this), a step up mid-window climbs at the same rate, and a step down is immediate. Measured ~1.4 kW per minute, i.e. ~10.7 min to 15 kW. Set longer than the real ramp, plans count on less energy than each start and step-up delivers, so the battery ends lower than projected (the guard re-plans when that nears the floor); set shorter, plans count on more and a little stays unsold. Applies from the next plan run and guard check.",
         { unit: "min", heading: "Plan mechanics" }
       ),
       f(

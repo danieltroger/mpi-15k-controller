@@ -5,7 +5,7 @@
  * sellConsolidation.ts, which is why it lives in its own module.
  */
 
-import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
+import type { PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
 export function simulate(
   input: PlannerInput,
@@ -37,9 +37,11 @@ export function simulate(
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
   const autoExportWPerSlot: number[] = new Array(slots.length).fill(0);
-  // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
-  // so the first sell_ramp_minutes of every (re)start deliver reduced power.
-  let sellRunMinutes = 0;
+  // The export level the feed-in had reached when the previous slot ended. The inverter ramps grid
+  // feed-in up at a fixed rate (grid safety), on a start and on a mid-run setpoint step-up alike,
+  // and drops it at once (see rampedSlotExport)
+  let reachedExportW = 0;
+  const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -66,24 +68,12 @@ export function simulate(
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
-      exportW = Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW);
-      exportW = Math.max(exportW, 0);
-      // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
-      const rampMin = knobs.sell_ramp_minutes;
-      if (rampMin > 0 && sellRunMinutes < rampMin) {
-        const slotMin = slot.durationH * 60;
-        const rampedFrom = sellRunMinutes;
-        const rampedTo = rampedFrom + slotMin;
-        const rampedUntil = Math.min(rampedTo, rampMin);
-        const avgFactor =
-          ((rampedUntil * rampedUntil - rampedFrom * rampedFrom) / (2 * rampMin) +
-            Math.max(0, rampedTo - rampedUntil)) /
-          slotMin;
-        exportW *= avgFactor;
-      }
-      sellRunMinutes += slot.durationH * 60;
+      const targetExportW = Math.max(0, Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW));
+      const ramped = rampedSlotExport(reachedExportW, targetExportW, slot.durationH * 60, rampWattsPerMinute);
+      exportW = ramped.averageW;
+      reachedExportW = ramped.endW;
     } else {
-      sellRunMinutes = 0;
+      reachedExportW = 0;
       if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + 380) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw
         exportW = knobs.baseline_feed_watts;
@@ -146,6 +136,46 @@ export function simulate(
     socAfterSlot,
     autoExportWPerSlot,
   };
+}
+
+/**
+ * How fast grid feed-in climbs: sell_ramp_minutes is the time from 0 to the full
+ * inverter_max_ac_output_watts, so a smaller target is reached proportionally sooner. Measured at
+ * ~1.4 kW/min whatever the target or starting level: 0 → 4.9 kW in ~3.5 min (2026-07-12), 0 →
+ * 9.8 kW in ~7 min (2026-10-29), and mid-run 4.8 → 14.8 kW in ~7 min (2026-09-14) and 9.9 → 14.9 kW
+ * in ~3.5 min (2026-09-24). Infinity when the ramp is switched off (0).
+ */
+export function sellRampWattsPerMinute(knobs: PlannerKnobs): number {
+  return knobs.sell_ramp_minutes > 0 ? knobs.inverter_max_ac_output_watts / knobs.sell_ramp_minutes : Infinity;
+}
+
+/** Minutes the feed-in needs to climb from fromW to toW (0 when it doesn't climb) */
+export function sellRampMinutesBetween(knobs: PlannerKnobs, fromW: number, toW: number): number {
+  return toW > fromW ? (toW - fromW) / sellRampWattsPerMinute(knobs) : 0;
+}
+
+/**
+ * One slot of feed-in that starts at startW and heads for targetW: an increase climbs linearly at
+ * rampWattsPerMinute until it reaches the target (possibly not within the slot), a decrease is
+ * immediate (2026-09-14's 15 → 5 kW step-down took under a minute, command latency included).
+ * Returns the slot's average export and the level reached at its end, integrated exactly (the
+ * curve is piecewise linear).
+ */
+export function rampedSlotExport(
+  startW: number,
+  targetW: number,
+  slotMinutes: number,
+  rampWattsPerMinute: number
+): { averageW: number; endW: number } {
+  if (targetW <= startW || slotMinutes <= 0) return { averageW: targetW, endW: targetW };
+  const minutesToTarget = (targetW - startW) / rampWattsPerMinute;
+  if (minutesToTarget >= slotMinutes) {
+    const endW = startW + rampWattsPerMinute * slotMinutes;
+    return { averageW: (startW + endW) / 2, endW };
+  }
+  const rampWattMinutes = ((startW + targetW) / 2) * minutesToTarget;
+  const heldWattMinutes = targetW * (slotMinutes - minutesToTarget);
+  return { averageW: (rampWattMinutes + heldWattMinutes) / slotMinutes, endW: targetW };
 }
 
 export function overlapsVeto(

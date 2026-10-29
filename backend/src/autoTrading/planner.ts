@@ -10,18 +10,21 @@
  * Strategy: simulate battery SOC over the price horizon (+ a constraint tail covering the following night)
  * using solar + consumption forecasts (simulate.ts), then greedily allocate 15-min sell slots from the
  * highest spot price down, keeping every accepted plan feasible (SOC never below the planner floor + user
- * reserve). Selling energy the battery couldn't have absorbed anyway (would have auto-exported when full)
+ * reserve). A slot that full power would overdraw gets the largest power that still fits (down to
+ * min_sell_power_watts, reducedSellPower.ts), so the last fraction of a budget goes to the best remaining
+ * quarter. Selling energy the battery couldn't have absorbed anyway (would have auto-exported when full)
  * is naturally handled by the simulation's revenue accounting.
  *
  * Fragmented schedules are allowed when they genuinely price better (a stop/start costs nothing but the
  * modeled ramp), but a consolidation pass (sellConsolidation.ts) repairs fragmentation the greedy's
- * accept order created for no gain, and captures fractional leftover budget as reduced-power window
+ * accept order created for no gain, and sells budget its moves free up as reduced-power window
  * extensions. The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV
  * covers the house.
  */
 
 import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
+import { largestFeasibleSellPower, type SellPowerSearch } from "./reducedSellPower.ts";
 import type {
   FixedWindow,
   PlannedWindow,
@@ -73,11 +76,19 @@ export function generatePlan(input: PlannerInput): PlanResult {
 
   let current = base;
   const acceptedSell: number[] = [];
+  const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, tailSpot, feasible: feasibleVsBase };
   for (const { slotIndex } of sellCandidates) {
     sellW[slotIndex] = knobs.max_sell_power_watts;
-    const trial = simulate(input, slots, sellW, buyW, tailSpot);
+    let trial = simulate(input, slots, sellW, buyW, tailSpot);
+    if (!feasibleVsBase(trial)) {
+      // Full power overdraws the remaining budget: sell what still fits here, so a leftover lands in
+      // the best remaining quarter rather than in whichever cheaper slot is small enough at full power
+      const reduced = largestFeasibleSellPower(powerSearch, slotIndex, knobs.max_sell_power_watts);
+      if (!reduced) continue;
+      trial = reduced.result;
+    }
     const gain = trial.revenueSek - current.revenueSek;
-    if (feasibleVsBase(trial) && gain >= knobs.min_gain_sek_per_slot) {
+    if (gain >= knobs.min_gain_sek_per_slot) {
       current = trial;
       acceptedSell.push(slotIndex);
     } else {
@@ -276,8 +287,9 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const toPlanned = (mergedWindow: MergedWindow): PlannedWindow => {
     const spots = mergedWindow.slotIndexes.map(slotIndex => slots[slotIndex].spot!).filter(spot => spot !== undefined);
     const avgSpot = spots.reduce((sum, spot) => sum + spot, 0) / Math.max(spots.length, 1);
-    const socBefore =
-      current.socAfterSlot[Math.max(0, mergedWindow.slotIndexes[0] - 1)] ?? (input.socPercent / 100) * cap;
+    // A window in the current slot starts from the input SOC, not from the SOC after its own first slot
+    const firstSlotIndex = mergedWindow.slotIndexes[0];
+    const socBefore = firstSlotIndex === 0 ? (input.socPercent / 100) * cap : current.socAfterSlot[firstSlotIndex - 1];
     const socAfter = current.socAfterSlot[mergedWindow.slotIndexes[mergedWindow.slotIndexes.length - 1]];
     let expectedKwh: number;
     if (mergedWindow.kind === "sell") {

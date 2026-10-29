@@ -2,23 +2,28 @@
  * Local-search cleanup of the greedy's sell allocation (called by generatePlan after the bridge
  * pass). A fragmented schedule is fine when it genuinely prices better — a stop/start costs
  * nothing but the modeled ramp — but the greedy's one-slot-at-a-time accept order also strands
- * revenue it can't see: a hole whose fill would recover a ramp restart, a scattered slot that a
- * relocation turns into full-power run time, and fractional leftover budget no full-power slot
- * fits. Each move below is re-simulated and only applied when feasible and simulated revenue
- * strictly improves (plus one öre-capped cosmetic pass):
+ * revenue it can't see: a hole whose fill would recover a ramp restart, and a scattered slot that
+ * a relocation turns into run time. The greedy itself already sells the last fraction of a budget
+ * at reduced power in the best remaining quarter (reducedSellPower.ts), often as a lone tooth;
+ * whether merging that tooth into a run pays is for the moves below to price. Each move is
+ * re-simulated and only applied when feasible and simulated revenue strictly improves (plus one
+ * öre-capped cosmetic pass):
  *   - fill a one-slot hole between runs, alone (full or reduced power) or funded by dropping the
  *     cheapest edge slot of another run. Like the pre-existing bridge pass, fills may cross a
  *     below-min-spot dip — the simulation prices the dip against the recovered ramp.
  *   - merge two neighbouring runs by relocating one flush against the other (covers single-slot
- *     teeth as the degenerate case) when the ramp recovery beats the price difference
- *   - extend a run edge at reduced power, so a fractional leftover budget still gets sold instead
- *     of spawning a remote ramp-crippled tooth (pure edge adds must clear min_gain_sek_per_slot
- *     and the min sell spot, like the greedy's adds)
+ *     teeth as the degenerate case) when the ramp recovery beats the price difference. The ramp
+ *     is a rate (simulate.ts), so a low-power slot only partly pre-ramps a full-power neighbour:
+ *     the step-up still climbs.
+ *   - extend a run edge at reduced power, so budget the moves above free up (a recovered ramp
+ *     restart) still gets sold instead of spawning a remote tooth (pure edge adds must clear
+ *     min_gain_sek_per_slot and the min sell spot, like the greedy's adds)
  * plus a final cosmetic pass that equalizes power across each chain's post-ramp body so the
  * schedule collapses to a couple of entries instead of a power staircase (≤ 0.1 SEK tolerated).
+ * No move writes a power below min_sell_power_watts.
  */
 
-import { simulate, slotTradableForSell } from "./simulate.ts";
+import { sellRampMinutesBetween, simulate, slotTradableForSell } from "./simulate.ts";
 import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 /**
@@ -36,6 +41,9 @@ type SearchState = {
   current: SimResult;
   trialsLeft: number;
 };
+
+/** Powers a fill or relocation tries, as fractions of its full power, descending */
+const POWER_FACTORS = [1, 2 / 3, 1 / 2, 1 / 3];
 
 /** Mutates sellW in place; returns the simulation state it converged on. */
 export function consolidateSellSlots(
@@ -158,11 +166,14 @@ function acceptTrial(search: SearchState, minGainSek: number): boolean {
  * same min-gain bar as the greedy's.
  */
 function tryFill(search: SearchState, dropIndex: number | undefined, addIndex: number): boolean {
+  const { max_sell_power_watts, min_sell_power_watts, min_gain_sek_per_slot } = search.input.knobs;
   const savedDropWatts = dropIndex !== undefined ? search.sellW[dropIndex] : 0;
   if (dropIndex !== undefined) search.sellW[dropIndex] = 0;
-  for (const factor of [1, 2 / 3, 1 / 2, 1 / 3]) {
-    search.sellW[addIndex] = Math.round(search.input.knobs.max_sell_power_watts * factor);
-    if (acceptTrial(search, dropIndex === undefined ? search.input.knobs.min_gain_sek_per_slot : 0)) return true;
+  for (const factor of POWER_FACTORS) {
+    const watts = Math.round(max_sell_power_watts * factor);
+    if (factor < 1 && watts < min_sell_power_watts) break;
+    search.sellW[addIndex] = watts;
+    if (acceptTrial(search, dropIndex === undefined ? min_gain_sek_per_slot : 0)) return true;
   }
   search.sellW[addIndex] = 0;
   if (dropIndex !== undefined) search.sellW[dropIndex] = savedDropWatts;
@@ -178,8 +189,10 @@ function tryRelocateRun(search: SearchState, run: number[], targets: number[]): 
   const savedWatts = run.map(slotIndex => search.sellW[slotIndex]);
   for (const slotIndex of run) search.sellW[slotIndex] = 0;
   if (targets.every(target => fillableSlot(search, target))) {
-    for (const factor of [1, 2 / 3, 1 / 2, 1 / 3]) {
-      targets.forEach((target, offset) => (search.sellW[target] = Math.round(savedWatts[offset] * factor)));
+    for (const factor of POWER_FACTORS) {
+      const scaledWatts = savedWatts.map(watts => Math.round(watts * factor));
+      if (factor < 1 && Math.min(...scaledWatts) < search.input.knobs.min_sell_power_watts) break;
+      targets.forEach((target, offset) => (search.sellW[target] = scaledWatts[offset]));
       if (acceptTrial(search, 0)) return true;
     }
     for (const target of targets) search.sellW[target] = 0;
@@ -193,22 +206,28 @@ function tryRelocateRun(search: SearchState, run: number[], targets: number[]): 
  * 100 W, so rounding costs at most ±öre), and the schedule collapses to a couple of entries
  * instead of the power staircase reduced-power fills leave behind. Purely cosmetic, so the
  * accepted revenue loss is capped flat at 0.1 SEK regardless of chain length — a chain whose
- * internal price gradient makes equal power genuinely costlier keeps its staircase. Slots still
- * inside the ramp window keep their power — the ramp caps their export, so averaging power away
- * from them loses real energy.
+ * internal price gradient makes equal power genuinely costlier keeps its staircase. Slots that
+ * start while the run's initial ramp (from 0 to its first slot's power, at the ramp rate) is still
+ * climbing keep their power — the ramp caps their export, so averaging power away from them loses
+ * real energy. A mid-run step-up inside the body ramps too; the simulation prices whether
+ * flattening it pays.
  */
 function equalizeChainPower(search: SearchState) {
+  const { knobs } = search.input;
   for (const run of computeRuns(search)) {
+    const initialRampMinutes = sellRampMinutesBetween(knobs, 0, search.sellW[run[0]]);
     let offsetMinutes = 0;
     const body: number[] = [];
     for (const slotIndex of run) {
-      if (offsetMinutes >= search.input.knobs.sell_ramp_minutes) body.push(slotIndex);
+      if (offsetMinutes >= initialRampMinutes) body.push(slotIndex);
       offsetMinutes += search.slots[slotIndex].durationH * 60;
     }
     if (body.length < 2 || new Set(body.map(slotIndex => search.sellW[slotIndex])).size <= 1) continue;
     if (search.trialsLeft-- <= 0) break;
     const savedWatts = body.map(slotIndex => search.sellW[slotIndex]);
-    const meanWatts = Math.round(savedWatts.reduce((a, b) => a + b, 0) / body.length / 100) * 100;
+    const roundedMeanWatts = Math.round(savedWatts.reduce((sum, watts) => sum + watts, 0) / body.length / 100) * 100;
+    // Rounding never takes it below the body's lowest power, so it stays ≥ min_sell_power_watts
+    const meanWatts = Math.max(roundedMeanWatts, Math.min(...savedWatts));
     for (const slotIndex of body) search.sellW[slotIndex] = meanWatts;
     const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
     if (search.feasible(trial) && trial.revenueSek >= search.current.revenueSek - 0.1) {

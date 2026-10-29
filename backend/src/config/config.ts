@@ -6,6 +6,7 @@ import { errorLog, logLog } from "../utilities/logging.ts";
 import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig } from "./config.types.ts";
 import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
+import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -64,6 +65,7 @@ export const default_config: Config = {
     latitude: 59.33,
     longitude: 18.07,
     max_sell_power_watts: INVERTER_NAMEPLATE_AC_WATTS,
+    min_sell_power_watts: PLANNER_KNOB_BOUNDS.min_sell_power_watts.defaultValue,
     inverter_max_ac_output_watts: INVERTER_NAMEPLATE_AC_WATTS,
     max_buy_power_watts: INVERTER_NAMEPLATE_AC_WATTS,
     planner_soc_floor_percent: 10,

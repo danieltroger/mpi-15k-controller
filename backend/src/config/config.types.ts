@@ -11,6 +11,11 @@ export type AutomaticTradingConfig = {
   longitude: number;
   /** power_watts written into generated sell windows */
   max_sell_power_watts: number;
+  /**
+   * The lowest power_watts the planner writes into a reduced-power sell window (a leftover budget
+   * that no full-power slot fits). Bounds in plannerKnobBounds.ts, clamped by the backend.
+   */
+  min_sell_power_watts: number;
   /** Total AC the inverter can produce (house + export share it; house has priority). 15 kW nameplate. */
   inverter_max_ac_output_watts: number;
   /** charging_power written into generated buy windows (only used to avert unavoidable imports) */
@@ -35,7 +40,11 @@ export type AutomaticTradingConfig = {
   min_buy_saving_sek_per_kwh: number;
   /** Buy cheap purely to re-sell at a later price peak when the spread beats fees + losses + margin */
   allow_arbitrage_buying: boolean;
-  /** The inverter ramps grid feed-in from 0 to full power over ~this many minutes (grid safety) */
+  /**
+   * Minutes the inverter takes to ramp grid feed-in from 0 to the full inverter_max_ac_output_watts
+   * (grid safety). It's a rate: a smaller target is reached proportionally sooner, and a mid-run
+   * step-up ramps too. Decreases are immediate.
+   */
   sell_ramp_minutes: number;
   /** Generated windows shorter than this are dropped (inverter command churn isn't free) */
   min_window_minutes: number;
