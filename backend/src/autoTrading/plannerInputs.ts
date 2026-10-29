@@ -17,10 +17,11 @@ import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW, MEASURED_FEED_IN_MAX_AGE_MS } from "./measuredFeedIn.ts";
 import { entriesEqual } from "./scheduleOwnership.ts";
 import type { FixedWindow, PlannerInput } from "./planner.types.ts";
+import type { MqttValue } from "../sharedTypes.ts";
 import type { TraderCtx } from "./traderContext.ts";
 
-/** The parts of the trader context planner-input assembly reads */
-export type PlannerInputContext = Pick<TraderCtx, "gridPowerReading" | "influxClient" | "state">;
+/** The parts of the trader context planner-input assembly reads (and flags.measuredFeedInStale, which it writes) */
+export type PlannerInputContext = Pick<TraderCtx, "gridPowerReading" | "influxClient" | "state" | "flags">;
 
 export async function buildPlannerInput(
   ctx: PlannerInputContext,
@@ -34,11 +35,7 @@ export async function buildPlannerInput(
   // measurably is, not where replaying the schedule puts it (runningFeedAtNow)
   const gridPowerReading = untrack(ctx.gridPowerReading);
   const measuredFeedInW = freshMeasuredFeedInW(gridPowerReading, nowMs);
-  if (measuredFeedInW === undefined) {
-    logLog(
-      `Auto trader: no grid power reading within ${MEASURED_FEED_IN_MAX_AGE_MS / 1000} s (last ${gridPowerReading ? new Date(gridPowerReading.time).toISOString() : "never"}) — a running sell window's ramp is replayed from the schedule`
-    );
-  }
+  logMeasuredFeedInFreshnessChange(ctx.flags, measuredFeedInW, gridPowerReading);
   const solar = await fetchSolarForecast(tradingConfig, ctx.influxClient());
   // The water heater element is our own scheduled load, not a forecastable one: model it forward
   // and strip its share out of the learned baseline so it isn't counted twice
@@ -80,6 +77,31 @@ export async function buildPlannerInput(
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),
     knobs: plannerKnobsFromConfig(cfg),
   };
+}
+
+/**
+ * Logs when the grid power reading goes stale (a running sell window's ramp is then replayed from the
+ * schedule) and once when it is fresh again. Only the transitions: buildPlannerInput runs on every guard
+ * and opportunistic tick, so a telemetry stall would otherwise repeat the same line on each of them.
+ * The flag starts out fresh, so a reading that is already stale at the first plan after boot is logged.
+ */
+function logMeasuredFeedInFreshnessChange(
+  flags: TraderCtx["flags"],
+  measuredFeedInW: number | undefined,
+  gridPowerReading: MqttValue | undefined
+) {
+  const readingIsStale = measuredFeedInW === undefined;
+  if (readingIsStale === flags.measuredFeedInStale) return;
+  flags.measuredFeedInStale = readingIsStale;
+  if (readingIsStale) {
+    logLog(
+      `Auto trader: no grid power reading within ${MEASURED_FEED_IN_MAX_AGE_MS / 1000} s (last ${gridPowerReading ? new Date(gridPowerReading.time).toISOString() : "never"}) — a running sell window's ramp is replayed from the schedule until a fresh reading arrives`
+    );
+  } else {
+    logLog(
+      `Auto trader: grid power reading fresh again (feed-in ${measuredFeedInW} W) — a running sell window starts from the measured feed-in`
+    );
+  }
 }
 
 /** Schedule entries in the config that are NOT ours — the planner must treat them as immutable. */

@@ -32,6 +32,8 @@ export type TraderCtx = {
     planInFlight: boolean;
     aborted: boolean;
     consecutiveFailures: number;
+    /** The last planner input found no fresh grid power reading (see logMeasuredFeedInFreshnessChange) */
+    measuredFeedInStale: boolean;
   };
   timers: { recovery?: ReturnType<typeof setTimeout> };
   /** See withScheduleLock */

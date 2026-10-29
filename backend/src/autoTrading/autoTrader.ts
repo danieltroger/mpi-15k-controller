@@ -37,7 +37,13 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
     nextDailyRunAt,
     setStatus,
     state: structuredClone(EMPTY_STATE),
-    flags: { stateLoaded: false, planInFlight: false, aborted: false, consecutiveFailures: 0 },
+    flags: {
+      stateLoaded: false,
+      planInFlight: false,
+      aborted: false,
+      consecutiveFailures: 0,
+      measuredFeedInStale: false,
+    },
     timers: {},
     scheduleLock: Promise.resolve(),
   };
