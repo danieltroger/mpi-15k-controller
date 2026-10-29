@@ -18,6 +18,8 @@ import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { generatePlan } from "./planner.ts";
+import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
+import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
 const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
@@ -46,8 +48,10 @@ if (soc === undefined) {
 console.log(`\n=== Plan preview: SOC ${soc.toFixed(1)}%, area ${at.price_area} ===\n`);
 
 const prices = await fetchPrices(at.price_area);
-// Same merge the live config does, so a config.json predating the physical solar model still previews
-const tradingConfig = mergeWithDefaults(config).automatic_trading;
+// Same merge the live config does, so a config.json predating the physical solar model (or a newer
+// planner knob) still previews
+const mergedConfig = mergeWithDefaults(config);
+const tradingConfig = mergedConfig.automatic_trading;
 const solar = await fetchSolarForecast(tradingConfig, influxClient);
 console.log(
   `Solar: ${solar.model === "fitted" ? "fitted model" : "DEFAULT MASK (no fitted state)"} — daily kWh`,
@@ -70,9 +74,8 @@ console.log(
 );
 const consumption = await fetchConsumptionForecast(influxClient, at.fallback_house_load_watts, elpatronConfig);
 
-const fixedSells = Object.entries(config.scheduled_power_selling.schedule)
-  .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.power_watts) }))
-  .filter(w => w.endMs > Date.now());
+const runningSellSchedule = sellScheduleWindows(config.scheduled_power_selling.schedule);
+const fixedSells = runningSellSchedule.filter(window => window.endMs > Date.now());
 const fixedBuys = Object.entries(config.scheduled_power_buying.schedule)
   .map(([start, e]) => ({ startMs: +new Date(start), endMs: +new Date(e.end_time), watts: Number(e.charging_power) }))
   .filter(w => w.endMs > Date.now());
@@ -89,15 +92,11 @@ const input: PlannerInput = {
   constraintTailHours: at.constraint_tail_hours,
   fixedSells,
   fixedBuys,
+  runningSellSchedule,
   sellVetoWindows: [],
   buyVetoWindows: [],
-  knobs: {
-    // Backfill knobs the config file predates, same as the live config merge does
-    ...default_config.automatic_trading,
-    ...at,
-    runtime_soc_floor_percent: Number(config.scheduled_power_selling.only_sell_above_soc),
-    baseline_feed_watts: config.feed_from_battery_when_no_solar.feed_amount_watts,
-  },
+  // Backfill knobs the config file predates and correct bounded ones, same as the live trader does
+  knobs: plannerKnobsFromConfig(mergedConfig),
 };
 
 if (fixedSells.length || fixedBuys.length) {

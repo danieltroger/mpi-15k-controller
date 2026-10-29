@@ -5,6 +5,7 @@
  * sellConsolidation.ts, which is why it lives in its own module.
  */
 
+import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 export function simulate(
@@ -37,9 +38,11 @@ export function simulate(
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
   const autoExportWPerSlot: number[] = new Array(slots.length).fill(0);
-  // Minutes of continuous selling so far — the inverter ramps grid feed-in slowly (grid safety),
-  // so the first sell_ramp_minutes of every (re)start deliver reduced power.
-  let sellRunMinutes = 0;
+  // The export level the feed-in had reached when the previous slot ended (feedInRamp.ts: it climbs
+  // at a fixed rate on a start and on a mid-run step-up alike, and drops at once). Slot 0 starts
+  // where a window that is already running has got to (buildSlots works that out once).
+  const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
+  let reachedExportW = slots[0]?.feedInAtStartW ?? 0;
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -66,28 +69,17 @@ export function simulate(
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
-      exportW = Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW);
-      exportW = Math.max(exportW, 0);
-      // Average ramp factor over this slot: linear 0→100% across the first sell_ramp_minutes of the run
-      const rampMin = knobs.sell_ramp_minutes;
-      if (rampMin > 0 && sellRunMinutes < rampMin) {
-        const slotMin = slot.durationH * 60;
-        const rampedFrom = sellRunMinutes;
-        const rampedTo = rampedFrom + slotMin;
-        const rampedUntil = Math.min(rampedTo, rampMin);
-        const avgFactor =
-          ((rampedUntil * rampedUntil - rampedFrom * rampedFrom) / (2 * rampMin) +
-            Math.max(0, rampedTo - rampedUntil)) /
-          slotMin;
-        exportW *= avgFactor;
-      }
-      sellRunMinutes += slot.durationH * 60;
+      const targetExportW = Math.max(0, Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW));
+      const ramped = rampedSlotExport(reachedExportW, targetExportW, slot.durationH * 60, rampWattsPerMinute);
+      exportW = ramped.averageW;
+      reachedExportW = ramped.endW;
     } else {
-      sellRunMinutes = 0;
       if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + 380) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw
         exportW = knobs.baseline_feed_watts;
       }
+      // A sell that follows climbs from whatever is being fed now (the baseline feed, or nothing)
+      reachedExportW = exportW;
     }
 
     let netBattW: number;

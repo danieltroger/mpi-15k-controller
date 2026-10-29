@@ -5,10 +5,12 @@ export type FixedWindow = { startMs: number; endMs: number; watts: number };
 /**
  * Knobs are the automatic_trading config section verbatim (spread it in), plus two values
  * that live elsewhere in the config: the runtime sell cutoff and the baseline night feed.
+ * The callers pass the knobs of plannerKnobBounds.ts corrected to their bounds.
  */
 export type PlannerKnobs = Pick<
   AutomaticTradingConfig,
   | "max_sell_power_watts"
+  | "min_sell_power_watts"
   | "inverter_max_ac_output_watts"
   | "max_buy_power_watts"
   | "planner_soc_floor_percent"
@@ -18,6 +20,7 @@ export type PlannerKnobs = Pick<
   | "min_sell_spot_sek_per_kwh"
   | "min_gain_sek_per_slot"
   | "min_window_minutes"
+  | "fragmentation_tolerance_sek_per_window"
   | "charge_efficiency"
   | "discharge_efficiency"
   | "buy_surcharges_sek_per_kwh"
@@ -52,6 +55,13 @@ export type PlannerInput = {
   constraintTailHours: number;
   /** Schedule windows owned by the user — treated as immutable and simulated as given. */
   fixedSells: FixedWindow[];
+  /**
+   * The sell entries the runtime is executing: the whole config schedule, the user's and ours, ended
+   * ones included. Only tells the simulation how far feed-in has already ramped up at nowMs
+   * (feedInReachedAtNow) — what may be planned is still decided by fixedSells. Without it, fixedSells
+   * stand in.
+   */
+  runningSellSchedule?: FixedWindow[];
   fixedBuys: FixedWindow[];
   /** Time ranges where the user deleted an auto-created window — the planner must not re-add there. */
   sellVetoWindows: { startMs: number; endMs: number }[];
@@ -102,6 +112,12 @@ export type Slot = {
   houseW: number;
   fixedSellW: number;
   fixedBuyW: number;
+  /**
+   * Feed-in a sell window running at nowMs has already ramped up to when this slot starts
+   * (feedInReachedAtNow). Only slot 0's is read — the simulation carries the feed level on from
+   * there — so buildSlots leaves the others at 0.
+   */
+  feedInAtStartW: number;
 };
 export type SimResult = {
   revenueSek: number;
