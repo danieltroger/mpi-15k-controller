@@ -133,3 +133,17 @@ export type SimResult = {
   /** Average auto-export watts per slot (battery-full PV overflow) — 0 in slots without it */
   autoExportWPerSlot: number[];
 };
+/**
+ * What generatePlan's sell and buy allocation passes (sellAllocation.ts, buyAllocation.ts) work on.
+ * sellW and buyW are the candidate schedule, per slot: the passes trial a change by setting it,
+ * simulating, and either keeping it or zeroing it again, so they mutate these arrays in place.
+ */
+export type AllocationContext = {
+  input: PlannerInput;
+  slots: Slot[];
+  sellW: number[];
+  buyW: number[];
+  tailSpot: number;
+  /** Whether a trial breaches the floor no worse than the no-trade projection already does */
+  feasibleVsBase: (result: SimResult) => boolean;
+};

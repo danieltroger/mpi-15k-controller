@@ -14,7 +14,7 @@ export type PlannerKnobBounds = { defaultValue: number; min: number; max: number
 
 export const PLANNER_KNOB_BOUNDS = {
   // A leftover budget the greedy can't fit at full power is sold at the largest power that still keeps the
-  // reserve floor (planner.ts). 1.5 kW for 15 min is ~0.37 kWh, under 1 SEK even at a 2.5 SEK peak: around the
+  // reserve floor (sellAllocation.ts). 1.5 kW for 15 min is ~0.37 kWh, under 1 SEK even at a 2.5 SEK peak: around the
   // min-gain bar, so anything smaller is crumbs that still cost a setpoint write and a ramp. The 500 W floor stays
   // clear of the 350 W baseline night feed, which the inverter feeds anyway. At or above max_sell_power_watts
   // the fallback is off: a slot is sold at full power or not at all.
