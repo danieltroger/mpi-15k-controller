@@ -24,7 +24,7 @@
  */
 
 import { simulate } from "./simulate.ts";
-import { feedInReachedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
+import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import { allocateArbitragePairs, preBuyAgainstUnavoidableImport } from "./buyAllocation.ts";
@@ -201,7 +201,8 @@ function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): 
 /**
  * The plan's 15-min slots from the current one (partial: it starts at nowMs) through the constraint
  * tail, with their forecasts and fixed windows. Slot 0 also carries the feed-in level a sell window
- * running at nowMs has reached, so the simulation doesn't ramp it from 0 a second time.
+ * running at nowMs has reached, so the simulation doesn't ramp it from 0 a second time, and when that
+ * window started, so a new window continuing it isn't keyed earlier.
  */
 export function buildSlots(input: PlannerInput): Slot[] {
   const { prices, nowMs, constraintTailHours, houseLoadWattsAt, fixedSells, fixedBuys } = input;
@@ -228,6 +229,7 @@ export function buildSlots(input: PlannerInput): Slot[] {
       fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
       fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
       feedInAtStartW: 0,
+      runningWindowStartMs: undefined,
     });
   };
 
@@ -236,12 +238,15 @@ export function buildSlots(input: PlannerInput): Slot[] {
     pushSlot(slotStartMs, undefined);
   }
   if (slots.length) {
-    slots[0].feedInAtStartW = feedInReachedAtNow(
-      [...fixedSells, ...(input.runningSellSchedule ?? [])],
+    const runningFeed = runningFeedAtNow({
+      sellWindows: [...fixedSells, ...(input.runningSellSchedule ?? [])],
       nowMs,
-      input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
-      sellRampWattsPerMinute(input.knobs)
-    );
+      maxExportW: input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
+      rampWattsPerMinute: sellRampWattsPerMinute(input.knobs),
+      measuredFeedInW: input.measuredFeedInW,
+    });
+    slots[0].feedInAtStartW = runningFeed.levelW;
+    slots[0].runningWindowStartMs = runningFeed.windowStartMs;
   }
   return slots;
 }

@@ -38,6 +38,7 @@ export function simulate(
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
   const autoExportWPerSlot: number[] = new Array(slots.length).fill(0);
+  const sellExportWhPerSlot: number[] = new Array(slots.length).fill(0);
   // The export level the feed-in had reached when the previous slot ended (feedInRamp.ts: it climbs
   // at a fixed rate on a start and on a mid-run step-up alike, and drops at once). Slot 0 starts
   // where a window that is already running has got to (buildSlots works that out once).
@@ -111,7 +112,10 @@ export function simulate(
     }
 
     const exportedWh = exportW * slot.durationH;
-    sellExportWh += sellSetW > 0 ? exportedWh : 0;
+    if (sellSetW > 0) {
+      sellExportWh += exportedWh;
+      sellExportWhPerSlot[i] = exportedWh;
+    }
     revenueSek += (exportedWh / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
     importWh += slotImportWh;
     revenueSek -= (slotImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
@@ -132,6 +136,7 @@ export function simulate(
     minSocMs,
     endSocWh: socWh,
     sellExportWh,
+    sellExportWhPerSlot,
     autoExportWh,
     importWh,
     boughtWh,
