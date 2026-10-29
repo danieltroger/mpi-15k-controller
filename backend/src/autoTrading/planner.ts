@@ -24,6 +24,7 @@
  */
 
 import { overlapsVeto, simulate, slotTradableForSell } from "./simulate.ts";
+import { feedInReachedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import {
   joinedChainMinutes,
@@ -347,7 +348,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
           ? `arbitrage: buying ~${expectedKwh.toFixed(0)} kWh at ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)}) to re-sell at the later price peak`
           : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot)}), pre-buying ~${expectedKwh.toFixed(0)} kWh to avoid pricier unavoidable import`;
     return {
-      startMs: mergedWindow.startMs,
+      startMs:
+        mergedWindow.kind === "sell" ? sellWindowStartMs(mergedWindow, slots, input.nowMs) : mergedWindow.startMs,
       endMs: mergedWindow.endMs,
       watts: mergedWindow.watts,
       kind: mergedWindow.kind,
@@ -431,7 +433,12 @@ function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): 
   return max;
 }
 
-function buildSlots(input: PlannerInput): Slot[] {
+/**
+ * The plan's 15-min slots from the current one (partial: it starts at nowMs) through the constraint
+ * tail, with their forecasts and fixed windows. Slot 0 also carries the feed-in level a sell window
+ * running at nowMs has reached, so the simulation doesn't ramp it from 0 a second time.
+ */
+export function buildSlots(input: PlannerInput): Slot[] {
   const { prices, nowMs, constraintTailHours, houseLoadWattsAt, fixedSells, fixedBuys } = input;
   const slots: Slot[] = [];
   const relevantPrices = prices.filter(price => price.startMs + SLOT_MS > nowMs).sort((a, b) => a.startMs - b.startMs);
@@ -453,6 +460,7 @@ function buildSlots(input: PlannerInput): Slot[] {
       houseW: Math.max(0, houseLoadWattsAt(midMs)),
       fixedSellW: windowPowerAt(fixedSells, startMs, endMs),
       fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
+      feedInAtStartW: 0,
     });
   };
 
@@ -460,10 +468,38 @@ function buildSlots(input: PlannerInput): Slot[] {
   for (let slotStartMs = pricedEndMs; slotStartMs < tailEndMs; slotStartMs += SLOT_MS) {
     pushSlot(slotStartMs, undefined);
   }
+  if (slots.length) {
+    slots[0].feedInAtStartW = feedInReachedAtNow(
+      [...fixedSells, ...(input.runningSellSchedule ?? [])],
+      nowMs,
+      input.knobs.inverter_max_ac_output_watts - slots[0].houseW,
+      sellRampWattsPerMinute(input.knobs)
+    );
+  }
   return slots;
 }
 
 type MergedWindow = { startMs: number; endMs: number; watts: number; kind: "sell" | "buy"; slotIndexes: number[] };
+
+/**
+ * Where a planned sell window's schedule entry starts. One that begins in the current slot only
+ * starts feeding once the plan is applied. Keyed at the slot's start, every later projection (the
+ * guard's check every 15 min) would seed it with ramp time it never had: ~0.9 kWh of drain for a
+ * plan made 7 min into the slot, a phantom breach the guard then answered by shedding sells (PR #77
+ * re-review). So it starts at the next whole minute after nowMs instead:
+ *   - the runtime starts feeding at the key, so the ramp a later projection seeds from it is the one
+ *     the inverter actually ran; the plan's own projection assumed a start up to a minute earlier,
+ *     which errs safe (a little more drain than real)
+ *   - keys stay on whole minutes: the Trading page identifies schedule rows by their start minute
+ * A window that continues a feed already running at nowMs (a daily run rewriting one of our running
+ * windows) keeps the slot's start: that feed never stopped.
+ */
+function sellWindowStartMs(window: MergedWindow, slots: Slot[], nowMs: number): number {
+  if (window.slotIndexes[0] !== 0 || slots[0].feedInAtStartW > 0) return window.startMs;
+  const nextWholeMinuteMs = Math.ceil(nowMs / 60_000) * 60_000;
+  // In its last minute, a window keeps a minute to run instead of ending as it starts
+  return Math.max(window.startMs, Math.min(nextWholeMinuteMs, window.endMs - 60_000));
+}
 
 function mergeAcceptedSlots(
   slots: Slot[],

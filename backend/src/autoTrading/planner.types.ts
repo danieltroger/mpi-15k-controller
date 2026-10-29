@@ -112,6 +112,12 @@ export type Slot = {
   houseW: number;
   fixedSellW: number;
   fixedBuyW: number;
+  /**
+   * Feed-in a sell window running at nowMs has already ramped up to when this slot starts
+   * (feedInReachedAtNow). Only slot 0's is read — the simulation carries the feed level on from
+   * there — so buildSlots leaves the others at 0.
+   */
+  feedInAtStartW: number;
 };
 export type SimResult = {
   revenueSek: number;

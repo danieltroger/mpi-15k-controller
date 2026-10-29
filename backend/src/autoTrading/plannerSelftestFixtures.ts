@@ -7,10 +7,10 @@ import process from "process";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 
-export const H = 3600_000;
+export const HOUR_MS = 3600_000;
 
-/** A midnight-aligned (UTC) "now" the scenarios count hours from */
-export const t0 = Math.floor(Date.now() / (24 * H)) * 24 * H;
+/** Midnight (UTC) of today: the "day" the scenarios count their hours from */
+export const testDayStartMs = Math.floor(Date.now() / (24 * HOUR_MS)) * 24 * HOUR_MS;
 
 export const baseKnobs: PlannerKnobs = {
   max_sell_power_watts: 15000,
@@ -39,11 +39,11 @@ export const baseKnobs: PlannerKnobs = {
   fragmentation_tolerance_sek_per_window: 0,
 };
 
-/** 15-min spot prices from t0 for the given number of hours */
+/** 15-min spot prices from testDayStartMs for the given number of hours */
 export function mkPrices(hours: number, priceAtHour: (hour: number) => number): PriceSlot15[] {
   const prices: PriceSlot15[] = [];
-  for (let startMs = t0; startMs < t0 + hours * H; startMs += SLOT_MS) {
-    prices.push({ startMs, spot: priceAtHour((startMs - t0) / H) });
+  for (let startMs = testDayStartMs; startMs < testDayStartMs + hours * HOUR_MS; startMs += SLOT_MS) {
+    prices.push({ startMs, spot: priceAtHour((startMs - testDayStartMs) / HOUR_MS) });
   }
   return prices;
 }

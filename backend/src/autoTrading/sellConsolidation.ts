@@ -38,7 +38,7 @@
 
 import { simulate, slotTradableForSell } from "./simulate.ts";
 import { sellRampMinutesBetween } from "./feedInRamp.ts";
-import { largestFeasibleSellPower } from "./reducedSellPower.ts";
+import { largestFeasibleSellPower, SELL_POWER_STEP_WATTS } from "./reducedSellPower.ts";
 import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 /**
@@ -59,6 +59,15 @@ type SearchState = {
 
 /** Powers a fill or relocation tries, as fractions of its full power, descending */
 const POWER_FACTORS = [1, 2 / 3, 1 / 2, 1 / 3];
+
+/**
+ * A scaled power on the same 100 W grid the greedy's search uses, so windows read as round numbers
+ * (⅓ of a 4.6 kW run would otherwise be written as 1533 W). The callers check the minimum after
+ * rounding, so it never takes a power under min_sell_power_watts.
+ */
+function roundedSellWatts(watts: number): number {
+  return Math.round(watts / SELL_POWER_STEP_WATTS) * SELL_POWER_STEP_WATTS;
+}
 
 /**
  * Mutates sellW in place; returns the simulation state it converged on, and how many runs shorter
@@ -254,7 +263,7 @@ function tryFundedFill(search: SearchState, dropIndex: number, addIndex: number)
   const savedDropWatts = search.sellW[dropIndex];
   search.sellW[dropIndex] = 0;
   for (const factor of POWER_FACTORS) {
-    const watts = Math.round(max_sell_power_watts * factor);
+    const watts = factor < 1 ? roundedSellWatts(max_sell_power_watts * factor) : max_sell_power_watts;
     if (factor < 1 && watts < min_sell_power_watts) break;
     search.sellW[addIndex] = watts;
     if (acceptTrial(search, mergeAllowanceSek(search, runsBefore))) return true;
@@ -275,7 +284,7 @@ function tryRelocateRun(search: SearchState, run: number[], targets: number[]): 
   for (const slotIndex of run) search.sellW[slotIndex] = 0;
   if (targets.every(target => fillableSlot(search, target))) {
     for (const factor of POWER_FACTORS) {
-      const scaledWatts = savedWatts.map(watts => Math.round(watts * factor));
+      const scaledWatts = savedWatts.map(watts => (factor < 1 ? roundedSellWatts(watts * factor) : watts));
       if (factor < 1 && Math.min(...scaledWatts) < search.input.knobs.min_sell_power_watts) break;
       targets.forEach((target, offset) => (search.sellW[target] = scaledWatts[offset]));
       if (acceptTrial(search, mergeAllowanceSek(search, runsBefore))) return true;
@@ -312,7 +321,7 @@ function equalizeChainPower(search: SearchState) {
     if (body.length < 2 || new Set(body.map(slotIndex => search.sellW[slotIndex])).size <= 1) continue;
     if (search.trialsLeft-- <= 0) break;
     const savedWatts = body.map(slotIndex => search.sellW[slotIndex]);
-    const roundedMeanWatts = Math.round(savedWatts.reduce((sum, watts) => sum + watts, 0) / body.length / 100) * 100;
+    const roundedMeanWatts = roundedSellWatts(savedWatts.reduce((sum, watts) => sum + watts, 0) / body.length);
     // Rounding never takes it below the body's lowest power, so it stays ≥ min_sell_power_watts
     const meanWatts = Math.max(roundedMeanWatts, Math.min(...savedWatts));
     for (const slotIndex of body) search.sellW[slotIndex] = meanWatts;

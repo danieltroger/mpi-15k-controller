@@ -10,8 +10,8 @@
  * longer than one quarter, to one that can still make a window, rather than a lone quarter the minimum
  * would drop together with its budget.
  */
-import { generatePlan } from "./planner.ts";
-import { baseKnobs, check, finishSelftest, H, mkPrices, t0 } from "./plannerSelftestFixtures.ts";
+import { generatePlan, SLOT_MS } from "./planner.ts";
+import { baseKnobs, check, finishSelftest, HOUR_MS, mkPrices, testDayStartMs } from "./plannerSelftestFixtures.ts";
 import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts";
 
 const EVENING_SPOTS_BY_HOUR = new Map([
@@ -25,7 +25,7 @@ const EVENING_SPOTS_BY_HOUR = new Map([
   [17.75, 2.11],
   [18, 2.22],
 ]);
-const CURRENT_SLOT_START_MS = t0 + 8 * H;
+const CURRENT_SLOT_START_MS = testDayStartMs + 8 * HOUR_MS;
 
 // Full power only: min_sell_power_watts at the full sell power switches the fallback off (the old greedy)
 const fullPowerOnly = generatePlan(incidentInput({ minSellPowerWatts: 15000, minWindowMinutes: 15 }));
@@ -145,12 +145,15 @@ function incidentSpotAtHour(hour: number): number {
 }
 
 function autumnSunWatts(ms: number): number {
-  const hourOfDay = ((ms - t0) / H) % 24;
+  const hourOfDay = ((ms - testDayStartMs) / HOUR_MS) % 24;
   return hourOfDay >= 7 && hourOfDay <= 15 ? Math.sin(((hourOfDay - 7) / 8) * Math.PI) * 4500 : 0;
 }
 
+/** Windows that sell in the current slot (keyed at the next whole minute after the plan, not the slot's start) */
 function sellsInCurrentSlot(plan: PlanResult): PlannedWindow[] {
-  return plan.sells.filter(window => window.startMs <= CURRENT_SLOT_START_MS && window.endMs > CURRENT_SLOT_START_MS);
+  return plan.sells.filter(
+    window => window.startMs < CURRENT_SLOT_START_MS + SLOT_MS && window.endMs > CURRENT_SLOT_START_MS
+  );
 }
 
 /** Lengths of the time-contiguous chains the windows form (a power step splits a window, not a chain) */
@@ -168,7 +171,7 @@ function describeSells(plan: PlanResult): string {
   return `(${plan.sells
     .map(
       window =>
-        `h${(window.startMs - t0) / H}-h${(window.endMs - t0) / H}@${window.watts}W/${window.avgSpot.toFixed(2)}`
+        `h${(window.startMs - testDayStartMs) / HOUR_MS}-h${(window.endMs - testDayStartMs) / HOUR_MS}@${window.watts}W/${window.avgSpot.toFixed(2)}`
     )
     .join(", ")})`;
 }
