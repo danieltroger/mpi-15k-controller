@@ -60,6 +60,11 @@ export type AutomaticTradingConfig = {
   /** Complete days the "trailing" expected spot averages. Bounds in plannerKnobBounds.ts, clamped. */
   terminal_value_trailing_days: number;
   /**
+   * The margin of a stocking-up buy (one made only for the terminal value), per kWh bought: what
+   * min_buy_saving_sek_per_kwh is for import-averting and arbitrage buys. Bounds in plannerKnobBounds.ts, clamped.
+   */
+  terminal_value_min_saving_sek_per_kwh: number;
+  /**
    * Comma-separated month numbers (1 = January, Swedish time) the terminal value applies in; outside
    * them the planner behaves as with terminal_value_mode "off". Entries that aren't 1–12 are ignored
    * with a warning.

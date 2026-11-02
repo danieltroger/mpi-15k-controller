@@ -8,7 +8,7 @@
 import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
-import { dailyMeanSpots } from "./priceHistory.ts";
+import { type DailyMeanSpot, dailyMeanSpots } from "./priceHistory.ts";
 import { isExpectedSpotSource, terminalValueInSeason } from "./terminalValue.ts";
 import type { ExpectedSpotEstimate, PlannerKnobs } from "./planner.types.ts";
 
@@ -48,17 +48,32 @@ async function trailingMeanSpot(settings: ExpectedSpotSettings, nowMs: number): 
     retryAfterFailureMs: Math.max(2, settings.replan_retry_minutes) * 60_000,
     fetchDaySlots: fetchPriceSlotsForDate,
   });
-  if (failure) {
+  return trailingEstimateFromDays(means, days, failure);
+}
+
+/**
+ * The trailing estimate from the days at hand: the mean of those there are while at least half the window
+ * is. A 7-day mean hardly moves without one of its days, while requiring all of them would switch the value
+ * off for a whole window over one permanently missing day, and during a price-API outage flip plans between
+ * keeping the stock and selling it. Fetched days stay cached, so the days an earlier estimate used remain
+ * usable — this doubles as the "last good value" fallback, aged out as its days leave the window.
+ */
+export function trailingEstimateFromDays(
+  means: DailyMeanSpot[],
+  days: number,
+  failure: string | undefined
+): ExpectedSpotEstimate {
+  if (means.length < Math.ceil(days / 2)) {
     return {
       expectedSpot: undefined,
       source: "trailing",
-      detail: `the ${days}-day mean spot is unavailable: ${failure}`,
+      detail: `the ${days}-day mean spot is unavailable, ${means.length} of ${days} days at hand: ${failure}`,
     };
   }
   return {
     expectedSpot: means.reduce((sum, day) => sum + day.meanSpot, 0) / means.length,
     source: "trailing",
-    detail: `${days}-day mean spot`,
+    detail: means.length === days ? `${days}-day mean spot` : `${days}-day mean spot (${means.length} of ${days} days)`,
   };
 }
 

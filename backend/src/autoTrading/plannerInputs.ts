@@ -1,8 +1,8 @@
 /**
  * Assembles the planner's input from the live trader: prices, the solar/elpatron/consumption forecasts,
- * the inverter's measured feed-in, the user's (immutable) schedule entries, the vetoes and, with the
- * terminal value on, the expected spot after the horizon. Also turns owned schedule entries into the
- * fixed windows a re-plan or projection treats as given.
+ * the inverter's measured feed-in, the user's (immutable) schedule entries, the vetoes and the expected spot
+ * after the horizon the caller estimated. Also turns owned schedule entries into the fixed windows a
+ * re-plan or projection treats as given.
  */
 
 import { untrack } from "solid-js";
@@ -14,22 +14,27 @@ import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
-import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW, MEASURED_FEED_IN_MAX_AGE_MS } from "./measuredFeedIn.ts";
 import { entriesEqual } from "./scheduleOwnership.ts";
-import type { FixedWindow, PlannerInput } from "./planner.types.ts";
+import type { ExpectedSpotEstimate, FixedWindow, PlannerInput } from "./planner.types.ts";
 import type { MqttValue } from "../sharedTypes.ts";
 import type { TraderCtx } from "./traderContext.ts";
 
 /** The parts of the trader context planner-input assembly reads (and flags.measuredFeedInStale, which it writes) */
 export type PlannerInputContext = Pick<TraderCtx, "gridPowerReading" | "influxClient" | "state" | "flags">;
 
+/**
+ * expectedSpot comes from the caller (expectedSpotForPlan): runPlan estimates it before taking the schedule
+ * lock, and the guard passes undefined — its breach projections read only floor violations and SOC, which
+ * the terminal value doesn't change, and a breach re-plans through runPlan.
+ */
 export async function buildPlannerInput(
   ctx: PlannerInputContext,
   cfg: Config,
   prices: FetchedPrices,
-  soc: number
+  soc: number,
+  expectedSpot: ExpectedSpotEstimate | undefined
 ): Promise<PlannerInput> {
   const tradingConfig = cfg.automatic_trading;
   const nowMs = Date.now();
@@ -53,9 +58,6 @@ export async function buildPlannerInput(
     cfg.elpatron_switching
   );
   const { sells, buys } = userWindows(ctx, cfg);
-  const knobs = plannerKnobsFromConfig(cfg);
-  // Only fetched while the terminal value is on and in season; a failure plans without it (expectedSpot.ts)
-  const expectedSpot = await expectedSpotForPlan({ ...tradingConfig, ...knobs }, nowMs);
   return {
     nowMs,
     prices: prices.slots,
@@ -81,7 +83,7 @@ export async function buildPlannerInput(
       .filter(veto => veto.kind === "buy")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),
     expectedSpot,
-    knobs,
+    knobs: plannerKnobsFromConfig(cfg),
   };
 }
 

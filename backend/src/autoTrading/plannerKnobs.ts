@@ -32,6 +32,10 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
       "terminal_value_trailing_days",
       tradingConfig.terminal_value_trailing_days
     ),
+    terminal_value_min_saving_sek_per_kwh: boundedKnobValue(
+      "terminal_value_min_saving_sek_per_kwh",
+      tradingConfig.terminal_value_min_saving_sek_per_kwh
+    ),
     terminal_value_months: correctedKnobValue(
       "terminal_value_months",
       effectiveTerminalValueMonths(tradingConfig.terminal_value_months)

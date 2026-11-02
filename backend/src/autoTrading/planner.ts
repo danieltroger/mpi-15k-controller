@@ -24,7 +24,7 @@
  *
  * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
  * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying can stock
- * up for after the horizon, and the unpriced tail is priced at the same expected spot.
+ * up for after the horizon, and the unpriced tail is priced at the expected spot where that is higher.
  */
 
 import { simulate } from "./simulate.ts";
@@ -151,8 +151,10 @@ export function generatePlan(input: PlannerInput): PlanResult {
     autoExportKwh: Math.round(current.autoExportWh / 100) / 10,
     unavoidableImportKwh: Math.round(current.importWh / 100) / 10,
     plannedBuyKwh: Math.round(current.boughtWh / 100) / 10,
-    estimatedRevenueSek: Math.round(current.revenueSek * 10) / 10,
-    baselineRevenueSek: Math.round(base.revenueSek * 10) / 10,
+    // Cash only: the end-of-plan credit is an estimate, reported apart
+    estimatedRevenueSek: Math.round((current.revenueSek - current.endEnergyValueSek) * 10) / 10,
+    baselineRevenueSek: Math.round((base.revenueSek - base.endEnergyValueSek) * 10) / 10,
+    ...(terminal.valuation ? { endEnergyValueSek: Math.round(current.endEnergyValueSek * 10) / 10 } : {}),
   };
 
   const socSeries = slots.map((slot, index) => ({
@@ -174,8 +176,10 @@ export function projectWithFixedWindows(input: PlannerInput): {
   minSocAt: string;
   unavoidableImportKwh: number;
   endSocPercent: number;
-  /** Same revenue accounting as generatePlan's projection — comparable across plans on equal inputs */
+  /** Cash, the same accounting as generatePlan's estimatedRevenueSek — comparable across plans on equal inputs */
   revenueSek: number;
+  /** As generatePlan's endEnergyValueSek, 0 without a terminal value: compare plans on revenueSek plus this */
+  endEnergyValueSek: number;
 } {
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(slot => slot.spot !== undefined);
@@ -187,16 +191,19 @@ export function projectWithFixedWindows(input: PlannerInput): {
     minSocAt: new Date(result.minSocMs).toISOString(),
     unavoidableImportKwh: Math.round(result.importWh / 100) / 10,
     endSocPercent: Math.round((result.endSocWh / input.capacityWh) * 1000) / 10,
-    revenueSek: Math.round(result.revenueSek * 10) / 10,
+    revenueSek: Math.round((result.revenueSek - result.endEnergyValueSek) * 10) / 10,
+    endEnergyValueSek: Math.round(result.endEnergyValueSek * 10) / 10,
   };
 }
 
 /**
  * How a plan for this input prices what lies past the published prices: the unpriced constraint tail at
- * the median of the last priced day (a conservative stand-in) and the energy left at the end at nothing,
- * or both at the expected spot with an active terminal value (terminalValue.ts). generatePlan and
- * projectWithFixedWindows share it, so a fresh plan and a replayed schedule count the same things (the
- * opportunistic replan compares their revenue).
+ * the median of the last priced day (a conservative stand-in) and the energy left at the end at nothing.
+ * With an active terminal value (terminalValue.ts) that energy is worth V, and the tail is priced at the
+ * expected spot when that is the higher of the two: a cheaper tail would make room for the tail's PV
+ * overflow look worth less and sell more now, trading the conservative tail for mean reversion just when
+ * prices run above their trailing mean. generatePlan and projectWithFixedWindows share it, so a fresh plan
+ * and a replayed schedule count the same things (the opportunistic replan compares their value).
  */
 function horizonValuation(
   input: PlannerInput,
@@ -210,20 +217,20 @@ function horizonValuation(
   const lastDayMedianSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
   return {
     valuation: {
-      tailSpot: terminal.valuation?.expectedSpot ?? lastDayMedianSpot,
+      tailSpot: Math.max(lastDayMedianSpot, terminal.valuation?.expectedSpot ?? lastDayMedianSpot),
       endEnergySekPerKwh: terminal.valuation?.endEnergySekPerKwh ?? 0,
     },
     terminal,
   };
 }
 
-/** The plan note on the terminal value: what end-of-plan energy is worth and its share of the projected revenue, or why it has none */
+/** The plan note on the terminal value: what end-of-plan energy is worth and what the plan leaves, or why it has none */
 function terminalValueNote(terminal: TerminalValuationResult, finalResult: SimResult): string | undefined {
   if (terminal.unavailable) return `End-of-plan energy not valued: ${terminal.unavailable}`;
   const valuation = terminal.valuation;
   if (!valuation) return undefined;
   const leftKwh = valuation.endEnergySekPerKwh > 0 ? finalResult.endEnergyValueSek / valuation.endEnergySekPerKwh : 0;
-  return `End-of-plan energy valued at ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh (${valuation.basis}): ${finalResult.endEnergyValueSek.toFixed(1)} SEK of the projected revenue is the ${leftKwh.toFixed(1)} kWh left above the emergency floor`;
+  return `End-of-plan energy valued at ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh (${valuation.basis}): the ${leftKwh.toFixed(1)} kWh left above the emergency floor are worth ${finalResult.endEnergyValueSek.toFixed(1)} SEK, not counted in the revenue figures`;
 }
 
 function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {

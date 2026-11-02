@@ -58,7 +58,9 @@ export async function runGuard(ctx: TraderCtx) {
       const cfg = untrack(ctx.config);
       reconcileOwnership(ctx, cfg);
 
-      const baseInput = await buildPlannerInput(ctx, cfg, prices, guardSoc);
+      // No expected spot: the breach check reads floor violations and SOC, which the terminal value doesn't
+      // change, and a breach re-plans through runPlan, which estimates it outside this lock
+      const baseInput = await buildPlannerInput(ctx, cfg, prices, guardSoc, undefined);
       const now = Date.now();
       const ourWindows = ownedEntriesAsWindows(ctx.state.owned_entries.selling, "power_watts").filter(
         window => window.endMs > now

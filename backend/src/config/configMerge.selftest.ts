@@ -66,6 +66,7 @@ const {
   terminal_value_scale,
   terminal_value_trailing_days,
   terminal_value_months,
+  terminal_value_min_saving_sek_per_kwh,
   ...tradingBeforeTerminalValue
 } = default_config.automatic_trading;
 const healedTrading = mergeWithDefaults({
@@ -78,7 +79,9 @@ check(
     healedTrading.terminal_value_mode === terminal_value_mode &&
     healedTrading.terminal_value_scale === terminal_value_scale &&
     healedTrading.terminal_value_trailing_days === terminal_value_trailing_days &&
-    healedTrading.terminal_value_months === terminal_value_months
+    healedTrading.terminal_value_months === terminal_value_months &&
+    healedTrading.terminal_value_min_saving_sek_per_kwh === terminal_value_min_saving_sek_per_kwh &&
+    terminal_value_min_saving_sek_per_kwh === 1
 );
 
 // ——— scheduled_power_selling stored before the overheat stop's inverter-temperature limits ———

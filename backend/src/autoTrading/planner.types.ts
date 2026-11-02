@@ -33,6 +33,7 @@ export type PlannerKnobs = Pick<
   | "terminal_value_scale"
   | "terminal_value_trailing_days"
   | "terminal_value_months"
+  | "terminal_value_min_saving_sek_per_kwh"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
   runtime_soc_floor_percent: number;
@@ -125,8 +126,15 @@ export type PlanProjection = {
   autoExportKwh: number;
   unavoidableImportKwh: number;
   plannedBuyKwh: number;
+  /** Cash: what the plan's grid trades earn minus what its imports cost, over the horizon and the tail */
   estimatedRevenueSek: number;
+  /** Cash, the same accounting for the no-trade projection */
   baselineRevenueSek: number;
+  /**
+   * Value of the energy left at plan end (terminalValue.ts), not cash and not in the two figures above —
+   * the planner maximises their sum with it. Only present while the terminal value applies.
+   */
+  endEnergyValueSek?: number;
 };
 /**
  * One 15-min step of the plan's projected battery trajectory: SOC after the slot ran, plus the

@@ -285,6 +285,17 @@ const UNIT_TAIL_SPOT: HorizonValuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
     tailSpot: 1,
     endEnergySekPerKwh: valuePerKwh,
   });
+  // A forecast gap (a NaN house load, met at the end of the backtest's data) leaves the SOC NaN. Main's
+  // revenue stays a number then, and without a value the credit must not change that (PR #82 review fuzz)
+  const gapInput: PlannerInput = { ...idleHoursInput(50), houseLoadWattsAt: () => NaN };
+  const gapSlots = buildSlots(gapInput);
+  const gapNoTrades = new Array(gapSlots.length).fill(0);
+  const gap = simulate(gapInput, gapSlots, gapNoTrades, gapNoTrades, { tailSpot: 1, endEnergySekPerKwh: 0 });
+  check(
+    "terminal credit: without a value, a NaN SOC leaves revenueSek a number",
+    Number.isNaN(gap.endSocWh) && Number.isFinite(gap.revenueSek) && gap.endEnergyValueSek === 0,
+    `(end SOC ${gap.endSocWh}, revenue ${gap.revenueSek})`
+  );
   check(
     "terminal credit: nothing for a battery ending at the emergency floor",
     atTheFloor.endEnergyValueSek === 0,

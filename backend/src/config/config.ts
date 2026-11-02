@@ -77,10 +77,11 @@ export const default_config: Config = {
     min_gain_sek_per_slot: 0.05,
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
-    // Ships off: the owner switches it on from the config page (backtested with min_buy_saving 0.1)
+    // Ships off: the owner switches it on from the config page
     terminal_value_mode: "off",
     terminal_value_scale: PLANNER_KNOB_BOUNDS.terminal_value_scale.defaultValue,
     terminal_value_trailing_days: PLANNER_KNOB_BOUNDS.terminal_value_trailing_days.defaultValue,
+    terminal_value_min_saving_sek_per_kwh: PLANNER_KNOB_BOUNDS.terminal_value_min_saving_sek_per_kwh.defaultValue,
     terminal_value_months: DEFAULT_TERMINAL_VALUE_MONTHS,
     sell_ramp_minutes: 10,
     min_window_minutes: 15,

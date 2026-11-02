@@ -13,6 +13,7 @@ const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: numbe
   { knobName: "fragmentation_tolerance_sek_per_window", inBounds: 0.35, tooLow: -0.5, tooHigh: 5 },
   { knobName: "terminal_value_scale", inBounds: 1.0, tooLow: -0.2, tooHigh: 2 },
   { knobName: "terminal_value_trailing_days", inBounds: 14, tooLow: 0, tooHigh: 90 },
+  { knobName: "terminal_value_min_saving_sek_per_kwh", inBounds: 0.25, tooLow: -0.1, tooHigh: 3 },
 ];
 
 for (const { knobName, inBounds, tooLow, tooHigh } of CASES) {

@@ -132,9 +132,13 @@ export function simulate(
   }
 
   // The energy left at the end saves a later import (terminalValue.ts). Credited inside revenueSek, the
-  // number every allocation pass compares, so keeping a kWh competes with selling it on equal terms.
-  const endEnergyValueSek = (Math.max(0, socWh - floorEmergencyWh) / 1000) * valuation.endEnergySekPerKwh;
-  revenueSek += endEnergyValueSek;
+  // number every allocation pass compares, so keeping a kWh competes with selling it on equal terms. A
+  // forecast gap can leave socWh NaN; the revenue must stay a number then, as it does without the credit
+  const endEnergyValueSek =
+    valuation.endEnergySekPerKwh > 0 && Number.isFinite(socWh)
+      ? (Math.max(0, socWh - floorEmergencyWh) / 1000) * valuation.endEnergySekPerKwh
+      : 0;
+  if (endEnergyValueSek) revenueSek += endEnergyValueSek;
 
   return {
     revenueSek,

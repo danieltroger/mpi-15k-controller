@@ -51,21 +51,25 @@ import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts
     `(${on.notes.join(" | ")})`
   );
   check("cheap day: no sells either way", off.sells.length === 0 && on.sells.length === 0);
-  // Once full, it tops up single quarters as the house drains it: under the 30-min minimum window they are
-  // never written, so the projection must not count them either
   const windowsKwh = on.buys.reduce((sum, window) => sum + window.expectedKwh, 0);
   check(
     "cheap day: the projection buys exactly what the windows buy",
     Math.abs(windowsKwh - on.projection.plannedBuyKwh) < 0.05,
     `(windows ${windowsKwh.toFixed(2)} kWh, projection ${on.projection.plannedBuyKwh} kWh)`
   );
+  // Cheapest first, it filled the battery tomorrow night and then wrote a 15-min top-up every ~2 h as the
+  // house drained it: 10 grid-charge windows. Only the end SOC is credited, so one block where the battery
+  // has the most room, at the end of the cheap stretch, gets there with one
   const quarterWindows = generatePlan(
     withTerminalValue({ ...cheapDay, knobs: { ...cheapDay.knobs, min_window_minutes: 15 } }, 1.0)
   );
+  const lastPricedEndMs = cheapDay.prices[cheapDay.prices.length - 1].startMs + 15 * 60_000;
   check(
-    "cheap day: with 15-min windows (the default) the top-ups are written too",
-    quarterWindows.buys.length > on.buys.length &&
-      quarterWindows.projection.endSocPercent > on.projection.endSocPercent + 10,
+    "cheap day: stocking is one block at the end of the cheap stretch, also with 15-min windows",
+    on.buys.length === 1 &&
+      quarterWindows.buys.length === 1 &&
+      quarterWindows.buys[0].endMs === lastPricedEndMs &&
+      quarterWindows.projection.endSocPercent >= 95,
     `(${describeWindows(quarterWindows.buys)}, end SOC ${quarterWindows.projection.endSocPercent}%)`
   );
   console.log("  buys:", describeWindows(on.buys));
@@ -110,9 +114,19 @@ import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts
     fixedBuys: on.buys.map(window => ({ startMs: window.startMs, endMs: window.endMs, watts: window.watts })),
   });
   check(
-    "full battery: the replayed windows' revenue matches the plan's, terminal value included",
-    Math.abs(replayed.revenueSek - on.projection.estimatedRevenueSek) < 0.5,
-    `(${replayed.revenueSek} vs ${on.projection.estimatedRevenueSek} SEK)`
+    "full battery: the replayed windows' cash and end-of-plan value match the plan's",
+    Math.abs(replayed.revenueSek - on.projection.estimatedRevenueSek) < 0.5 &&
+      Math.abs(replayed.endEnergyValueSek - (on.projection.endEnergyValueSek ?? NaN)) < 0.5,
+    `(${replayed.revenueSek} + ${replayed.endEnergyValueSek} vs ${on.projection.estimatedRevenueSek} + ${on.projection.endEnergyValueSek} SEK)`
+  );
+  // The owner-facing figures stay cash: the credit is reported apart, and only while it applies
+  check(
+    "full battery: the revenue figures are cash, the end-of-plan value apart",
+    on.projection.endEnergyValueSek !== undefined &&
+      Math.abs(on.projection.endEnergyValueSek - 60.5) < 0.05 &&
+      off.projection.endEnergyValueSek === undefined &&
+      on.projection.estimatedRevenueSek < 60,
+    `(est ${on.projection.estimatedRevenueSek} SEK, end-of-plan value ${on.projection.endEnergyValueSek} SEK)`
   );
   // Off ignores an expected spot it is handed: today's plan, unchanged
   const offWithEstimate = generatePlan({ ...withTerminalValue(fullBattery, 1.7), knobs: fullBattery.knobs });
@@ -144,6 +158,23 @@ import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts
       `(${withoutEstimate.notes.join(" | ")})`
     );
   }
+}
+
+// ---------- (d) Off, the pre-buy loop is main's: it keeps every buy that pays (PR #82 review) ----------
+// A user buy window counts in importWh from the start, so main's importWh < 500 break never fires: its loop
+// tries every candidate. Breaking on the shortfall instead lost the night pre-buy the user's evening sell
+// needs (one quarter, est −41 SEK). Main pre-buys 00:00–02:15, 48.8 kWh, est +6.5 SEK.
+{
+  const plan = generatePlan(userWindowsAroundAPeakInput());
+  check(
+    "off with user windows: main's pre-buy (00:00–02:15, 48.8 kWh, est +6.5 SEK)",
+    plan.buys.length === 1 &&
+      plan.buys[0].startMs === testDayStartMs &&
+      plan.buys[0].endMs === testDayStartMs + 2.25 * HOUR_MS &&
+      plan.projection.plannedBuyKwh === 48.8 &&
+      plan.projection.estimatedRevenueSek === 6.5,
+    `(${describeWindows(plan.buys)}, ${plan.projection.plannedBuyKwh} kWh, est ${plan.projection.estimatedRevenueSek} SEK)`
+  );
 }
 
 finishSelftest();
@@ -186,6 +217,40 @@ function fullBatteryBeforeDearWeekInput(): PlannerInput {
     sellVetoWindows: [],
     buyVetoWindows: [],
     knobs: { ...baseKnobs, baseline_feed_watts: 0 },
+  };
+}
+
+/**
+ * Planning at midnight: 0.1 SEK until 06, 1.0 by day, 3.5 at 17–20; 30 % SOC; the owner sells 15 kW through
+ * 18–20 and tops up 15 kW at 22–23 (the PR #82 review's repro, at the live knobs with arbitrage off)
+ */
+function userWindowsAroundAPeakInput(): PlannerInput {
+  return {
+    nowMs: testDayStartMs,
+    prices: mkPrices(24, hour => (hour < 6 ? 0.1 : hour >= 17 && hour < 20 ? 3.5 : 1.0)),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 700,
+    parasiticWatts: 200,
+    socPercent: 30,
+    capacityWh: 65000,
+    constraintTailHours: 0,
+    fixedSells: [{ startMs: testDayStartMs + 18 * HOUR_MS, endMs: testDayStartMs + 20 * HOUR_MS, watts: 15000 }],
+    fixedBuys: [{ startMs: testDayStartMs + 22 * HOUR_MS, endMs: testDayStartMs + 23 * HOUR_MS, watts: 15000 }],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: {
+      ...baseKnobs,
+      max_buy_power_watts: 15000,
+      planner_soc_floor_percent: 10,
+      planner_soc_floor_sunny_percent: 5,
+      runtime_soc_floor_percent: 13,
+      min_gain_sek_per_slot: 0.05,
+      min_window_minutes: 15,
+      min_buy_saving_sek_per_kwh: 0.25,
+      baseline_feed_watts: 0,
+      sell_ramp_minutes: 10,
+      fragmentation_tolerance_sek_per_window: 0.2,
+    },
   };
 }
 
