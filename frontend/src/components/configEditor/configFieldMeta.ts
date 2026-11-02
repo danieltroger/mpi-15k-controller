@@ -11,6 +11,7 @@ import {
   type BoundedPlannerKnobName,
   PLANNER_KNOB_BOUNDS,
 } from "../../../../backend/src/autoTrading/plannerKnobBounds";
+import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../../../../backend/src/autoTrading/terminalValue";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -283,13 +284,48 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "min_buy_saving_sek_per_kwh"],
         "Minimum buy saving",
-        "Buying must beat the alternative by this much per kWh — the margin also covers battery wear.",
+        "Buying must beat the alternative by this much per kWh — the margin also covers battery wear. Applies to buys that avert an import and to arbitrage; stocking up for the end-of-plan energy value below has its own margin.",
         { unit: "SEK/kWh" }
       ),
       f(
         ["automatic_trading", "allow_arbitrage_buying"],
         "Arbitrage buying",
-        "Allow buying cheap purely to re-sell at a later peak, when the spread beats fees, losses and the margin above."
+        "Allow buying cheap purely to re-sell at a later peak, when the spread beats fees, losses and the margin above. With the end-of-plan energy value on, it also lets a later peak sell what the plan's buy blocks bring in; off, bought energy is only kept or used by the house."
+      ),
+      f(
+        ["automatic_trading", "terminal_value_mode"],
+        "End-of-plan energy value",
+        "Off: whatever is left in the battery when a plan's horizon ends (the ~35 hours of published prices plus the reserve tail) is worth nothing to the planner. It then never stocks up on a cheap day unless it sees an import coming within the horizon, and it sells down to the floor right before an expensive spell it can't see yet. Trailing mean: that energy is worth the import it saves later, at the recent average spot price. The planner then keeps energy rather than sell it for less, buys in contiguous blocks (still selling a peak worth more than the energy), and prices the reserve tail at the expected spot when that is above the last priced day's median. Backtested over four winters (2022–2026, this house's real load, solar and prices) at the defaults: 200–340 SEK saved per winter (170–240 planned on the live consumption forecast), and positive in every winter and in autumn 2026. The revenue figures stay cash; the plan reports the value of the energy left at its end separately. Applies from the next plan run.",
+        {
+          heading: "End-of-plan energy value",
+          options: [
+            { value: "off", label: "Off — worth nothing" },
+            { value: "trailing", label: "Trailing mean spot price" },
+          ],
+        }
+      ),
+      f(
+        ["automatic_trading", "terminal_value_scale"],
+        "Value scale (k)",
+        `The share of the avoided import that energy left at the end of a plan is credited at: k × discharge efficiency × (expected spot + buy surcharges) × VAT per kWh. The planner then only sells where spot plus sell extras beats k × (expected spot + buy surcharges) × VAT. Higher keeps more in the battery and stocks up more readily; 1.0 assumes every kept kWh replaces a full-price import and lost money in one backtested winter, and above ~1.13 the planner would pay more to stock a kWh than the import it avoids. Lower behaves more like the value off (0 = worth nothing). Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_scale")}`,
+        plannerKnobInput("terminal_value_scale")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_trailing_days"],
+        "Expected price: days averaged",
+        `The expected spot after the horizon is the mean daily-mean spot of this many complete days before today. Fewer days follow a price change sooner but chase a single odd day; more lag behind a new price level (at k 0.9, 14 and 30 days each lost money in some backtested winter, 7 never did). Past days are fetched from the price API once and kept in memory. A missing day is retried after the price retry interval; meanwhile the mean of the days at hand is used while at least half of them are, and below that plans run without the value and say so in their notes. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_trailing_days")}`,
+        plannerKnobInput("terminal_value_trailing_days")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_min_saving_sek_per_kwh"],
+        "Stocking-up margin",
+        `With no import in sight, the planner may still stock up for after the horizon in one contiguous block per plan (where the battery has the most room) if every kWh it buys saves at least this much, counting the energy at its end-of-plan value. Buys that avert a projected import keep the minimum buy saving above, and those already top the battery up as far as that pays. In the four-winter backtest no margin came out ahead of leaving this block out (0.4–1 within ~10 SEK per winter of it, 0.1–0.25 15–90 SEK behind), so at the default it only stocks up on an outsized gap, such as a near-free day after a dear week. Lower stocks up on smaller gaps; above 2 it never does. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_min_saving_sek_per_kwh")}`,
+        plannerKnobInput("terminal_value_min_saving_sek_per_kwh")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_months"],
+        "Active months",
+        `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. Only October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}, the default) has been backtested. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
       ),
       f(
         ["automatic_trading", "charge_efficiency"],
@@ -366,7 +402,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "replan_retry_minutes"],
         "Price retry interval",
-        "Retry spacing while waiting for tomorrow's prices to publish.",
+        "Retry spacing while waiting for tomorrow's prices to publish, and before re-fetching past days' prices for the end-of-plan energy value after a failed fetch.",
         { unit: "min" }
       ),
       f(

@@ -1,4 +1,4 @@
-import type { AutomaticTradingConfig } from "../config/config.types.ts";
+import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
 
 export type PriceSlot15 = { startMs: number; spot: number };
 export type FixedWindow = { startMs: number; endMs: number; watts: number };
@@ -29,6 +29,11 @@ export type PlannerKnobs = Pick<
   | "min_buy_saving_sek_per_kwh"
   | "sell_ramp_minutes"
   | "allow_arbitrage_buying"
+  | "terminal_value_mode"
+  | "terminal_value_scale"
+  | "terminal_value_trailing_days"
+  | "terminal_value_months"
+  | "terminal_value_min_saving_sek_per_kwh"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
   runtime_soc_floor_percent: number;
@@ -72,7 +77,36 @@ export type PlannerInput = {
   /** Time ranges where the user deleted an auto-created window — the planner must not re-add there. */
   sellVetoWindows: { startMs: number; endMs: number }[];
   buyVetoWindows: { startMs: number; endMs: number }[];
+  /**
+   * The spot price expected after the priced horizon (expectedSpot.ts), estimated when the terminal value
+   * is on and in season (terminalValue.ts): the end-of-plan energy and the unpriced tail are priced at it.
+   * Absent, or without a value, the plan runs with no terminal value and its notes say why.
+   */
+  expectedSpot?: ExpectedSpotEstimate;
   knobs: PlannerKnobs;
+};
+/**
+ * p̂, the expected spot (SEK/kWh) after the priced horizon, and where it came from. expectedSpot is
+ * undefined when it couldn't be estimated (detail says why).
+ */
+export type ExpectedSpotEstimate = {
+  expectedSpot: number | undefined;
+  source: ExpectedSpotSource;
+  /** What the value is ("7-day mean spot"), or why there is none — quoted in the plan notes */
+  detail: string;
+};
+/**
+ * How simulate prices what lies past the published prices. Every trial of one plan shares one, so
+ * the revenueSek the allocation passes compare all count the same things.
+ */
+export type HorizonValuation = {
+  /** Spot assumed for the unpriced constraint tail */
+  tailSpot: number;
+  /**
+   * SEK credited per DC kWh still above the emergency floor when the simulation ends (terminalValue.ts);
+   * 0 = the energy left at the end is worth nothing
+   */
+  endEnergySekPerKwh: number;
 };
 export type PlannedWindow = {
   startMs: number;
@@ -92,8 +126,15 @@ export type PlanProjection = {
   autoExportKwh: number;
   unavoidableImportKwh: number;
   plannedBuyKwh: number;
+  /** Cash: what the plan's grid trades earn minus what its imports cost, over the horizon and the tail */
   estimatedRevenueSek: number;
+  /** Cash, the same accounting for the no-trade projection */
   baselineRevenueSek: number;
+  /**
+   * Value of the energy left at plan end (terminalValue.ts), not cash and not in the two figures above —
+   * the planner maximises their sum with it. Only present while the terminal value applies.
+   */
+  endEnergyValueSek?: number;
 };
 /**
  * One 15-min step of the plan's projected battery trajectory: SOC after the slot ran, plus the
@@ -143,13 +184,28 @@ export type SimResult = {
    */
   sellExportWhPerSlot: number[];
   autoExportWh: number;
+  /** Everything drawn from the grid: the shortfall below, plus what buy windows draw for the battery and the house */
   importWh: number;
+  /** The import an empty battery forces (the house's deficit at the emergency floor) — what pre-buying averts */
+  shortfallImportWh: number;
   boughtWh: number;
   socAfterSlot: number[];
   /** Average auto-export watts per slot (battery-full PV overflow) — 0 in slots without it */
   autoExportWPerSlot: number[];
+  /** The terminal value credited for the energy left at the end (HorizonValuation), included in revenueSek */
+  endEnergyValueSek: number;
 };
 
+/**
+ * What the pre-buy pass (buyAllocation.ts) hands back: the plan with its buys, the accepted buy slots, which of
+ * them only stock up for after the horizon, and how much those buy
+ */
+export type PreBuyResult = {
+  result: SimResult;
+  acceptedBuy: number[];
+  stockingBuySlots: Set<number>;
+  stockedKwh: number;
+};
 /**
  * What generatePlan's sell and buy allocation passes (sellAllocation.ts, buyAllocation.ts) work on.
  * sellW and buyW are the candidate schedule, per slot: the passes trial a change by setting it,
@@ -160,7 +216,7 @@ export type AllocationContext = {
   slots: Slot[];
   sellW: number[];
   buyW: number[];
-  tailSpot: number;
+  valuation: HorizonValuation;
   /** Whether a trial breaches the floor no worse than the no-trade projection already does */
   feasibleVsBase: (result: SimResult) => boolean;
 };

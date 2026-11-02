@@ -7,6 +7,7 @@ import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig }
 import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
+import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../autoTrading/terminalValue.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -76,6 +77,12 @@ export const default_config: Config = {
     min_gain_sek_per_slot: 0.05,
     min_buy_saving_sek_per_kwh: 0.25,
     allow_arbitrage_buying: true,
+    // Ships off: the owner switches it on from the config page
+    terminal_value_mode: "off",
+    terminal_value_scale: PLANNER_KNOB_BOUNDS.terminal_value_scale.defaultValue,
+    terminal_value_trailing_days: PLANNER_KNOB_BOUNDS.terminal_value_trailing_days.defaultValue,
+    terminal_value_min_saving_sek_per_kwh: PLANNER_KNOB_BOUNDS.terminal_value_min_saving_sek_per_kwh.defaultValue,
+    terminal_value_months: DEFAULT_TERMINAL_VALUE_MONTHS,
     sell_ramp_minutes: 10,
     min_window_minutes: 15,
     fragmentation_tolerance_sek_per_window: PLANNER_KNOB_BOUNDS.fragmentation_tolerance_sek_per_window.defaultValue,

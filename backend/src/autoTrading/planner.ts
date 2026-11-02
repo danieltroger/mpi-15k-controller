@@ -21,18 +21,25 @@
  * accept order created for no gain, and sells budget its moves free up as reduced-power window
  * extensions. The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV
  * covers the house. The accepted slots are finally merged into schedule windows (planWindows.ts).
+ *
+ * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
+ * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying goes in
+ * blocks and can stock up for after the horizon, the sells get a second pass once the buys have filled the
+ * battery, and the unpriced tail is priced at the expected spot where that is higher.
  */
 
 import { simulate } from "./simulate.ts";
 import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
-import { allocateArbitragePairs, preBuyAgainstUnavoidableImport } from "./buyAllocation.ts";
+import { allocateArbitragePairs, preBuyAtCheapHours } from "./buyAllocation.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
+import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type {
   AllocationContext,
   FixedWindow,
+  HorizonValuation,
   PlannerInput,
   PlanProjection,
   PlanResult,
@@ -58,42 +65,56 @@ export function generatePlan(input: PlannerInput): PlanResult {
       socSeries: [],
     };
   }
-  // Conservative valuation for the unpriced constraint tail: median of the last priced day
-  const lastDaySpots = pricedSlots
-    .slice(-96)
-    .map(slot => slot.spot!)
-    .sort((lower, higher) => lower - higher);
-  const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
+  const { valuation, terminal } = horizonValuation(input, pricedSlots);
 
   const sellW = new Array(slots.length).fill(0);
   const buyW = new Array(slots.length).fill(0);
 
-  const base = simulate(input, slots, sellW, buyW, tailSpot);
+  const base = simulate(input, slots, sellW, buyW, valuation);
   const feasibleVsBase = (result: SimResult) => result.violationWh <= base.violationWh + 1;
 
-  // ---- Sell allocation: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts) ----
-  const allocation: AllocationContext = { input, slots, sellW, buyW, tailSpot, feasibleVsBase };
-  const greedy = allocateSellsGreedily(allocation, base);
-  let current = greedy.result;
-  const acceptedSell = greedy.acceptedSell;
-  current = bridgeSellValleys(allocation, current, acceptedSell);
-
-  // Defragment what the greedy scattered (see sellConsolidation.ts) — sellW is the source of
-  // truth afterwards, so rebuild the accepted list from it
-  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
-  current = consolidated.result;
-  if (consolidated.droppedShortRuns) {
-    notes.push(
-      `Dropped ${consolidated.droppedShortRuns} sell run(s) shorter than ${knobs.min_window_minutes} min and re-spent their budget`
-    );
-  }
-  acceptedSell.length = 0;
-  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
-
-  // ---- Buy allocation: pre-buying against unavoidable imports, then arbitrage pairs (buyAllocation.ts) ----
-  const preBuy = preBuyAgainstUnavoidableImport(allocation, current, notes);
+  // ---- Sell allocation (sellAllocation.ts, sellConsolidation.ts), then pre-buying against unavoidable
+  // imports and, with a terminal value, stocking up (buyAllocation.ts) ----
+  const allocation: AllocationContext = { input, slots, sellW, buyW, valuation, feasibleVsBase };
+  const firstSells = allocateSells(allocation, base);
+  let { result: current, acceptedSell } = firstSells;
+  // Where the note goes without a terminal value too; a second sell pass updates it instead of adding one
+  const droppedRunsNoteIndex = notes.length;
+  if (firstSells.droppedShortRuns) notes.push(droppedShortRunsNote(firstSells.droppedShortRuns, knobs));
+  const preBuy = preBuyAtCheapHours(allocation, current, notes);
   current = preBuy.result;
   const acceptedBuy = preBuy.acceptedBuy;
+  // Stocking slots whose energy the second sell pass sells at a later peak: their windows read as arbitrage
+  const resoldStockingSlots = new Set<number>();
+  if (valuation.endEnergySekPerKwh > 0 && knobs.allow_arbitrage_buying && acceptedBuy.length) {
+    // The sells were allocated against the emptier trajectory before the buys; with the battery fuller now, a
+    // peak can pay for energy the buy blocks brought in (arbitrage can't pair it: the blocks hold the cheap
+    // slots). That is buying to sell, so only with arbitrage allowed.
+    const sellingBefore = new Set(acceptedSell);
+    const secondSells = allocateSells(allocation, current);
+    ({ result: current, acceptedSell } = secondSells);
+    if (secondSells.droppedShortRuns) {
+      const droppedShortRuns = firstSells.droppedShortRuns + secondSells.droppedShortRuns;
+      notes.splice(
+        droppedRunsNoteIndex,
+        firstSells.droppedShortRuns ? 1 : 0,
+        droppedShortRunsNote(droppedShortRuns, knobs)
+      );
+    }
+    const firstStockingSlot = Math.min(...preBuy.stockingBuySlots);
+    if (acceptedSell.some(slotIndex => !sellingBefore.has(slotIndex) && slotIndex > firstStockingSlot)) {
+      for (const slotIndex of preBuy.stockingBuySlots) resoldStockingSlots.add(slotIndex);
+    }
+  }
+  if (preBuy.stockedKwh > 0) {
+    notes.push(
+      resoldStockingSlots.size
+        ? `Bought ~${preBuy.stockedKwh.toFixed(1)} kWh in one cheap block that a later peak then sells (arbitrage)`
+        : `Stocking up ~${preBuy.stockedKwh.toFixed(1)} kWh in one block for after the horizon — end-of-plan energy is worth ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh`
+    );
+  }
+
+  // ---- Arbitrage pairs (buyAllocation.ts) ----
   const arbitrage = allocateArbitragePairs(allocation, current, acceptedSell, acceptedBuy, notes);
   current = arbitrage.result;
 
@@ -110,7 +131,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     for (const slotIndex of acceptedSell) {
       if (!sellWindows.some(window => window.slotIndexes.includes(slotIndex))) sellW[slotIndex] = 0;
     }
-    current = simulate(input, slots, sellW, buyW, tailSpot);
+    current = simulate(input, slots, sellW, buyW, valuation);
   }
 
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
@@ -122,7 +143,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
     slots,
     finalResult: current,
     spotsAll,
-    arbitrageBuySlots: arbitrage.arbitrageBuySlots,
+    arbitrageBuySlots: new Set([...arbitrage.arbitrageBuySlots, ...resoldStockingSlots]),
+    stockingBuySlots: preBuy.stockingBuySlots,
   };
   const sells = sellWindows.map(window => toPlanned(window, packaging));
   const buys = buyWindows.map(window => toPlanned(window, packaging));
@@ -136,6 +158,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
     `Horizon ${new Date(Math.max(input.nowMs, pricedSlots[0].startMs)).toISOString()} → ${new Date(pricedSlots[pricedSlots.length - 1].endMs).toISOString()} (+${input.constraintTailHours}h reserve tail)`
   );
   if (knobs.extra_reserve_kwh > 0) notes.push(`User extra reserve of ${knobs.extra_reserve_kwh} kWh respected`);
+  const terminalNote = terminalValueNote(terminal, current);
+  if (terminalNote) notes.push(terminalNote);
 
   const projection: PlanProjection = {
     startSocPercent: input.socPercent,
@@ -146,8 +170,10 @@ export function generatePlan(input: PlannerInput): PlanResult {
     autoExportKwh: Math.round(current.autoExportWh / 100) / 10,
     unavoidableImportKwh: Math.round(current.importWh / 100) / 10,
     plannedBuyKwh: Math.round(current.boughtWh / 100) / 10,
-    estimatedRevenueSek: Math.round(current.revenueSek * 10) / 10,
-    baselineRevenueSek: Math.round(base.revenueSek * 10) / 10,
+    // Cash only: the end-of-plan credit is an estimate, reported apart
+    estimatedRevenueSek: Math.round((current.revenueSek - current.endEnergyValueSek) * 10) / 10,
+    baselineRevenueSek: Math.round((base.revenueSek - base.endEnergyValueSek) * 10) / 10,
+    ...(terminal.valuation ? { endEnergyValueSek: Math.round(current.endEnergyValueSek * 10) / 10 } : {}),
   };
 
   const socSeries = slots.map((slot, index) => ({
@@ -160,6 +186,31 @@ export function generatePlan(input: PlannerInput): PlanResult {
 }
 
 /**
+ * The sell passes: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts), then
+ * defragmenting what the greedy scattered (sellConsolidation.ts). Adds to whatever the candidate schedule
+ * already holds; returns the simulation, every slot selling afterwards (sellW is the source of truth
+ * once consolidation has moved things) and how many too-short runs consolidation dropped.
+ */
+function allocateSells(
+  allocation: AllocationContext,
+  resultSoFar: SimResult
+): { result: SimResult; acceptedSell: number[]; droppedShortRuns: number } {
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = allocation;
+  const greedy = allocateSellsGreedily(allocation, resultSoFar);
+  // Every slot selling now, so a second pass bridges valleys between its sells and the first pass's too
+  const sellingSlots = slots.flatMap((slot, slotIndex) => (sellW[slotIndex] > 0 ? [slotIndex] : []));
+  const bridged = bridgeSellValleys(allocation, greedy.result, sellingSlots);
+  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, valuation, feasibleVsBase, bridged);
+  const acceptedSell: number[] = [];
+  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
+  return { result: consolidated.result, acceptedSell, droppedShortRuns: consolidated.droppedShortRuns };
+}
+
+function droppedShortRunsNote(droppedShortRuns: number, knobs: PlannerInput["knobs"]): string {
+  return `Dropped ${droppedShortRuns} sell run(s) shorter than ${knobs.min_window_minutes} min and re-spent their budget`;
+}
+
+/**
  * Project SOC with only the given fixed windows (no new allocation). Used by the periodic guard to
  * check whether the already-written schedule is still safe under live SOC + fresh forecasts.
  */
@@ -169,25 +220,61 @@ export function projectWithFixedWindows(input: PlannerInput): {
   minSocAt: string;
   unavoidableImportKwh: number;
   endSocPercent: number;
-  /** Same revenue accounting as generatePlan's projection — comparable across plans on equal inputs */
+  /** Cash, the same accounting as generatePlan's estimatedRevenueSek — comparable across plans on equal inputs */
   revenueSek: number;
+  /** As generatePlan's endEnergyValueSek, 0 without a terminal value: compare plans on revenueSek plus this */
+  endEnergyValueSek: number;
 } {
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(slot => slot.spot !== undefined);
-  const lastDaySpots = pricedSlots
-    .slice(-96)
-    .map(slot => slot.spot!)
-    .sort((lower, higher) => lower - higher);
-  const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
-  const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), tailSpot);
+  const { valuation } = horizonValuation(input, pricedSlots);
+  const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), valuation);
   return {
     violationWh: result.violationWh,
     minSocPercent: Math.round((result.minSocWh / input.capacityWh) * 1000) / 10,
     minSocAt: new Date(result.minSocMs).toISOString(),
     unavoidableImportKwh: Math.round(result.importWh / 100) / 10,
     endSocPercent: Math.round((result.endSocWh / input.capacityWh) * 1000) / 10,
-    revenueSek: Math.round(result.revenueSek * 10) / 10,
+    revenueSek: Math.round((result.revenueSek - result.endEnergyValueSek) * 10) / 10,
+    endEnergyValueSek: Math.round(result.endEnergyValueSek * 10) / 10,
   };
+}
+
+/**
+ * How a plan for this input prices what lies past the published prices: the unpriced constraint tail at
+ * the median of the last priced day (a conservative stand-in) and the energy left at the end at nothing.
+ * With an active terminal value (terminalValue.ts) that energy is worth V, and the tail is priced at the
+ * expected spot when that is the higher of the two: a cheaper tail would make room for the tail's PV
+ * overflow look worth less and sell more now, trading the conservative tail for mean reversion just when
+ * prices run above their trailing mean. generatePlan and projectWithFixedWindows share it, so a fresh plan
+ * and a replayed schedule count the same things (the opportunistic replan compares their value).
+ */
+function horizonValuation(
+  input: PlannerInput,
+  pricedSlots: Slot[]
+): { valuation: HorizonValuation; terminal: TerminalValuationResult } {
+  const terminal = terminalValuationFor(input);
+  const lastDaySpots = pricedSlots
+    .slice(-96)
+    .map(slot => slot.spot!)
+    .sort((lower, higher) => lower - higher);
+  const lastDayMedianSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
+  return {
+    valuation: {
+      tailSpot: Math.max(lastDayMedianSpot, terminal.valuation?.expectedSpot ?? lastDayMedianSpot),
+      endEnergySekPerKwh: terminal.valuation?.endEnergySekPerKwh ?? 0,
+    },
+    terminal,
+  };
+}
+
+/** The plan note on the terminal value: what end-of-plan energy is worth and what the plan leaves, or why it has none */
+function terminalValueNote(terminal: TerminalValuationResult, finalResult: SimResult): string | undefined {
+  if (terminal.unavailable) return `End-of-plan energy not valued: ${terminal.unavailable}`;
+  const valuation = terminal.valuation;
+  if (!valuation) return undefined;
+  const leftKwh = valuation.endEnergySekPerKwh > 0 ? finalResult.endEnergyValueSek / valuation.endEnergySekPerKwh : 0;
+  return `End-of-plan energy valued at ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh (${valuation.basis}): the ${leftKwh.toFixed(1)} kWh left above the emergency floor are worth ${finalResult.endEnergyValueSek.toFixed(1)} SEK, not counted in the revenue figures`;
 }
 
 function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {

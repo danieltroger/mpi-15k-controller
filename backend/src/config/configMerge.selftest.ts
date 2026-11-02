@@ -60,6 +60,30 @@ check(
     partialString.automatic_trading.solar_model.string2.nameplate_kwp === 6.16
 );
 
+// ——— automatic_trading stored before the terminal value ———
+const {
+  terminal_value_mode,
+  terminal_value_scale,
+  terminal_value_trailing_days,
+  terminal_value_months,
+  terminal_value_min_saving_sek_per_kwh,
+  ...tradingBeforeTerminalValue
+} = default_config.automatic_trading;
+const healedTrading = mergeWithDefaults({
+  automatic_trading: { ...tradingBeforeTerminalValue, enabled: true },
+} as unknown as Partial<Config>).automatic_trading;
+check(
+  "merge: an older automatic_trading picks up the terminal value knobs, off",
+  healedTrading.enabled === true &&
+    healedTrading.terminal_value_mode === "off" &&
+    healedTrading.terminal_value_mode === terminal_value_mode &&
+    healedTrading.terminal_value_scale === terminal_value_scale &&
+    healedTrading.terminal_value_trailing_days === terminal_value_trailing_days &&
+    healedTrading.terminal_value_months === terminal_value_months &&
+    healedTrading.terminal_value_min_saving_sek_per_kwh === terminal_value_min_saving_sek_per_kwh &&
+    terminal_value_min_saving_sek_per_kwh === 1
+);
+
 // ——— scheduled_power_selling stored before the overheat stop's inverter-temperature limits ———
 const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius, ...olderSelling } =
   default_config.scheduled_power_selling;

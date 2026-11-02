@@ -13,6 +13,8 @@ import { captureForecastLog } from "./tradingPerformance.ts";
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
 import { activeOwnedEntries, applyPlan, reconcileOwnership } from "./scheduleOwnership.ts";
 import { buildPlannerInput, ownedEntriesAsWindows } from "./plannerInputs.ts";
+import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
+import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { ensureStateLoaded, refreshStatus, type TraderCtx, withScheduleLock } from "./traderContext.ts";
 
 type RunPlanOptions = {
@@ -60,6 +62,14 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
     if (ctx.flags.aborted) return "aborted";
 
     const plannedSoc = soc;
+    // Outside the schedule lock: a new day's price history may need fetching. Every trigger (daily,
+    // opportunistic, guard re-plan) estimates it the same way from the same cached days, so a re-plan
+    // values the stock the daily plan bought like the daily plan did
+    const configBeforeLock = untrack(ctx.config);
+    const expectedSpot = await expectedSpotForPlan(
+      { ...configBeforeLock.automatic_trading, ...plannerKnobsFromConfig(configBeforeLock) },
+      Date.now()
+    );
     const summary = await withScheduleLock(ctx, async () => {
       // Re-read inside the lock: another plan/guard may have written config while we awaited above
       const freshCfg = untrack(ctx.config);
@@ -71,7 +81,7 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
         ? activeOwnedEntries(ctx, Date.now())
         : { selling: {}, buying: {} };
 
-      const input = await buildPlannerInput(ctx, freshCfg, prices, plannedSoc);
+      const input = await buildPlannerInput(ctx, freshCfg, prices, plannedSoc, expectedSpot);
       input.fixedSells = [...input.fixedSells, ...ownedEntriesAsWindows(keepOwned.selling, "power_watts")];
       input.fixedBuys = [...input.fixedBuys, ...ownedEntriesAsWindows(keepOwned.buying, "charging_power")];
       const result = generatePlan(input);
@@ -83,7 +93,11 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
           fixedSells: [...input.fixedSells, ...ownedEntriesAsWindows(ctx.state.owned_entries.selling, "power_watts")],
           fixedBuys: [...input.fixedBuys, ...ownedEntriesAsWindows(ctx.state.owned_entries.buying, "charging_power")],
         });
-        const gain = result.projection.estimatedRevenueSek - existing.revenueSek;
+        // The value the planner maximises: cash plus, with a terminal value, the energy left at plan end
+        const gain =
+          result.projection.estimatedRevenueSek +
+          (result.projection.endEnergyValueSek ?? 0) -
+          (existing.revenueSek + existing.endEnergyValueSek);
         if (gain < gainGateSek) {
           return `kept existing plan — replacement would gain ${gain.toFixed(1)} SEK (< ${gainGateSek})`;
         }
@@ -113,7 +127,11 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
       ctx.state.last_error = undefined;
       await saveAutoTraderState(ctx.state);
 
-      return `planned ${result.sells.length} sell + ${result.buys.length} buy window(s), est ${result.projection.estimatedRevenueSek} SEK (baseline ${result.projection.baselineRevenueSek}), min SOC ${result.projection.minSocPercent}% @ ${result.projection.minSocAt}`;
+      const endEnergyValue =
+        result.projection.endEnergyValueSek === undefined
+          ? ""
+          : `, energy left at plan end worth ${result.projection.endEnergyValueSek} SEK`;
+      return `planned ${result.sells.length} sell + ${result.buys.length} buy window(s), est ${result.projection.estimatedRevenueSek} SEK (baseline ${result.projection.baselineRevenueSek})${endEnergyValue}, min SOC ${result.projection.minSocPercent}% @ ${result.projection.minSocAt}`;
     });
     logLog("Auto trader:", summary);
     if (!summary.startsWith("kept existing plan")) {

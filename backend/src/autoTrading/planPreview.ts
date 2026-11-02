@@ -5,6 +5,8 @@
  * Usage (from backend/):
  *   SOC=45 yarn node src/autoTrading/planPreview.ts   # override SOC
  *   yarn node src/autoTrading/planPreview.ts          # SOC from InfluxDB
+ *   TERMINAL_VALUE_MODE=trailing yarn node src/autoTrading/planPreview.ts   # preview the terminal value
+ *                                                    # before switching automatic_trading.terminal_value_mode on
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
@@ -21,6 +23,8 @@ import { generatePlan } from "./planner.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
 import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW } from "./measuredFeedIn.ts";
+import { expectedSpotForPlan } from "./expectedSpot.ts";
+import { effectiveTerminalValueMode } from "./terminalValue.ts";
 import type { MqttValue } from "../sharedTypes.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
@@ -91,6 +95,23 @@ console.log(
   `Measured feed-in: ${measuredFeedInW === undefined ? "no fresh grid power reading, a running sell window's ramp is replayed from the schedule" : `${measuredFeedInW} W (grid ${gridPowerReading?.value} W, ${((previewNowMs - (gridPowerReading?.time ?? previewNowMs)) / 1000).toFixed(0)} s old)`}\n`
 );
 
+// Backfill knobs the config file predates and correct bounded ones, same as the live trader does
+const configuredKnobs = plannerKnobsFromConfig(mergedConfig);
+const terminalValueModeOverride = process.env.TERMINAL_VALUE_MODE
+  ? effectiveTerminalValueMode(process.env.TERMINAL_VALUE_MODE)
+  : undefined;
+if (terminalValueModeOverride?.correction) console.log(`TERMINAL_VALUE_MODE: ${terminalValueModeOverride.correction}`);
+const knobs = terminalValueModeOverride
+  ? { ...configuredKnobs, terminal_value_mode: terminalValueModeOverride.value }
+  : configuredKnobs;
+// The live trader estimates it the same way (plannerInputs.ts); past days' prices are fetched from the price API
+const expectedSpot = await expectedSpotForPlan({ ...tradingConfig, ...knobs }, previewNowMs);
+console.log(
+  expectedSpot
+    ? `Expected spot after the horizon (${expectedSpot.source}): ${expectedSpot.expectedSpot === undefined ? "unavailable" : `${expectedSpot.expectedSpot.toFixed(3)} SEK/kWh`} — ${expectedSpot.detail}\n`
+    : `Terminal value: ${knobs.terminal_value_mode === "off" ? "off" : `not in season (months ${knobs.terminal_value_months})`} — TERMINAL_VALUE_MODE=trailing previews it\n`
+);
+
 const runningSellSchedule = sellScheduleWindows(config.scheduled_power_selling.schedule);
 const fixedSells = runningSellSchedule.filter(window => window.endMs > Date.now());
 const fixedBuys = Object.entries(config.scheduled_power_buying.schedule)
@@ -113,8 +134,8 @@ const input: PlannerInput = {
   measuredFeedInW,
   sellVetoWindows: [],
   buyVetoWindows: [],
-  // Backfill knobs the config file predates and correct bounded ones, same as the live trader does
-  knobs: plannerKnobsFromConfig(mergedConfig),
+  expectedSpot,
+  knobs,
 };
 
 if (fixedSells.length || fixedBuys.length) {

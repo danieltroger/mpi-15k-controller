@@ -18,25 +18,31 @@ import { SLOT_MS } from "./slotDuration.ts";
 import type { AllocationContext, SimResult } from "./planner.types.ts";
 
 /**
- * Greedy sell allocation, highest spot first, starting from the no-trade projection (base). Leaves
- * each accepted slot's power in context.sellW and returns the accepted slots with their simulation.
+ * Greedy sell allocation, highest spot first, starting from the given projection (the no-trade one,
+ * or with the terminal value the plan after its buys). Leaves each accepted slot's power in
+ * context.sellW and returns the accepted slots with their simulation.
  */
 export function allocateSellsGreedily(
   context: AllocationContext,
   base: SimResult
 ): { result: SimResult; acceptedSell: number[] } {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   const sellCandidates = slots
     .map((slot, slotIndex) => ({ slot, slotIndex }))
     .filter(
-      ({ slot }) => slotTradableForSell(slot, input.sellVetoWindows) && slot.spot! >= knobs.min_sell_spot_sek_per_kwh
+      // Free of sells and buys: a second run with the terminal value (planner.ts) starts from an allocated plan
+      ({ slot, slotIndex }) =>
+        slotTradableForSell(slot, input.sellVetoWindows) &&
+        slot.spot! >= knobs.min_sell_spot_sek_per_kwh &&
+        sellW[slotIndex] === 0 &&
+        buyW[slotIndex] === 0
     )
     .sort((pricier, cheaper) => cheaper.slot.spot! - pricier.slot.spot!);
 
   let current = base;
   const acceptedSell: number[] = [];
-  const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, tailSpot, feasible: feasibleVsBase };
+  const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, valuation, feasible: feasibleVsBase };
   // The largest fitting power of the last reduced slot rejected for too little gain. Its leftover
   // stays where it was, and the candidates after it are no pricier: one that can't take more power
   // than that can't gain more either, so its search starts just above (one simulation to rule it
@@ -45,7 +51,7 @@ export function allocateSellsGreedily(
   let gainRejectedWatts: number | undefined;
   for (const { slotIndex } of sellCandidates) {
     sellW[slotIndex] = knobs.max_sell_power_watts;
-    let trial = simulate(input, slots, sellW, buyW, tailSpot);
+    let trial = simulate(input, slots, sellW, buyW, valuation);
     let reducedWatts: number | undefined;
     if (!feasibleVsBase(trial)) {
       // Full power overdraws the remaining budget: sell what still fits here, so a leftover lands in
@@ -92,7 +98,7 @@ export function bridgeSellValleys(
   resultSoFar: SimResult,
   acceptedSell: number[]
 ): SimResult {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   let current = resultSoFar;
   const maxGapSlots = 3;
@@ -108,7 +114,9 @@ export function bridgeSellValleys(
       if (slots[after].startMs - slots[before].endMs !== gapSlots * SLOT_MS) continue;
       const fillable: number[] = [];
       for (let j = before + 1; j < after; j++) {
-        if (sellW[j] > 0 || !slotTradableForSell(slots[j], input.sellVetoWindows)) {
+        // A planned buy quarter (the terminal value's second sell pass runs with buys in place) stays one: a sell
+        // would win it in the simulation, but both windows would be written
+        if (sellW[j] > 0 || buyW[j] > 0 || !slotTradableForSell(slots[j], input.sellVetoWindows)) {
           fillable.length = 0;
           break;
         }
@@ -116,7 +124,7 @@ export function bridgeSellValleys(
       }
       if (fillable.length !== gapSlots) continue;
       for (const j of fillable) sellW[j] = knobs.max_sell_power_watts;
-      const trial = simulate(input, slots, sellW, buyW, tailSpot);
+      const trial = simulate(input, slots, sellW, buyW, valuation);
       if (feasibleVsBase(trial) && trial.revenueSek - current.revenueSek >= -maxSmoothingLossSekPerSlot * gapSlots) {
         current = trial;
         acceptedSell.push(...fillable);

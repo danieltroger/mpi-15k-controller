@@ -54,6 +54,9 @@ export function AutoTraderPanel() {
                 {fmtTime(plan().horizon_end)}. Projected: sell ~{plan().projection.plannedSellKwh} kWh (~
                 {plan().projection.estimatedRevenueSek} SEK, baseline {plan().projection.baselineRevenueSek} SEK), min
                 SOC {plan().projection.minSocPercent}% at {fmtTime(plan().projection.minSocAt)}.
+                <Show when={plan().projection.endEnergyValueSek !== undefined}>
+                  {` Value of energy left at plan end: ~${plan().projection.endEnergyValueSek} SEK (not cash, not in the figures above).`}
+                </Show>
               </p>
               <Show when={plan().windows.length} fallback={<p class="buy-sell-config__hint">No windows planned.</p>}>
                 <div class="buy-sell-config__table-wrap">

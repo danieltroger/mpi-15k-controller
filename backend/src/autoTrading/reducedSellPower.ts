@@ -8,7 +8,7 @@
  */
 
 import { simulate } from "./simulate.ts";
-import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
+import type { HorizonValuation, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 /** Reduced powers are whole multiples of this, so windows read as round numbers */
 export const SELL_POWER_STEP_WATTS = 100;
@@ -19,7 +19,7 @@ export type SellPowerSearch = {
   slots: Slot[];
   sellW: number[];
   buyW: number[];
-  tailSpot: number;
+  valuation: HorizonValuation;
   feasible: (result: SimResult) => boolean;
   /** Consolidation's simulate-call budget, charged one per trial when present */
   trialsLeft?: number;
@@ -85,6 +85,6 @@ export function joinedChainMinutes(slots: Slot[], sellW: number[], slotIndex: nu
 function trySellPower(search: SellPowerSearch, slotIndexes: number[], watts: number): FeasibleSellPower | undefined {
   for (const slotIndex of slotIndexes) search.sellW[slotIndex] = watts;
   if (search.trialsLeft !== undefined) search.trialsLeft--;
-  const result = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
+  const result = simulate(search.input, search.slots, search.sellW, search.buyW, search.valuation);
   return search.feasible(result) ? { watts, result } : undefined;
 }
