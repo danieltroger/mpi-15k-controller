@@ -7,7 +7,8 @@
  */
 import { generatePlan } from "./planner.ts";
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
-import { captureForecastLog, localDateStr } from "./tradingPerformance.ts";
+import { stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { captureForecastLog } from "./tradingPerformance.ts";
 import { EMPTY_STATE } from "./autoTraderState.ts";
 import { baseKnobs, check, finishSelftest, HOUR_MS, mkPrices, testDayStartMs } from "./plannerSelftestFixtures.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
@@ -77,7 +78,7 @@ const RAMP_KNOBS: PlannerKnobs = {
 
   const state = structuredClone(EMPTY_STATE);
   captureForecastLog(state, input, plan.sells);
-  const tomorrow = localDateStr(testDayStartMs + 41 * HOUR_MS);
+  const tomorrow = stockholmDateOf(testDayStartMs + 41 * HOUR_MS);
   const plannedSellKwh = state.forecast_log[tomorrow]?.planned_sell_kwh;
   check(
     "settlement: tomorrow's planned_sell_kwh is the projected export of tomorrow's windows",

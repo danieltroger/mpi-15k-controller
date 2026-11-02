@@ -1,3 +1,5 @@
+import { addDays, calendarDateParts } from "../utilities/stockholmDate.ts";
+
 /**
  * Whether a date (YYYY-MM-DD) is a weekend or holiday in the calendar the SE3 outlook was fitted with
  * (the winter study's issue_days.py): Saturdays, Sundays, the fixed days Jan 1, Jan 6, May 1, Jun 6,
@@ -9,7 +11,7 @@
  * (Easter Sunday, Whitsun, Midsummer Day and All Saints' Day always fall on a weekend.)
  */
 export function isNonWorkingDay(date: string): boolean {
-  const [year, month, dayOfMonth] = parseDate(date);
+  const [year, month, dayOfMonth] = calendarDateParts(date);
   const weekday = new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCDay();
   if (weekday === SUNDAY || weekday === SATURDAY) return true;
   if (FIXED_HOLIDAYS.has(date.slice(5))) return true;
@@ -36,34 +38,10 @@ export function easterSunday(year: number): string {
   return isoDate(year, Math.floor(daysFromMarch / 31), (daysFromMarch % 31) + 1);
 }
 
-/** A calendar date plus whole days, DST-free (plain date arithmetic, no instants involved) */
-export function addDays(date: string, days: number): string {
-  const [year, month, dayOfMonth] = parseDate(date);
-  return new Date(Date.UTC(year, month - 1, dayOfMonth + days)).toISOString().slice(0, 10);
-}
-
-/** The Europe/Stockholm calendar date (YYYY-MM-DD) an instant falls on: 23 h and 25 h days at the DST switches */
-export function stockholmDateOf(ms: number): string {
-  return STOCKHOLM_DATE_FORMAT.format(ms);
-}
-
 const SUNDAY = 0;
 const SATURDAY = 6;
 /** MM-DD: New Year, Epiphany, May Day, National Day, Christmas Eve/Day, Boxing Day, New Year's Eve */
 const FIXED_HOLIDAYS = new Set(["01-01", "01-06", "05-01", "06-06", "12-24", "12-25", "12-26", "12-31"]);
-/** sv-SE formats as YYYY-MM-DD; one shared formatter because bucketing calls this for every forecast hour */
-const STOCKHOLM_DATE_FORMAT = new Intl.DateTimeFormat("sv-SE", {
-  timeZone: "Europe/Stockholm",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-function parseDate(date: string): [number, number, number] {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  if (!match) throw new Error(`Expected a YYYY-MM-DD date, got "${date}"`);
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
 
 function isoDate(year: number, month: number, dayOfMonth: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;

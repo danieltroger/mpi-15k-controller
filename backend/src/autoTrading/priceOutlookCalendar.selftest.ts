@@ -1,12 +1,12 @@
 /**
  * Self-test of the price outlook's calendar (priceOutlookCalendar.ts): the study's weekends and
- * holidays, date arithmetic, Europe/Stockholm day bucketing across the DST switches, where a day
- * has 23 or 25 forecast hours, and the fitted-season flag on a summer outlook. Run from backend/ with:
+ * holidays, Europe/Stockholm day bucketing across the DST switches, where a day has 23 or 25
+ * forecast hours, and the fitted-season flag on a summer outlook. Run from backend/ with:
  *   yarn node src/autoTrading/priceOutlookCalendar.selftest.ts
  */
 import process from "process";
 import { dailyMeansByStockholmDate, dailyOutlookWeather, predictDailyMeanSpots } from "./priceOutlook.ts";
-import { addDays, easterSunday, isNonWorkingDay, stockholmDateOf } from "./priceOutlookCalendar.ts";
+import { easterSunday, isNonWorkingDay } from "./priceOutlookCalendar.ts";
 import { OUTLOOK_TEMPERATURE_POINTS, OUTLOOK_WIND_POINTS } from "./priceOutlookCoefficients.ts";
 import type {
   HourlyWeatherSample,
@@ -72,24 +72,10 @@ const TEMPERATURE_POINT_NAMES = Object.keys(OUTLOOK_TEMPERATURE_POINTS) as Outlo
     ...working.filter(date => isNonWorkingDay(date)),
   ];
   check("calendar: the study's weekends and holidays, and nothing more", !wrong.length, wrong.join(", "));
-  check(
-    "calendar: date arithmetic across month, year and leap day",
-    addDays("2028-02-28", 1) === "2028-02-29" &&
-      addDays("2026-12-31", 1) === "2027-01-01" &&
-      addDays("2026-03-01", -1) === "2026-02-28" &&
-      addDays("2026-10-24", 2) === "2026-10-26"
-  );
 }
 
-// ---------- Europe/Stockholm days across the DST switches ----------
+// ---------- Europe/Stockholm days across the DST switches (the day boundaries: utilities/stockholmDate.selftest.ts) ----------
 {
-  check(
-    "dst: autumn day boundaries (00:00 CEST = 22:00Z, 00:00 CET = 23:00Z)",
-    stockholmDateOf(Date.parse("2026-10-24T21:59:59Z")) === "2026-10-24" &&
-      stockholmDateOf(Date.parse("2026-10-24T22:00:00Z")) === "2026-10-25" &&
-      stockholmDateOf(Date.parse("2026-10-25T22:59:59Z")) === "2026-10-25" &&
-      stockholmDateOf(Date.parse("2026-10-25T23:00:00Z")) === "2026-10-26"
-  );
   const autumn = hourlySamples("2026-10-23T22:00:00Z", 24 + 25 + 24, hourIndex => hourIndex);
   const autumnMeans = dailyMeansByStockholmDate(autumn);
   const switchDay = autumnMeans.get("2026-10-25");

@@ -1,4 +1,5 @@
-import { addDays, isNonWorkingDay, stockholmDateOf } from "./priceOutlookCalendar.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { isNonWorkingDay } from "./priceOutlookCalendar.ts";
 import {
   isOutlookFittedForIssueDate,
   OUTLOOK_LOG_PRICE_FLOOR,

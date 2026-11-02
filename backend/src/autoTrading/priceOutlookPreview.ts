@@ -11,7 +11,7 @@
 import process from "process";
 import { fetchPrices, fetchPriceSlotsForDate } from "./priceService.ts";
 import { predictDailyMeanSpots } from "./priceOutlook.ts";
-import { addDays, stockholmDateOf } from "./priceOutlookCalendar.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { isOutlookAvailableForArea } from "./priceOutlookCoefficients.ts";
 import {
   dailyMeanSpotsOfSlots,

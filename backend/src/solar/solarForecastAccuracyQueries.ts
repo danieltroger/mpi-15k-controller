@@ -1,6 +1,6 @@
 import type Influx from "influx";
 import type { AutomaticTradingConfig } from "../config/config.types.ts";
-import { localDateStr } from "../autoTrading/tradingPerformance.ts";
+import { stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { sunPosition } from "../utilities/sunPosition.ts";
 import { fetchLiveRadiation } from "./openMeteoClient.ts";
 import { influxClientQuery } from "./influxQuery.ts";
@@ -82,7 +82,7 @@ export async function recentValidDays(
   return rows
     .filter(row => row.valid)
     .map(row => ({
-      date: localDateStr(row.time.getTime()),
+      date: stockholmDateOf(row.time.getTime()),
       actual_kwh: row.actual_kwh,
       forecast_kwh: row.day_ahead_kwh,
     }))

@@ -3,7 +3,7 @@ import { type Accessor, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { fetchSolarForecast } from "../autoTrading/solarForecast.ts";
-import { localDateStr } from "../autoTrading/tradingPerformance.ts";
+import { stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { logLog, warnLog } from "../utilities/logging.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { influxClientQuery } from "./influxQuery.ts";
@@ -85,9 +85,9 @@ async function recordForecast(ctx: AccuracyContext, lead: "short" | "day_ahead")
     );
     const nowMs = Date.now();
     const currentHourMs = Math.floor(nowMs / 3600_000) * 3600_000;
-    const tomorrow = localDateStr(nowMs + 86_400_000);
+    const tomorrow = stockholmDateOf(nowMs + 86_400_000);
     const hours = forecast.hours.filter(hour =>
-      lead === "short" ? hour.hourStartMs === currentHourMs : localDateStr(hour.hourStartMs) === tomorrow
+      lead === "short" ? hour.hourStartMs === currentHourMs : stockholmDateOf(hour.hourStartMs) === tomorrow
     );
     if (!hours.length) return;
     await influxClient.writePoints(
@@ -119,7 +119,7 @@ async function settleRecentDays(ctx: AccuracyContext, options: { alert: boolean 
   const influxClient = ctx.influxClient();
   if (!influxClient) return;
   for (let daysBack = BACKLOG_DAYS; daysBack >= 1; daysBack--) {
-    const date = localDateStr(Date.now() - daysBack * 86_400_000);
+    const date = stockholmDateOf(Date.now() - daysBack * 86_400_000);
     const isYesterday = daysBack === 1;
     const { startMs, endMs } = localDayBounds(date);
     const settled = await dailyPointExists(influxClient, startMs, endMs).catch((error: unknown) => {
@@ -255,9 +255,9 @@ function hourlyMeanAbsoluteError(actual: StringWattsByHour, forecast: StringWatt
 /** [start, end) of a Europe/Stockholm calendar day in UTC ms (whole-hour offsets, so hour steps suffice) */
 export function localDayBounds(date: string): { startMs: number; endMs: number } {
   let startMs = Date.parse(`${date}T00:00:00Z`) - 3 * 3600_000;
-  while (localDateStr(startMs) !== date) startMs += 3600_000;
+  while (stockholmDateOf(startMs) !== date) startMs += 3600_000;
   let endMs = startMs + 20 * 3600_000;
-  while (localDateStr(endMs) === date) endMs += 3600_000;
+  while (stockholmDateOf(endMs) === date) endMs += 3600_000;
   return { startMs, endMs };
 }
 

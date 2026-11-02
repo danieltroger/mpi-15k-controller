@@ -1,5 +1,6 @@
 import { type Accessor, createSignal } from "solid-js";
 import { logLog } from "../utilities/logging.ts";
+import { stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PriceSlot15 } from "./planner.types.ts";
 import type { FetchedPrices } from "./priceService.types.ts";
@@ -20,15 +21,8 @@ const [getLatestSpotPrices, setLatestSpotPrices] = createSignal<FetchedPrices | 
  */
 export const latestSpotPrices: Accessor<FetchedPrices | undefined> = getLatestSpotPrices;
 
-function dateInStockholm(msOffsetDays: number): { year: string; month: string; day: string } {
-  const d = new Date(Date.now() + msOffsetDays * 24 * 3600 * 1000);
-  // sv-SE formats as YYYY-MM-DD
-  const [year, month, day] = d.toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" }).split("-");
-  return { year, month, day };
-}
-
 async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | undefined> {
-  const { year, month, day } = dateInStockholm(offsetDays);
+  const [year, month, day] = stockholmDateOf(Date.now() + offsetDays * 24 * 3600 * 1000).split("-");
   return fetchDayByDate(area, year, month, day);
 }
 

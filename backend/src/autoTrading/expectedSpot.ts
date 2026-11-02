@@ -7,6 +7,7 @@
  */
 import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
 import { type DailyMeanSpot, dailyMeanSpots } from "./priceHistory.ts";
 import { isExpectedSpotSource, terminalValueInSeason } from "./terminalValue.ts";
@@ -79,12 +80,7 @@ export function trailingEstimateFromDays(
 
 /** The `days` Swedish calendar dates (YYYY-MM-DD) before the one nowMs falls on, newest first */
 export function completeDaysBefore(nowMs: number, days: number): string[] {
-  // sv-SE formats as YYYY-MM-DD; calendar arithmetic on the date itself sidesteps DST's 23/25-hour days
-  const [year, month, day] = new Date(nowMs)
-    .toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" })
-    .split("-")
-    .map(Number);
-  return Array.from({ length: days }, (_, daysBack) =>
-    new Date(Date.UTC(year, month - 1, day - 1 - daysBack)).toISOString().slice(0, 10)
-  );
+  // Calendar arithmetic on the date itself sidesteps DST's 23/25-hour days
+  const today = stockholmDateOf(nowMs);
+  return Array.from({ length: days }, (_, daysBack) => addDays(today, -1 - daysBack));
 }
