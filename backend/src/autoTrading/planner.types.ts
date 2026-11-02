@@ -197,6 +197,16 @@ export type SimResult = {
 };
 
 /**
+ * What the pre-buy pass (buyAllocation.ts) hands back: the plan with its buys, the accepted buy slots, which of
+ * them only stock up for after the horizon, and how much those buy
+ */
+export type PreBuyResult = {
+  result: SimResult;
+  acceptedBuy: number[];
+  stockingBuySlots: Set<number>;
+  stockedKwh: number;
+};
+/**
  * What generatePlan's sell and buy allocation passes (sellAllocation.ts, buyAllocation.ts) work on.
  * sellW and buyW are the candidate schedule, per slot: the passes trial a change by setting it,
  * simulating, and either keeping it or zeroing it again, so they mutate these arrays in place.

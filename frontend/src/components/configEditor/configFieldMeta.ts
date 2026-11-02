@@ -290,12 +290,12 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "allow_arbitrage_buying"],
         "Arbitrage buying",
-        "Allow buying cheap purely to re-sell at a later peak, when the spread beats fees, losses and the margin above."
+        "Allow buying cheap purely to re-sell at a later peak, when the spread beats fees, losses and the margin above. With the end-of-plan energy value on, it also lets a later peak sell what the plan's buy blocks bring in; off, bought energy is only kept or used by the house."
       ),
       f(
         ["automatic_trading", "terminal_value_mode"],
         "End-of-plan energy value",
-        "Off: whatever is left in the battery when a plan's horizon ends (the ~35 hours of published prices plus the reserve tail) is worth nothing to the planner. It then never stocks up on a cheap day unless it sees an import coming within the horizon, and it sells down to the floor right before an expensive spell it can't see yet. Trailing mean: that energy is worth the import it saves later, at the recent average spot price. The planner then keeps energy rather than sell it for less, buys in contiguous blocks (still selling a peak worth more than the energy), and prices the reserve tail at the expected spot when that is above the last priced day's median. Backtested over four winters (2022–2026, this house's real load, solar and prices) at the defaults: 200–360 SEK saved per winter (170–270 planned on the live consumption forecast), and positive in every winter and in autumn 2026. The revenue figures stay cash; the plan reports the value of the energy left at its end separately. Applies from the next plan run.",
+        "Off: whatever is left in the battery when a plan's horizon ends (the ~35 hours of published prices plus the reserve tail) is worth nothing to the planner. It then never stocks up on a cheap day unless it sees an import coming within the horizon, and it sells down to the floor right before an expensive spell it can't see yet. Trailing mean: that energy is worth the import it saves later, at the recent average spot price. The planner then keeps energy rather than sell it for less, buys in contiguous blocks (still selling a peak worth more than the energy), and prices the reserve tail at the expected spot when that is above the last priced day's median. Backtested over four winters (2022–2026, this house's real load, solar and prices) at the defaults: 200–340 SEK saved per winter (170–240 planned on the live consumption forecast), and positive in every winter and in autumn 2026. The revenue figures stay cash; the plan reports the value of the energy left at its end separately. Applies from the next plan run.",
         {
           heading: "End-of-plan energy value",
           options: [
@@ -319,7 +319,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "terminal_value_min_saving_sek_per_kwh"],
         "Stocking-up margin",
-        `With no import in sight, the planner may still stock up for after the horizon in one contiguous block per plan (where the battery has the most room) if every kWh it buys saves at least this much, counting the energy at its end-of-plan value. Buys that avert a projected import keep the minimum buy saving above, and those already top the battery up as far as that pays. In the four-winter backtest every margin from 0.1 to 1 came within ~30 SEK per winter of leaving this block out, none ahead of it, so at the default it only stocks up on an outsized gap, such as a near-free day after a dear week. Lower stocks up on smaller gaps; above 2 it never does. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_min_saving_sek_per_kwh")}`,
+        `With no import in sight, the planner may still stock up for after the horizon in one contiguous block per plan (where the battery has the most room) if every kWh it buys saves at least this much, counting the energy at its end-of-plan value. Buys that avert a projected import keep the minimum buy saving above, and those already top the battery up as far as that pays. In the four-winter backtest no margin came out ahead of leaving this block out (0.4–1 within ~10 SEK per winter of it, 0.1–0.25 15–90 SEK behind), so at the default it only stocks up on an outsized gap, such as a near-free day after a dear week. Lower stocks up on smaller gaps; above 2 it never does. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_min_saving_sek_per_kwh")}`,
         plannerKnobInput("terminal_value_min_saving_sek_per_kwh")
       ),
       f(

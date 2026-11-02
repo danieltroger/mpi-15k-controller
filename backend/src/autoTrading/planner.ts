@@ -76,14 +76,42 @@ export function generatePlan(input: PlannerInput): PlanResult {
   // ---- Sell allocation (sellAllocation.ts, sellConsolidation.ts), then pre-buying against unavoidable
   // imports and, with a terminal value, stocking up (buyAllocation.ts) ----
   const allocation: AllocationContext = { input, slots, sellW, buyW, valuation, feasibleVsBase };
-  let { result: current, acceptedSell } = allocateSells(allocation, base, notes);
+  const firstSells = allocateSells(allocation, base);
+  let { result: current, acceptedSell } = firstSells;
+  // Where the note goes without a terminal value too; a second sell pass updates it instead of adding one
+  const droppedRunsNoteIndex = notes.length;
+  if (firstSells.droppedShortRuns) notes.push(droppedShortRunsNote(firstSells.droppedShortRuns, knobs));
   const preBuy = preBuyAtCheapHours(allocation, current, notes);
   current = preBuy.result;
   const acceptedBuy = preBuy.acceptedBuy;
-  if (valuation.endEnergySekPerKwh > 0 && acceptedBuy.length) {
-    // The sells were allocated against the emptier trajectory before the buys; with the battery fuller now,
-    // a peak can pay for energy the buy blocks brought in (and arbitrage can't pair it: they hold the cheap slots)
-    ({ result: current, acceptedSell } = allocateSells(allocation, current, notes));
+  // Stocking slots whose energy the second sell pass sells at a later peak: their windows read as arbitrage
+  const resoldStockingSlots = new Set<number>();
+  if (valuation.endEnergySekPerKwh > 0 && knobs.allow_arbitrage_buying && acceptedBuy.length) {
+    // The sells were allocated against the emptier trajectory before the buys; with the battery fuller now, a
+    // peak can pay for energy the buy blocks brought in (arbitrage can't pair it: the blocks hold the cheap
+    // slots). That is buying to sell, so only with arbitrage allowed.
+    const sellingBefore = new Set(acceptedSell);
+    const secondSells = allocateSells(allocation, current);
+    ({ result: current, acceptedSell } = secondSells);
+    if (secondSells.droppedShortRuns) {
+      const droppedShortRuns = firstSells.droppedShortRuns + secondSells.droppedShortRuns;
+      notes.splice(
+        droppedRunsNoteIndex,
+        firstSells.droppedShortRuns ? 1 : 0,
+        droppedShortRunsNote(droppedShortRuns, knobs)
+      );
+    }
+    const firstStockingSlot = Math.min(...preBuy.stockingBuySlots);
+    if (acceptedSell.some(slotIndex => !sellingBefore.has(slotIndex) && slotIndex > firstStockingSlot)) {
+      for (const slotIndex of preBuy.stockingBuySlots) resoldStockingSlots.add(slotIndex);
+    }
+  }
+  if (preBuy.stockedKwh > 0) {
+    notes.push(
+      resoldStockingSlots.size
+        ? `Bought ~${preBuy.stockedKwh.toFixed(1)} kWh in one cheap block that a later peak then sells (arbitrage)`
+        : `Stocking up ~${preBuy.stockedKwh.toFixed(1)} kWh in one block for after the horizon — end-of-plan energy is worth ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh`
+    );
   }
 
   // ---- Arbitrage pairs (buyAllocation.ts) ----
@@ -115,7 +143,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     slots,
     finalResult: current,
     spotsAll,
-    arbitrageBuySlots: arbitrage.arbitrageBuySlots,
+    arbitrageBuySlots: new Set([...arbitrage.arbitrageBuySlots, ...resoldStockingSlots]),
     stockingBuySlots: preBuy.stockingBuySlots,
   };
   const sells = sellWindows.map(window => toPlanned(window, packaging));
@@ -160,28 +188,26 @@ export function generatePlan(input: PlannerInput): PlanResult {
 /**
  * The sell passes: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts), then
  * defragmenting what the greedy scattered (sellConsolidation.ts). Adds to whatever the candidate schedule
- * already holds; returns the simulation and every slot selling afterwards (sellW is the source of truth
- * once consolidation has moved things).
+ * already holds; returns the simulation, every slot selling afterwards (sellW is the source of truth
+ * once consolidation has moved things) and how many too-short runs consolidation dropped.
  */
 function allocateSells(
   allocation: AllocationContext,
-  resultSoFar: SimResult,
-  notes: string[]
-): { result: SimResult; acceptedSell: number[] } {
+  resultSoFar: SimResult
+): { result: SimResult; acceptedSell: number[]; droppedShortRuns: number } {
   const { input, slots, sellW, buyW, valuation, feasibleVsBase } = allocation;
   const greedy = allocateSellsGreedily(allocation, resultSoFar);
   // Every slot selling now, so a second pass bridges valleys between its sells and the first pass's too
   const sellingSlots = slots.flatMap((slot, slotIndex) => (sellW[slotIndex] > 0 ? [slotIndex] : []));
   const bridged = bridgeSellValleys(allocation, greedy.result, sellingSlots);
   const consolidated = consolidateSellSlots(input, slots, sellW, buyW, valuation, feasibleVsBase, bridged);
-  if (consolidated.droppedShortRuns) {
-    notes.push(
-      `Dropped ${consolidated.droppedShortRuns} sell run(s) shorter than ${input.knobs.min_window_minutes} min and re-spent their budget`
-    );
-  }
   const acceptedSell: number[] = [];
   for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
-  return { result: consolidated.result, acceptedSell };
+  return { result: consolidated.result, acceptedSell, droppedShortRuns: consolidated.droppedShortRuns };
+}
+
+function droppedShortRunsNote(droppedShortRuns: number, knobs: PlannerInput["knobs"]): string {
+  return `Dropped ${droppedShortRuns} sell run(s) shorter than ${knobs.min_window_minutes} min and re-spent their budget`;
 }
 
 /**

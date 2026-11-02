@@ -5,7 +5,9 @@
  * math and season rules are covered by simulate.selftest.ts. Run from backend/ with:
  *   yarn node src/autoTrading/terminalValue.selftest.ts
  */
-import { generatePlan, projectWithFixedWindows } from "./planner.ts";
+import { buildSlots, generatePlan, projectWithFixedWindows } from "./planner.ts";
+import { simulate } from "./simulate.ts";
+import { bridgeSellValleys } from "./sellAllocation.ts";
 import { terminalValueSekPerKwh } from "./terminalValue.ts";
 import {
   baseKnobs,
@@ -230,6 +232,94 @@ import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts
       plan.buys.every(window => window.endMs <= gapStartMs || window.startMs >= gapEndMs) &&
       plan.buys.every(window => window.endMs - window.startMs >= HOUR_MS),
     `(${describeWindows(plan.buys)}: ${windowsKwh.toFixed(1)} vs ${plan.projection.plannedBuyKwh} kWh)`
+  );
+}
+
+// ---------- (g) The re-sell's valley bridging never sells on a planned buy quarter (PR #82 third review) ----------
+// The second sell pass runs with buys in place. A buy quarter in a short dip between two sells that buys nothing
+// (the battery is full there) costs nothing to cancel, so bridging over it pays: a sell and a buy window would
+// both be written for that quarter. The greedy and consolidation already skip buy quarters.
+{
+  const input: PlannerInput = {
+    nowMs: testDayStartMs,
+    prices: mkPrices(2, hour => (hour >= 0.5 && hour < 0.75 ? 0 : 3)),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 300,
+    parasiticWatts: 0,
+    socPercent: 100,
+    capacityWh: 65000,
+    constraintTailHours: 0,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: { ...baseKnobs, baseline_feed_watts: 0 },
+  };
+  const slots = buildSlots(input);
+  const sellW = slots.map((slot, slotIndex) => ([0, 1, 3, 4].includes(slotIndex) ? 1500 : 0));
+  const buyW = slots.map((slot, slotIndex) => (slotIndex === 2 ? 10000 : 0));
+  const valuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
+  const context = { input, slots, sellW, buyW, valuation, feasibleVsBase: () => true };
+  bridgeSellValleys(context, simulate(input, slots, sellW, buyW, valuation), [0, 1, 3, 4]);
+  check(
+    "bridging: a planned buy quarter between two sells stays unsold",
+    sellW[2] === 0 && buyW[2] === 10000,
+    `(sell ${sellW[2]} W, buy ${buyW[2]} W in the dip)`
+  );
+}
+
+// ---------- (h) With arbitrage off, energy the buy blocks bring in isn't sold at a later peak ----------
+// Selling it would be buying cheap to sell dear, which allow_arbitrage_buying switches off: the second sell pass
+// doesn't run, so the plan sells exactly what it would with no buying at all
+{
+  const arbitrageOff = withTerminalValue(lowBatteryBeforePeaksInput(), 0.64);
+  arbitrageOff.knobs = { ...arbitrageOff.knobs, allow_arbitrage_buying: false };
+  const plan = generatePlan(arbitrageOff);
+  const withoutBuying = generatePlan({ ...arbitrageOff, knobs: { ...arbitrageOff.knobs, max_buy_power_watts: 0 } });
+  const arbitrageOn = generatePlan(withTerminalValue(lowBatteryBeforePeaksInput(), 0.64));
+  check(
+    "arbitrage off: the buys change no sell (arbitrage on, the same plan sells the peaks)",
+    plan.buys.length > 0 &&
+      JSON.stringify(plan.sells) === JSON.stringify(withoutBuying.sells) &&
+      arbitrageOn.sells.some(window => window.avgSpot === 4.75),
+    `(sells ${describeWindows(plan.sells)} vs ${describeWindows(withoutBuying.sells)} without buying, ${describeWindows(arbitrageOn.sells)} with arbitrage; buys ${describeWindows(plan.buys)})`
+  );
+}
+
+// ---------- (i) A stocking block the second sell pass sells at a later peak reads as arbitrage ----------
+// 70 % SOC, a 0.01 SEK night and a 3.6 SEK hour tomorrow evening: the first sell pass can't spare the battery for
+// the peak, the night block stocks up, and the second pass sells it there
+{
+  const nightThenPeak = (socPercent: number) =>
+    generatePlan(
+      withTerminalValue(
+        {
+          ...cheapDayInput(),
+          prices: mkPrices(48, hour => (hour >= 40 && hour < 41 ? 3.6 : hour % 24 < 6 ? 0.01 : 0.6)),
+          socPercent,
+          knobs: { ...baseKnobs, allow_arbitrage_buying: true, min_window_minutes: 15 },
+        },
+        1.0
+      )
+    );
+  const resold = nightThenPeak(70);
+  check(
+    "re-sold stocking: the block the evening peak sells is labelled arbitrage, and the note says so",
+    resold.buys.length === 1 &&
+      resold.buys[0].reason.startsWith("arbitrage") &&
+      resold.sells.some(window => window.avgSpot === 3.6) &&
+      resold.notes.some(note => note.includes("that a later peak then sells")) &&
+      !resold.notes.some(note => note.startsWith("Stocking up")),
+    `(buys: ${resold.buys.map(window => window.reason).join(" | ")}; notes: ${resold.notes.join(" | ")})`
+  );
+  // At 90 % the first sell pass already sold the peak from what was in the battery: the block is stock
+  const kept = nightThenPeak(90);
+  check(
+    "re-sold stocking: a block the peak doesn't need keeps its stocking label",
+    kept.buys.length === 1 &&
+      kept.buys[0].reason.includes("stocking up") &&
+      kept.notes.some(note => note.startsWith("Stocking up")),
+    `(buys: ${kept.buys.map(window => window.reason).join(" | ")})`
   );
 }
 

@@ -46,10 +46,10 @@ export const PLANNER_KNOB_BOUNDS = {
   terminal_value_trailing_days: { defaultValue: 7, min: 1, max: 60, unit: "days", step: 1 },
   // The margin of the stocking-up block (buyAllocation.ts), the buy made with no import in sight, apart from
   // min_buy_saving_sek_per_kwh so the terminal value doesn't loosen import-averting and arbitrage buys. In
-  // the 2022-11 → 2026-11 backtest (both the actual load and the live forecast) every margin from 0.1 to 1 came
-  // within ~30 SEK per winter of leaving that block out, none ahead of it: the gain is in keeping energy and in
-  // the averting blocks. At 1 it only stocks up on an outsized gap (≈0 SEK spot against a ~1.5 SEK week) and
-  // scored as well as leaving it out. Past 2 it never stocks up.
+  // the 2022-11 → 2026-11 backtest (both the actual load and the live forecast) no margin came out ahead of
+  // leaving that block out: 0.4–1 within ~10 SEK per winter of it, 0.1–0.25 15–90 SEK behind. The gain is in
+  // keeping energy and in the averting blocks. At 1 it only stocks up on an outsized gap (≈0 SEK spot against a
+  // ~1.5 SEK week). Past 2 it never stocks up.
   terminal_value_min_saving_sek_per_kwh: { defaultValue: 1, min: 0, max: 2, unit: "SEK", step: 0.05 },
 } as const satisfies Record<BoundedPlannerKnobName, PlannerKnobBounds>;
 

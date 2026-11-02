@@ -114,7 +114,9 @@ export function bridgeSellValleys(
       if (slots[after].startMs - slots[before].endMs !== gapSlots * SLOT_MS) continue;
       const fillable: number[] = [];
       for (let j = before + 1; j < after; j++) {
-        if (sellW[j] > 0 || !slotTradableForSell(slots[j], input.sellVetoWindows)) {
+        // A planned buy quarter (the terminal value's second sell pass runs with buys in place) stays one: a sell
+        // would win it in the simulation, but both windows would be written
+        if (sellW[j] > 0 || buyW[j] > 0 || !slotTradableForSell(slots[j], input.sellVetoWindows)) {
           fillable.length = 0;
           break;
         }
