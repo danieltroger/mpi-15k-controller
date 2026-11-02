@@ -23,7 +23,7 @@ export async function fetchLiveRadiation(
     forecast_days: String(forecastDays),
     timezone: "UTC",
   });
-  return parseOpenMeteoHourly(await fetchJson(`${FORECAST_API}?${params}`));
+  return parseOpenMeteoHourly(await fetchOpenMeteoJson(`${OPEN_METEO_FORECAST_API}?${params}`));
 }
 
 export type RadiationArchiveSource = "satellite" | "forecast_archive";
@@ -65,7 +65,7 @@ export async function fetchRadiationArchiveColumns(input: {
   return columns;
 }
 
-const FORECAST_API = "https://api.open-meteo.com/v1/forecast";
+export const OPEN_METEO_FORECAST_API = "https://api.open-meteo.com/v1/forecast";
 const HISTORICAL_FORECAST_API = "https://historical-forecast-api.open-meteo.com/v1/forecast";
 const SATELLITE_API = "https://satellite-api.open-meteo.com/v1/archive";
 /** Generous: this pi's CPU is often pegged (SOC worker), which slows TLS and the event loop */
@@ -106,7 +106,7 @@ async function fetchArchiveMonth(input: {
   });
   if (input.source === "satellite") params.set("models", "eumetsat_sarah3");
   const base = input.source === "satellite" ? SATELLITE_API : HISTORICAL_FORECAST_API;
-  const hours = parseOpenMeteoHourly(await fetchJson(`${base}?${params}`));
+  const hours = parseOpenMeteoHourly(await fetchOpenMeteoJson(`${base}?${params}`));
   if (final) {
     const cached: CachedMonth = { fetched_at: new Date(nowMs).toISOString(), hours };
     await fs_promises.mkdir(CACHE_DIRECTORY, { recursive: true });
@@ -134,8 +134,11 @@ async function readCachedMonth(cachePath: string): Promise<CachedMonth | undefin
   }
 }
 
-/** One retry after a pause: a single dropped connection shouldn't push a whole refit onto the fallback source */
-async function fetchJson(url: string): Promise<unknown> {
+/**
+ * One retry after a pause: a single dropped connection shouldn't push a whole refit onto the fallback
+ * source, nor cost the planner a day's price outlook (priceOutlookWeather.ts)
+ */
+export async function fetchOpenMeteoJson(url: string): Promise<unknown> {
   try {
     return await fetchJsonOnce(url);
   } catch (firstError) {
