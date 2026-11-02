@@ -8,6 +8,9 @@
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import type { HorizonValuation, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
+/** A buy slot grid-charges only while the battery starts it below this share of its capacity */
+export const GRID_CHARGE_UP_TO_SOC_FRACTION = 0.98;
+
 export function simulate(
   input: PlannerInput,
   slots: Slot[],
@@ -59,7 +62,7 @@ export function simulate(
     let gridChargeW = 0;
     let slotImportWh = 0;
 
-    if (buySetW > 0 && socWh < cap * 0.98) {
+    if (buySetW > 0 && socWh < cap * GRID_CHARGE_UP_TO_SOC_FRACTION) {
       // AC charging: battery charges from grid, house is fed from grid too
       gridChargeW = buySetW;
       slotImportWh +=

@@ -18,8 +18,9 @@ import { SLOT_MS } from "./slotDuration.ts";
 import type { AllocationContext, SimResult } from "./planner.types.ts";
 
 /**
- * Greedy sell allocation, highest spot first, starting from the no-trade projection (base). Leaves
- * each accepted slot's power in context.sellW and returns the accepted slots with their simulation.
+ * Greedy sell allocation, highest spot first, starting from the given projection (the no-trade one,
+ * or with the terminal value the plan after its buys). Leaves each accepted slot's power in
+ * context.sellW and returns the accepted slots with their simulation.
  */
 export function allocateSellsGreedily(
   context: AllocationContext,
@@ -30,7 +31,12 @@ export function allocateSellsGreedily(
   const sellCandidates = slots
     .map((slot, slotIndex) => ({ slot, slotIndex }))
     .filter(
-      ({ slot }) => slotTradableForSell(slot, input.sellVetoWindows) && slot.spot! >= knobs.min_sell_spot_sek_per_kwh
+      // Free of sells and buys: a second run with the terminal value (planner.ts) starts from an allocated plan
+      ({ slot, slotIndex }) =>
+        slotTradableForSell(slot, input.sellVetoWindows) &&
+        slot.spot! >= knobs.min_sell_spot_sek_per_kwh &&
+        sellW[slotIndex] === 0 &&
+        buyW[slotIndex] === 0
     )
     .sort((pricier, cheaper) => cheaper.slot.spot! - pricier.slot.spot!);
 

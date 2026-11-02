@@ -177,6 +177,62 @@ import type { PlannedWindow, PlannerInput, PlanResult } from "./planner.types.ts
   );
 }
 
+// ---------- (e) On, the buy blocks don't starve the sells (PR #82 re-review) ----------
+// A third-full battery, a cheap night, a 4.75 SEK morning hour and a 3.85 SEK evening, p̂ 0.64 (V 1.92). The
+// sells were allocated against the emptier no-buy trajectory, which could spare nothing; the night block then
+// filled the battery and nothing sold it: the plan kept 4.75 SEK energy worth 1.92 SEK. Off, the cheapest-first
+// pre-buy and arbitrage pairs sell both peaks.
+{
+  const input = withTerminalValue(lowBatteryBeforePeaksInput(), 0.64);
+  const on = generatePlan(input);
+  const off = generatePlan({ ...input, knobs: { ...input.knobs, terminal_value_mode: "off" } });
+  const asFixed = (windows: PlannedWindow[]) =>
+    windows.map(window => ({ startMs: window.startMs, endMs: window.endMs, watts: window.watts }));
+  const offUnderOn = projectWithFixedWindows({
+    ...input,
+    fixedSells: asFixed(off.sells),
+    fixedBuys: asFixed(off.buys),
+  });
+  const onValueSek = on.projection.estimatedRevenueSek + (on.projection.endEnergyValueSek ?? 0);
+  check(
+    "peaks after the buys: on, the 4.75 SEK hour is sold",
+    on.sells.some(window => window.avgSpot === 4.75),
+    `(sells ${describeWindows(on.sells)}, buys ${describeWindows(on.buys)})`
+  );
+  check(
+    "peaks after the buys: on does at least as well as the off plan judged its way",
+    onValueSek >= offUnderOn.revenueSek + offUnderOn.endEnergyValueSek - 0.5,
+    `(${onValueSek.toFixed(1)} vs ${(offUnderOn.revenueSek + offUnderOn.endEnergyValueSek).toFixed(1)} SEK)`
+  );
+}
+
+// ---------- (f) A buy block never straddles a hole in the price feed (PR #82 re-review) ----------
+// Across a missing half hour, a 60-min block split into two 30-min chains, one too short to be written, which
+// the projection still counted
+{
+  const cheapDay = cheapDayInput();
+  const gapStartMs = testDayStartMs + 46.75 * HOUR_MS;
+  const gapEndMs = gapStartMs + 0.5 * HOUR_MS;
+  const withGap = withTerminalValue(
+    {
+      ...cheapDay,
+      prices: cheapDay.prices.filter(price => price.startMs < gapStartMs || price.startMs >= gapEndMs),
+      knobs: { ...cheapDay.knobs, min_window_minutes: 60 },
+    },
+    1.0
+  );
+  const plan = generatePlan(withGap);
+  const windowsKwh = plan.buys.reduce((sum, window) => sum + window.expectedKwh, 0);
+  check(
+    "price-feed hole: the windows buy what the projection counts, none straddles it",
+    plan.buys.length > 0 &&
+      Math.abs(windowsKwh - plan.projection.plannedBuyKwh) < 0.05 &&
+      plan.buys.every(window => window.endMs <= gapStartMs || window.startMs >= gapEndMs) &&
+      plan.buys.every(window => window.endMs - window.startMs >= HOUR_MS),
+    `(${describeWindows(plan.buys)}: ${windowsKwh.toFixed(1)} vs ${plan.projection.plannedBuyKwh} kWh)`
+  );
+}
+
 finishSelftest();
 
 /** Planning at 13:00 with tomorrow's prices: ~0 SEK all the way, 80 % SOC, a dark, frugal house */
@@ -250,6 +306,47 @@ function userWindowsAroundAPeakInput(): PlannerInput {
       baseline_feed_watts: 0,
       sell_ramp_minutes: 10,
       fragmentation_tolerance_sek_per_window: 0.2,
+    },
+  };
+}
+
+/**
+ * Planning at midnight: 33 % SOC, a cheap night (−0.08…0.28 SEK), 4.75 SEK at 07–08, 3.85 at 17–20, 1.0 otherwise;
+ * a dark house at 1 kW (the PR #82 re-review's shape, at live-like knobs with 10 kW buys and 60-min windows)
+ */
+function lowBatteryBeforePeaksInput(): PlannerInput {
+  const nightPrices = [0.02, 0.28, 0.05, 0.07, -0.08, 0.19];
+  return {
+    nowMs: testDayStartMs,
+    prices: mkPrices(24, hour => {
+      const wholeHour = Math.floor(hour);
+      if (wholeHour < 6) return nightPrices[wholeHour];
+      if (wholeHour === 6) return 1.04;
+      if (wholeHour === 7) return 4.75;
+      return wholeHour >= 17 && wholeHour < 20 ? 3.85 : 1.0;
+    }),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 1000,
+    parasiticWatts: 200,
+    socPercent: 33,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: {
+      ...baseKnobs,
+      planner_soc_floor_percent: 10,
+      planner_soc_floor_sunny_percent: 5,
+      runtime_soc_floor_percent: 13,
+      min_gain_sek_per_slot: 0.05,
+      min_window_minutes: 60,
+      min_buy_saving_sek_per_kwh: 0.25,
+      sell_ramp_minutes: 10,
+      allow_arbitrage_buying: true,
+      fragmentation_tolerance_sek_per_window: 0.2,
+      terminal_value_min_saving_sek_per_kwh: 1,
     },
   };
 }

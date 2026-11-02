@@ -124,18 +124,18 @@ function areaHistory(area: string): AreaHistory {
   return history;
 }
 
-/** fn over every item, at most `limit` at a time, results in the items' order */
+/** mapItem over every item, at most `limit` at a time, results in the items' order */
 async function mapWithConcurrency<Item, Result>(
   items: Item[],
   limit: number,
-  fn: (item: Item) => Promise<Result>
+  mapItem: (item: Item) => Promise<Result>
 ): Promise<Result[]> {
   const results: Result[] = new Array(items.length);
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (nextIndex < items.length) {
       const itemIndex = nextIndex++;
-      results[itemIndex] = await fn(items[itemIndex]);
+      results[itemIndex] = await mapItem(items[itemIndex]);
     }
   });
   await Promise.all(workers);

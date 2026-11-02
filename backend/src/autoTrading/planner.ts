@@ -23,8 +23,9 @@
  * covers the house. The accepted slots are finally merged into schedule windows (planWindows.ts).
  *
  * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
- * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying can stock
- * up for after the horizon, and the unpriced tail is priced at the expected spot where that is higher.
+ * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying goes in
+ * blocks and can stock up for after the horizon, the sells get a second pass once the buys have filled the
+ * battery, and the unpriced tail is priced at the expected spot where that is higher.
  */
 
 import { simulate } from "./simulate.ts";
@@ -72,30 +73,20 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const base = simulate(input, slots, sellW, buyW, valuation);
   const feasibleVsBase = (result: SimResult) => result.violationWh <= base.violationWh + 1;
 
-  // ---- Sell allocation: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts) ----
+  // ---- Sell allocation (sellAllocation.ts, sellConsolidation.ts), then pre-buying against unavoidable
+  // imports and, with a terminal value, stocking up (buyAllocation.ts) ----
   const allocation: AllocationContext = { input, slots, sellW, buyW, valuation, feasibleVsBase };
-  const greedy = allocateSellsGreedily(allocation, base);
-  let current = greedy.result;
-  const acceptedSell = greedy.acceptedSell;
-  current = bridgeSellValleys(allocation, current, acceptedSell);
-
-  // Defragment what the greedy scattered (see sellConsolidation.ts) — sellW is the source of
-  // truth afterwards, so rebuild the accepted list from it
-  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, valuation, feasibleVsBase, current);
-  current = consolidated.result;
-  if (consolidated.droppedShortRuns) {
-    notes.push(
-      `Dropped ${consolidated.droppedShortRuns} sell run(s) shorter than ${knobs.min_window_minutes} min and re-spent their budget`
-    );
-  }
-  acceptedSell.length = 0;
-  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
-
-  // ---- Buy allocation: pre-buying against unavoidable imports (and stocking up with a terminal value),
-  // then arbitrage pairs (buyAllocation.ts) ----
+  let { result: current, acceptedSell } = allocateSells(allocation, base, notes);
   const preBuy = preBuyAtCheapHours(allocation, current, notes);
   current = preBuy.result;
   const acceptedBuy = preBuy.acceptedBuy;
+  if (valuation.endEnergySekPerKwh > 0 && acceptedBuy.length) {
+    // The sells were allocated against the emptier trajectory before the buys; with the battery fuller now,
+    // a peak can pay for energy the buy blocks brought in (and arbitrage can't pair it: they hold the cheap slots)
+    ({ result: current, acceptedSell } = allocateSells(allocation, current, notes));
+  }
+
+  // ---- Arbitrage pairs (buyAllocation.ts) ----
   const arbitrage = allocateArbitragePairs(allocation, current, acceptedSell, acceptedBuy, notes);
   current = arbitrage.result;
 
@@ -164,6 +155,33 @@ export function generatePlan(input: PlannerInput): PlanResult {
   }));
 
   return { sells, buys, notes, projection, socSeries };
+}
+
+/**
+ * The sell passes: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts), then
+ * defragmenting what the greedy scattered (sellConsolidation.ts). Adds to whatever the candidate schedule
+ * already holds; returns the simulation and every slot selling afterwards (sellW is the source of truth
+ * once consolidation has moved things).
+ */
+function allocateSells(
+  allocation: AllocationContext,
+  resultSoFar: SimResult,
+  notes: string[]
+): { result: SimResult; acceptedSell: number[] } {
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = allocation;
+  const greedy = allocateSellsGreedily(allocation, resultSoFar);
+  // Every slot selling now, so a second pass bridges valleys between its sells and the first pass's too
+  const sellingSlots = slots.flatMap((slot, slotIndex) => (sellW[slotIndex] > 0 ? [slotIndex] : []));
+  const bridged = bridgeSellValleys(allocation, greedy.result, sellingSlots);
+  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, valuation, feasibleVsBase, bridged);
+  if (consolidated.droppedShortRuns) {
+    notes.push(
+      `Dropped ${consolidated.droppedShortRuns} sell run(s) shorter than ${input.knobs.min_window_minutes} min and re-spent their budget`
+    );
+  }
+  const acceptedSell: number[] = [];
+  for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
+  return { result: consolidated.result, acceptedSell };
 }
 
 /**
