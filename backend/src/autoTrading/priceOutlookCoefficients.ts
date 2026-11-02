@@ -11,7 +11,7 @@ import type { OutlookLeadDays, OutlookTemperaturePointName, OutlookWindPointName
  * Oct 2024–Mar 2025), against analysis weather (no forecast error) and elprisetjustnu SE3 daily
  * means. Out of sample (Oct 2025–Mar 2026 + Oct 2026, 210 issue days, real forecasts), for the mean
  * of D+2…D+4: MAE 0.17 vs 0.32 SEK/kWh for persistence, Spearman 0.81 vs 0.50, AUC for > 1 SEK 0.90
- * vs 0.76. Summer was never fitted or validated.
+ * vs 0.76. Summer was never fitted or validated, hence isOutlookFittedForIssueDate.
  *
  * SE3-specific: the intercepts, the log offset and the reversion strength encode SE3's price level
  * and dynamics. Another area needs its own fit, hence isOutlookAvailableForArea. Changing a site, a
@@ -64,6 +64,22 @@ export const SE3_OUTLOOK_COEFFICIENTS: Record<OutlookLeadDays, OutlookLeadCoeffi
 export function isOutlookAvailableForArea(area: string): boolean {
   return area === "SE3";
 }
+
+/**
+ * Whether the issue date (YYYY-MM-DD) falls in the months the model was fitted and validated on.
+ * Outside them the outlook still computes, but nothing backs its skill: the study's summer check had
+ * its high bands reading high (predicted 1.0–1.3 averaged 0.97 actual). Callers gate on this or
+ * trust the outlook less.
+ */
+export function isOutlookFittedForIssueDate(issueDate: string): boolean {
+  return OUTLOOK_FITTED_MONTHS.includes(Number(issueDate.slice(5, 7)));
+}
+
+/** Calendar months of the training and out-of-sample issue days: October–March */
+export const OUTLOOK_FITTED_MONTHS: readonly number[] = [10, 11, 12, 1, 2, 3];
+
+/** The pull's trailing mean covers the 30 daily means D−28…D+1 */
+export const OUTLOOK_TRAILING_DAYS = 30;
 
 /** Each term multiplies its D+1 → D+k change and adds to log(spot(D+k) + offset) − log(spot(D+1) + offset) */
 export type OutlookLeadCoefficients = {

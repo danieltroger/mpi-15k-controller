@@ -92,8 +92,10 @@ function pointSamples(entry: unknown, index: number, variable: string): HourlyWe
   if (!isRecord(entry) || !isRecord(entry.hourly)) {
     throw new Error(`point ${index} (${REQUEST_POINT_NAMES[index]}) has no hourly section`);
   }
-  // open-meteo numbers multi-location replies; a reordered reply must not swap two sites
-  if (entry.location_id !== undefined && entry.location_id !== index) {
+  // open-meteo numbers multi-location replies, all but the first entry (which it sends without a
+  // location_id): requiring the ids keeps a reordered or unnumbered reply from swapping two sites
+  const locationIdMatches = entry.location_id === index || (index === 0 && entry.location_id === undefined);
+  if (!locationIdMatches) {
     throw new Error(`point ${index} (${REQUEST_POINT_NAMES[index]}) came back as location_id ${entry.location_id}`);
   }
   const times = entry.hourly.time;

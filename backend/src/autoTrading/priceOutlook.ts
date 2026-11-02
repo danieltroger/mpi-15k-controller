@@ -1,5 +1,6 @@
 import { addDays, isNonWorkingDay, stockholmDateOf } from "./priceOutlookCalendar.ts";
 import {
+  isOutlookFittedForIssueDate,
   OUTLOOK_LOG_PRICE_FLOOR,
   OUTLOOK_LOG_PRICE_OFFSET,
   OUTLOOK_TEMPERATURE_POINTS,
@@ -27,9 +28,10 @@ import type {
  * day starts from the known D+1 mean and moves with the forecast change in wind output, temperature
  * and working-day status from D+1 to that day, plus a pull toward the trailing 30-day mean.
  *
- * Pure: the caller owns the price history and passes the two means in; days are Europe/Stockholm
- * calendar days. Unavailable (with the reason) rather than a guess when the weather doesn't cover
- * D+1…D+6 or a price is missing.
+ * Pure: the caller owns the price history and passes the two means in (priceOutlookInputs.ts derives
+ * the issue date and the trailing mean); days are Europe/Stockholm calendar days. Unavailable (with
+ * the reason) rather than a guess when the weather doesn't cover D+1…D+6 or a price is missing. An
+ * issue date outside the fitted October–March still predicts, flagged by withinFittedSeason.
  */
 export function predictDailyMeanSpots(input: {
   weather: OutlookWeather;
@@ -76,6 +78,7 @@ export function predictDailyMeanSpots(input: {
     available: true,
     outlook: {
       issueDate,
+      withinFittedSeason: isOutlookFittedForIssueDate(issueDate),
       dayAheadMeanSpot,
       trailing30DayMeanSpot,
       dayAheadWeather,

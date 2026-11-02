@@ -55,6 +55,8 @@ export type OutlookDay = OutlookDayWeather & {
 export type PriceOutlook = {
   /** YYYY-MM-DD, Europe/Stockholm: the day whose auction has published D+1 */
   issueDate: string;
+  /** Whether issueDate is in the model's fitted months (October–March); outside them nothing backs its skill */
+  withinFittedSeason: boolean;
   /** Known mean spot of D+1, SEK/kWh */
   dayAheadMeanSpot: number;
   /** Mean of the 30 daily means D−28…D+1, SEK/kWh */

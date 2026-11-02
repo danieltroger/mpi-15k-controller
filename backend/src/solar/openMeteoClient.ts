@@ -136,7 +136,7 @@ async function readCachedMonth(cachePath: string): Promise<CachedMonth | undefin
 
 /**
  * One retry after a pause: a single dropped connection shouldn't push a whole refit onto the fallback
- * source, nor cost the planner a day's price outlook (priceOutlookWeather.ts)
+ * source, or cost any caller its forecast
  */
 export async function fetchOpenMeteoJson(url: string): Promise<unknown> {
   try {

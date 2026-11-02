@@ -1,5 +1,5 @@
 {
-  "source": "Hourly open-meteo weather for D+1..D+6 (144 h from first_hour_ms, CET) per issue day D, in the shape the live call yields. Study issue days are stitched from the winter study's previous-runs cache (previous-runs-api, timezone Europe/Stockholm, utc_offset 3600): D+1 from *_previous_day2, D+k from *_previous_day{k+1}, the lead choice of issue_days.py. 2026-11-02 is the study's live latest-run response (live_now.py), unstitched. Wind: wind_speed_100m m/s; temperature: temperature_2m degC.",
+  "source": "Hourly open-meteo weather for D+1..D+6 (144 h from first_hour_ms, CET) per issue day D, in the shape the live call yields. Study issue days are stitched from the winter study's previous-runs cache (previous-runs-api, timezone Europe/Stockholm, utc_offset 3600): D+1 from *_previous_day2, D+k from *_previous_day{k+1}, the lead choice of issue_days.py. 2026-11-02 is the study's live latest-run response (live_now.py), unstitched. Wind: wind_speed_100m m/s; temperature: temperature_2m degC. 2026-10-24 also has hour_before_first: 2026-10-24T22:00Z (00:00 CEST, the first hour of the 25 h Stockholm day 2026-10-25, which the study's CET labels put on 10-24), from the D+1 column *_previous_day2.",
   "issue_days": {
     "2025-12-22": {
       "wind_speed_100m": {
@@ -369,7 +369,20 @@
           7.1, 6.9, 6.7, 6.6, 6.8, 7.4, 8.4, 9.5, 10.6, 11.3, 9.4, 9.2, 8.3, 7.2, 5.9, 4.8, 4.2, 4.0, 4.0, 4.2, 4.4
         ]
       },
-      "first_hour_ms": 1792882800000
+      "first_hour_ms": 1792882800000,
+      "hour_before_first": {
+        "wind_speed_100m": {
+          "DK1_west": 17.27,
+          "DE_north": 17.4,
+          "DE_northsea_off": 27.1,
+          "Baltic_off": 15.23,
+          "SE4_skane": 12.31,
+          "SE3_halland": 15.05,
+          "SE2_central": 8.52,
+          "SE1_markbygden": 5.32
+        },
+        "temperature_2m": { "Stockholm": 9.3, "Goteborg": 10.0, "Orebro": 7.6 }
+      }
     },
     "2026-10-25": {
       "wind_speed_100m": {

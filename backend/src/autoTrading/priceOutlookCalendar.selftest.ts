@@ -1,11 +1,11 @@
 /**
  * Self-test of the price outlook's calendar (priceOutlookCalendar.ts): the study's weekends and
- * holidays, date arithmetic, and Europe/Stockholm day bucketing across the DST switches, where a
- * day has 23 or 25 forecast hours. Run from backend/ with:
+ * holidays, date arithmetic, Europe/Stockholm day bucketing across the DST switches, where a day
+ * has 23 or 25 forecast hours, and the fitted-season flag on a summer outlook. Run from backend/ with:
  *   yarn node src/autoTrading/priceOutlookCalendar.selftest.ts
  */
 import process from "process";
-import { dailyMeansByStockholmDate, dailyOutlookWeather } from "./priceOutlook.ts";
+import { dailyMeansByStockholmDate, dailyOutlookWeather, predictDailyMeanSpots } from "./priceOutlook.ts";
 import { addDays, easterSunday, isNonWorkingDay, stockholmDateOf } from "./priceOutlookCalendar.ts";
 import { OUTLOOK_TEMPERATURE_POINTS, OUTLOOK_WIND_POINTS } from "./priceOutlookCoefficients.ts";
 import type {
@@ -116,6 +116,23 @@ const TEMPERATURE_POINT_NAMES = Object.keys(OUTLOOK_TEMPERATURE_POINTS) as Outlo
     "dst: 23 h and 25 h days count as complete model days",
     switchDays.has("2026-10-25") &&
       dailyOutlookWeather(uniformWeather(hourlySamples("2026-03-27T23:00:00Z", 71, () => 7.5))).has("2026-03-29")
+  );
+}
+
+// ---------- outside the fitted months ----------
+{
+  // June 1 00:00 CEST onwards, 8 days: covers D+1…D+6 of a June 1 issue
+  const summerWeather = uniformWeather(hourlySamples("2026-05-31T22:00:00Z", 8 * 24, () => 7.5));
+  const summer = predictDailyMeanSpots({
+    weather: summerWeather,
+    issueDate: "2026-06-01",
+    dayAheadMeanSpot: 0.5,
+    trailing30DayMeanSpot: 0.5,
+  });
+  check(
+    "season: a June issue date still predicts, flagged as outside the fitted months",
+    summer.available && !summer.outlook.withinFittedSeason,
+    `(${summer.available ? `withinFittedSeason ${summer.outlook.withinFittedSeason}` : summer.reason})`
   );
 }
 
