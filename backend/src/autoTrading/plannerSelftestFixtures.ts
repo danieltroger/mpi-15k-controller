@@ -1,11 +1,13 @@
 /**
  * What the planner-family selftests (planner, simulate, reducedSellPower, plannerKnobBounds) share: a
- * midnight-aligned clock, 15-min price series, the scenarios' base knobs and a pass/fail tally. Not a
- * selftest itself; each selftest runs in its own process, so the tally is per file.
+ * midnight-aligned clock, 15-min price series, the scenarios' base knobs, the terminal value switched on
+ * or out of season, and a pass/fail tally. Not a selftest itself; each selftest runs in its own process,
+ * so the tally is per file.
  */
 import process from "process";
 import { SLOT_MS } from "./planner.ts";
-import type { PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
+import { stockholmMonth } from "./terminalValue.ts";
+import type { PlannerInput, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 
 export const HOUR_MS = 3600_000;
 
@@ -37,7 +39,32 @@ export const baseKnobs: PlannerKnobs = {
   allow_arbitrage_buying: false,
   planner_soc_floor_sunny_percent: 20,
   fragmentation_tolerance_sek_per_window: 0,
+  // Off, like the config default: end-of-plan energy is worth nothing (terminalValue.ts)
+  terminal_value_mode: "off",
+  terminal_value_scale: 0.9,
+  terminal_value_trailing_days: 7,
+  terminal_value_months: "10,11,12,1,2,3",
 };
+
+/** Every month: a terminal-value scenario is in season whatever day the selftest runs on */
+export const EVERY_MONTH = "1,2,3,4,5,6,7,8,9,10,11,12";
+
+/** The input with the terminal value on (the trailing source) at the given expected spot */
+export function withTerminalValue(input: PlannerInput, expectedSpot: number, months = EVERY_MONTH): PlannerInput {
+  return {
+    ...input,
+    expectedSpot: { expectedSpot, source: "trailing", detail: "7-day mean spot" },
+    knobs: { ...input.knobs, terminal_value_mode: "trailing", terminal_value_months: months },
+  };
+}
+
+/** terminal_value_months without the month (Swedish time) ms falls in: on, but out of season */
+export function everyMonthExcept(ms: number): string {
+  const excluded = stockholmMonth(ms);
+  return EVERY_MONTH.split(",")
+    .filter(month => Number(month) !== excluded)
+    .join(",");
+}
 
 /** 15-min spot prices from testDayStartMs for the given number of hours */
 export function mkPrices(hours: number, priceAtHour: (hour: number) => number): PriceSlot15[] {

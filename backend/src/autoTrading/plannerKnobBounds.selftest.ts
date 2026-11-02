@@ -11,6 +11,8 @@ import { check, finishSelftest } from "./plannerSelftestFixtures.ts";
 const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: number; tooHigh: number }[] = [
   { knobName: "min_sell_power_watts", inBounds: 2000, tooLow: 300, tooHigh: 20000 },
   { knobName: "fragmentation_tolerance_sek_per_window", inBounds: 0.35, tooLow: -0.5, tooHigh: 5 },
+  { knobName: "terminal_value_scale", inBounds: 1.0, tooLow: -0.2, tooHigh: 2 },
+  { knobName: "terminal_value_trailing_days", inBounds: 14, tooLow: 0, tooHigh: 90 },
 ];
 
 for (const { knobName, inBounds, tooLow, tooHigh } of CASES) {

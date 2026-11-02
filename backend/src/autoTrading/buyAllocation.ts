@@ -2,57 +2,82 @@
  * The planner's buy passes (called by generatePlan after sell consolidation). Buying costs far more
  * per kWh than selling earns (planner.ts's economics), so a buy is only accepted when the extra kWh it
  * brings in save at least min_buy_saving_sek_per_kwh each: first by pre-buying at the cheapest hours to
- * avert a projected unavoidable import, then — when allow_arbitrage_buying is on — by buying cheap
- * purely to re-sell at a later peak, trialled as buy/sell pairs. Both trial on the candidate schedule
- * in place.
+ * avert a projected unavoidable import or, with a terminal value, to stock up for after the horizon,
+ * then — when allow_arbitrage_buying is on — by buying cheap purely to re-sell at a later peak,
+ * trialled as buy/sell pairs. Both trial on the candidate schedule in place.
  */
 
 import { overlapsVeto, simulate } from "./simulate.ts";
+import { mergeAcceptedSlots } from "./planWindows.ts";
 import type { AllocationContext, SimResult } from "./planner.types.ts";
 
 /**
- * Buy allocation, pass 1: avert projected unavoidable imports, cheapest slots first. Leaves each
- * accepted buy's power in context.buyW and returns the accepted slots with their simulation.
+ * Buy allocation, pass 1, cheapest slots first: avert projected unavoidable imports and, when the plan
+ * has a terminal value (terminalValue.ts), stock up for after the horizon — a kWh kept past the plan
+ * saves a later import even when the priced horizon shows none, so the pass then keeps going after the
+ * import is averted. Leaves each accepted buy's power in context.buyW and returns the accepted slots
+ * with their simulation, and which of them were bought with no import left to avert (stocking up).
  */
-export function preBuyAgainstUnavoidableImport(
+export function preBuyAtCheapHours(
   context: AllocationContext,
   resultSoFar: SimResult,
   notes: string[]
-): { result: SimResult; acceptedBuy: number[] } {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+): { result: SimResult; acceptedBuy: number[]; stockingBuySlots: Set<number> } {
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   let current = resultSoFar;
   const acceptedBuy: number[] = [];
-  if (current.importWh > 500 && knobs.max_buy_power_watts > 0) {
+  const stockingBuySlots = new Set<number>();
+  const stockingUp = valuation.endEnergySekPerKwh > 0;
+  if (!(current.importWh > 500 || stockingUp) || knobs.max_buy_power_watts <= 0) {
+    return { result: current, acceptedBuy, stockingBuySlots };
+  }
+  if (current.importWh > 500) {
     notes.push(
       `Projected unavoidable import of ${(current.importWh / 1000).toFixed(1)} kWh — evaluating pre-buying at cheap hours`
     );
-    const buyCandidates = slots
-      .map((slot, slotIndex) => ({ slot, slotIndex }))
-      .filter(
-        ({ slot, slotIndex }) =>
-          slot.spot !== undefined &&
-          slot.fixedSellW === 0 &&
-          sellW[slotIndex] === 0 &&
-          !overlapsVeto(slot, input.buyVetoWindows)
-      )
-      .sort((cheaper, pricier) => cheaper.slot.spot! - pricier.slot.spot!);
-    for (const { slotIndex } of buyCandidates) {
-      if (sellW[slotIndex] > 0) continue;
-      buyW[slotIndex] = knobs.max_buy_power_watts;
-      const trial = simulate(input, slots, sellW, buyW, tailSpot);
-      const gain = trial.revenueSek - current.revenueSek;
-      const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
-      if (feasibleVsBase(trial) && extraBoughtKwh > 0 && gain / extraBoughtKwh >= knobs.min_buy_saving_sek_per_kwh) {
-        current = trial;
-        acceptedBuy.push(slotIndex);
-      } else {
-        buyW[slotIndex] = 0;
-      }
-      if (current.importWh < 500) break;
-    }
   }
-  return { result: current, acceptedBuy };
+  const buyCandidates = slots
+    .map((slot, slotIndex) => ({ slot, slotIndex }))
+    .filter(
+      ({ slot, slotIndex }) =>
+        slot.spot !== undefined &&
+        slot.fixedSellW === 0 &&
+        sellW[slotIndex] === 0 &&
+        !overlapsVeto(slot, input.buyVetoWindows)
+    )
+    .sort((cheaper, pricier) => cheaper.slot.spot! - pricier.slot.spot!);
+  for (const { slotIndex } of buyCandidates) {
+    if (sellW[slotIndex] > 0) continue;
+    // importWh also counts what the accepted buys draw, so the import left to avert is the shortfall
+    const boughtToStockUp = stockingUp && current.shortfallImportWh <= 500;
+    buyW[slotIndex] = knobs.max_buy_power_watts;
+    const trial = simulate(input, slots, sellW, buyW, valuation);
+    const gain = trial.revenueSek - current.revenueSek;
+    const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
+    if (feasibleVsBase(trial) && extraBoughtKwh > 0 && gain / extraBoughtKwh >= knobs.min_buy_saving_sek_per_kwh) {
+      current = trial;
+      acceptedBuy.push(slotIndex);
+      if (boughtToStockUp) stockingBuySlots.add(slotIndex);
+    } else {
+      buyW[slotIndex] = 0;
+    }
+    // Stocking up has no import to run out of: it tries every candidate, keeping each one that pays
+    if (current.shortfallImportWh < 500 && !stockingUp) break;
+  }
+  if (dropUnwritableStockingSlots(context, acceptedBuy, stockingBuySlots)) {
+    current = simulate(input, slots, sellW, buyW, valuation);
+  }
+  const stockedKwh = [...stockingBuySlots].reduce(
+    (sum, slotIndex) => sum + (buyW[slotIndex] * slots[slotIndex].durationH) / 1000,
+    0
+  );
+  if (stockedKwh > 0) {
+    notes.push(
+      `Stocking up ~${stockedKwh.toFixed(1)} kWh at cheap hours for after the horizon — end-of-plan energy is worth ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh`
+    );
+  }
+  return { result: current, acceptedBuy, stockingBuySlots };
 }
 
 /**
@@ -69,7 +94,7 @@ export function allocateArbitragePairs(
   acceptedBuy: number[],
   notes: string[]
 ): { result: SimResult; arbitrageBuySlots: Set<number> } {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   let current = resultSoFar;
   const arbitrageBuySlots = new Set<number>();
@@ -119,7 +144,7 @@ export function allocateArbitragePairs(
       for (const { slotIndex: sellIndex } of sellPool.slice(0, 3)) {
         for (const buyIndex of buyGroup) buyW[buyIndex] = knobs.max_buy_power_watts;
         sellW[sellIndex] = knobs.max_sell_power_watts;
-        const trial = simulate(input, slots, sellW, buyW, tailSpot);
+        const trial = simulate(input, slots, sellW, buyW, valuation);
         const gain = trial.revenueSek - current.revenueSek;
         const extraBoughtKwh = (trial.boughtWh - current.boughtWh) / 1000;
         if (
@@ -157,6 +182,30 @@ export function allocateArbitragePairs(
     }
   }
   return { result: current, arbitrageBuySlots };
+}
+
+/**
+ * Stocking up tops the battery up again each time the house has drained a quarter's worth, in single
+ * quarters. Ones that don't join a run of min_window_minutes are never written (mergeAcceptedSlots drops
+ * them), so they leave the candidate schedule too: the projection mustn't count energy no window buys.
+ * Returns whether any was dropped (the caller re-simulates).
+ */
+function dropUnwritableStockingSlots(
+  context: AllocationContext,
+  acceptedBuy: number[],
+  stockingBuySlots: Set<number>
+): boolean {
+  const { slots, buyW, input } = context;
+  if (!stockingBuySlots.size) return false;
+  const { windows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", input.knobs.min_window_minutes);
+  const writtenSlots = new Set(windows.flatMap(window => window.slotIndexes));
+  const unwritable = [...stockingBuySlots].filter(slotIndex => !writtenSlots.has(slotIndex));
+  for (const slotIndex of unwritable) {
+    buyW[slotIndex] = 0;
+    stockingBuySlots.delete(slotIndex);
+    acceptedBuy.splice(acceptedBuy.indexOf(slotIndex), 1);
+  }
+  return unwritable.length > 0;
 }
 
 /** A priced slot that is still free: no sell or buy accepted there yet and no fixed window in it */

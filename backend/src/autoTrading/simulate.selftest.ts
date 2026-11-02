@@ -1,17 +1,36 @@
 /**
  * Self-test of the feed-in ramp as the simulation models it (feedInRamp.ts): a rate, also for mid-run
  * step-ups, an immediate step-down, a sell that climbs from the baseline feed, and slot 0 of a plan made
- * while a window is already running starting where that window has got to. Run from backend/ with:
+ * while a window is already running starting where that window has got to. Also the terminal value
+ * (terminalValue.ts): its math, the credit for the energy left at the end, and that it applies only when
+ * on and in season. Run from backend/ with:
  *   yarn node src/autoTrading/simulate.selftest.ts
  */
 import { buildSlots, generatePlan, projectWithFixedWindows, SLOT_MS } from "./planner.ts";
 import { simulate } from "./simulate.ts";
 import { feedInReachedAtNow, rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
+import {
+  effectiveTerminalValueMode,
+  effectiveTerminalValueMonths,
+  parseTerminalValueMonths,
+  terminalValuationFor,
+  terminalValueSekPerKwh,
+} from "./terminalValue.ts";
 import { baseKnobs, check, finishSelftest, HOUR_MS, mkPrices, testDayStartMs } from "./plannerSelftestFixtures.ts";
-import type { FixedWindow, PlannedWindow, PlannerInput, Slot } from "./planner.types.ts";
+import type {
+  ExpectedSpotEstimate,
+  FixedWindow,
+  HorizonValuation,
+  PlannedWindow,
+  PlannerInput,
+  PlannerKnobs,
+  Slot,
+} from "./planner.types.ts";
 
 const RAMP_KNOBS = { ...baseKnobs, sell_ramp_minutes: 10 }; // 15 kW / 10 min = 1.5 kW/min
 const RAMP_WATTS_PER_MINUTE = sellRampWattsPerMinute(RAMP_KNOBS);
+/** The ramp scenarios price the unpriced tail at 1 SEK and give end-of-plan energy no value */
+const UNIT_TAIL_SPOT: HorizonValuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
 
 // ---------- The ramp is a rate, also for mid-run step-ups ----------
 // Measured ~1.4 kW/min whatever the target: a 5 kW target is reached in ~3.5 min, and a 5 → 15 kW
@@ -226,7 +245,168 @@ const RAMP_WATTS_PER_MINUTE = sellRampWattsPerMinute(RAMP_KNOBS);
   }
 }
 
+// ---------- The terminal value: V and the credit for the energy left at the end ----------
+{
+  // V = k × ηd × (p̂ + surcharges) × VAT = 0.9 × 0.93 × (1.12 + 1.186) × 1.25 = 2.41270 SEK per DC kWh
+  const valuePerKwh = terminalValueSekPerKwh(baseKnobs, 1.12);
+  check(
+    "terminal value: V = k × discharge efficiency × (p̂ + surcharges) × VAT",
+    Math.abs(valuePerKwh - 2.4127) < 0.0001,
+    `(${valuePerKwh.toFixed(5)} SEK/kWh)`
+  );
+  check(
+    "terminal value: k scales it linearly",
+    Math.abs(terminalValueSekPerKwh({ ...baseKnobs, terminal_value_scale: 0.45 }, 1.12) - valuePerKwh / 2) < 1e-9
+  );
+  check("terminal value: never negative", terminalValueSekPerKwh(baseKnobs, -3) === 0);
+
+  // Four idle hours from 50 %: house, standby and the baseline feed drain ~5 kWh DC. What's left above the
+  // 3 % emergency floor (1.95 kWh) is credited at V, inside revenueSek
+  const idleInput = idleHoursInput(50);
+  const slots = buildSlots(idleInput);
+  const noTrades = new Array(slots.length).fill(0);
+  const worthNothing = simulate(idleInput, slots, noTrades, noTrades, { tailSpot: 1, endEnergySekPerKwh: 0 });
+  const valued = simulate(idleInput, slots, noTrades, noTrades, { tailSpot: 1, endEnergySekPerKwh: valuePerKwh });
+  const expectedCreditSek = ((valued.endSocWh - 0.03 * 65000) / 1000) * valuePerKwh;
+  check(
+    "terminal credit: the energy above the emergency floor at V",
+    Math.abs(valued.endEnergyValueSek - expectedCreditSek) < 1e-6 && expectedCreditSek > 50,
+    `(${valued.endEnergyValueSek.toFixed(2)} SEK for ${((valued.endSocWh - 1950) / 1000).toFixed(2)} kWh)`
+  );
+  check(
+    "terminal credit: counted in revenueSek, the number the passes compare",
+    Math.abs(valued.revenueSek - worthNothing.revenueSek - expectedCreditSek) < 1e-6
+  );
+  check(
+    "terminal credit: zero at a zero value, the trajectory untouched",
+    worthNothing.endEnergyValueSek === 0 && worthNothing.endSocWh === valued.endSocWh
+  );
+  const atTheFloor = simulate(idleHoursInput(3), slots, noTrades, noTrades, {
+    tailSpot: 1,
+    endEnergySekPerKwh: valuePerKwh,
+  });
+  check(
+    "terminal credit: nothing for a battery ending at the emergency floor",
+    atTheFloor.endEnergyValueSek === 0,
+    `(${atTheFloor.endEnergyValueSek} SEK)`
+  );
+}
+
+// ---------- The terminal value applies only when on, in season and with an expected spot ----------
+{
+  const trailingEstimate: ExpectedSpotEstimate = { expectedSpot: 1.12, source: "trailing", detail: "7-day mean spot" };
+  const novemberNoonMs = Date.UTC(2026, 10, 2, 12);
+  const valuationAt = (nowMs: number, knobs: Partial<PlannerKnobs>, estimate: ExpectedSpotEstimate | undefined) =>
+    terminalValuationFor({ ...idleHoursInput(50), nowMs, expectedSpot: estimate, knobs: { ...baseKnobs, ...knobs } });
+
+  const inSeason = valuationAt(novemberNoonMs, { terminal_value_mode: "trailing" }, trailingEstimate);
+  check(
+    "terminal season: on and in season → V, and the tail at p̂",
+    Math.abs((inSeason.valuation?.endEnergySekPerKwh ?? 0) - 2.4127) < 0.0001 &&
+      inSeason.valuation?.expectedSpot === 1.12 &&
+      inSeason.valuation.basis === "7-day mean spot 1.12, k 0.9",
+    `(${JSON.stringify(inSeason)})`
+  );
+  const off = valuationAt(novemberNoonMs, { terminal_value_mode: "off" }, trailingEstimate);
+  check("terminal season: off → no value, nothing to say", !off.valuation && !off.unavailable);
+  const outOfSeason = valuationAt(
+    novemberNoonMs,
+    { terminal_value_mode: "trailing", terminal_value_months: "4,5,6" },
+    trailingEstimate
+  );
+  check(
+    "terminal season: outside the months → no value, nothing to say",
+    !outOfSeason.valuation && !outOfSeason.unavailable
+  );
+  // 2026-03-31 21:30 UTC is 23:30 in Sweden (CEST), 22:30 UTC is already 1 April
+  const marchLastHalfHour = valuationAt(
+    Date.UTC(2026, 2, 31, 21, 30),
+    { terminal_value_mode: "trailing" },
+    trailingEstimate
+  );
+  const aprilFirstHalfHour = valuationAt(
+    Date.UTC(2026, 2, 31, 22, 30),
+    { terminal_value_mode: "trailing" },
+    trailingEstimate
+  );
+  check(
+    "terminal season: the months are Swedish calendar months",
+    !!marchLastHalfHour.valuation && !aprilFirstHalfHour.valuation
+  );
+  const failed = valuationAt(
+    novemberNoonMs,
+    { terminal_value_mode: "trailing" },
+    { expectedSpot: undefined, source: "trailing", detail: "no SE3 prices for 2026-10-30" }
+  );
+  check(
+    "terminal season: an estimate without a value → no value, and why",
+    !failed.valuation && failed.unavailable === "no SE3 prices for 2026-10-30"
+  );
+  const missing = valuationAt(novemberNoonMs, { terminal_value_mode: "trailing" }, undefined);
+  check("terminal season: no estimate at all → no value, and why", !missing.valuation && !!missing.unavailable);
+  // A mode the knob correction hasn't seen (a hand-edited config.json, the backtest's knob-less plans) is off
+  const unknownMode = terminalValuationFor({
+    ...idleHoursInput(50),
+    nowMs: novemberNoonMs,
+    expectedSpot: trailingEstimate,
+    knobs: { ...baseKnobs, terminal_value_mode: "forecast" as PlannerKnobs["terminal_value_mode"] },
+  });
+  check("terminal season: an unknown mode counts as off", !unknownMode.valuation && !unknownMode.unavailable);
+}
+
+// ---------- The terminal value knobs' corrections (config.json is hand-editable) ----------
+{
+  const parsed = parseTerminalValueMonths("10, 11,12;1 x 13 10");
+  check(
+    "terminal months: separators, duplicates and non-months",
+    JSON.stringify(parsed) === JSON.stringify({ months: [10, 11, 12, 1], invalidEntries: ["x", "13"] }),
+    `(${JSON.stringify(parsed)})`
+  );
+  const corrected = effectiveTerminalValueMonths("10,11,12,1,2,3,13");
+  check(
+    "terminal months: an invalid entry is dropped with a correction",
+    corrected.value === "10,11,12,1,2,3" && !!corrected.correction,
+    `(${corrected.correction})`
+  );
+  const notAString = effectiveTerminalValueMonths([10, 11]);
+  check(
+    "terminal months: a non-string falls back to the default",
+    notAString.value === "10,11,12,1,2,3" && !!notAString.correction
+  );
+  check(
+    "terminal months: empty means never",
+    effectiveTerminalValueMonths("").correction === undefined && parseTerminalValueMonths("").months.length === 0
+  );
+  check(
+    "terminal mode: a known mode passes, an unknown one is corrected to off",
+    effectiveTerminalValueMode("trailing").value === "trailing" &&
+      !effectiveTerminalValueMode("trailing").correction &&
+      effectiveTerminalValueMode("forecast").value === "off" &&
+      !!effectiveTerminalValueMode("forecast").correction,
+    `(${effectiveTerminalValueMode("forecast").correction})`
+  );
+}
+
 finishSelftest();
+
+/** Four idle, sunless hours at 1 SEK from the given SOC, without a tail */
+function idleHoursInput(socPercent: number): PlannerInput {
+  return {
+    nowMs: testDayStartMs,
+    prices: mkPrices(4, () => 1),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 600,
+    parasiticWatts: 230,
+    socPercent,
+    capacityWh: 65000,
+    constraintTailHours: 0,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: baseKnobs,
+  };
+}
 
 /** Export (Wh) of three quarters of selling at the given setpoints, from a 90 % battery */
 function exportedWh(sellWatts: number[], { pvW }: { pvW: number }): number {
@@ -257,7 +437,7 @@ function exportedWh(sellWatts: number[], { pvW }: { pvW: number }): number {
     buyVetoWindows: [],
     knobs: RAMP_KNOBS,
   };
-  return simulate(rampInput, quarterSlots, sellWatts, new Array(sellWatts.length).fill(0), 1).sellExportWh;
+  return simulate(rampInput, quarterSlots, sellWatts, new Array(sellWatts.length).fill(0), UNIT_TAIL_SPOT).sellExportWh;
 }
 
 /** Export (Wh) of a new 15 kW sell in the 8 min left of the current slot, given the runtime's schedule */
@@ -280,7 +460,7 @@ function slotZeroExportWh(nowMs: number, runningSellSchedule: FixedWindow[]): nu
   };
   const slots = buildSlots(input);
   const sellWatts = slots.map((_, slotIndex) => (slotIndex === 0 ? 15000 : 0));
-  return simulate(input, slots, sellWatts, new Array(slots.length).fill(0), 1).sellExportWh;
+  return simulate(input, slots, sellWatts, new Array(slots.length).fill(0), UNIT_TAIL_SPOT).sellExportWh;
 }
 
 /** An evening with a running 15 kW window (kept fixed, like the trader keeps an active one) */

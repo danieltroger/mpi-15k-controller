@@ -21,18 +21,24 @@
  * accept order created for no gain, and sells budget its moves free up as reduced-power window
  * extensions. The reserve floor relaxes to planner_soc_floor_sunny_percent in slots where forecast PV
  * covers the house. The accepted slots are finally merged into schedule windows (planWindows.ts).
+ *
+ * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
+ * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying can stock
+ * up for after the horizon, and the unpriced tail is priced at the same expected spot.
  */
 
 import { simulate } from "./simulate.ts";
 import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
-import { allocateArbitragePairs, preBuyAgainstUnavoidableImport } from "./buyAllocation.ts";
+import { allocateArbitragePairs, preBuyAtCheapHours } from "./buyAllocation.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
+import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type {
   AllocationContext,
   FixedWindow,
+  HorizonValuation,
   PlannerInput,
   PlanProjection,
   PlanResult,
@@ -58,21 +64,16 @@ export function generatePlan(input: PlannerInput): PlanResult {
       socSeries: [],
     };
   }
-  // Conservative valuation for the unpriced constraint tail: median of the last priced day
-  const lastDaySpots = pricedSlots
-    .slice(-96)
-    .map(slot => slot.spot!)
-    .sort((lower, higher) => lower - higher);
-  const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
+  const { valuation, terminal } = horizonValuation(input, pricedSlots);
 
   const sellW = new Array(slots.length).fill(0);
   const buyW = new Array(slots.length).fill(0);
 
-  const base = simulate(input, slots, sellW, buyW, tailSpot);
+  const base = simulate(input, slots, sellW, buyW, valuation);
   const feasibleVsBase = (result: SimResult) => result.violationWh <= base.violationWh + 1;
 
   // ---- Sell allocation: the greedy, highest spot first, then bridging short valleys (sellAllocation.ts) ----
-  const allocation: AllocationContext = { input, slots, sellW, buyW, tailSpot, feasibleVsBase };
+  const allocation: AllocationContext = { input, slots, sellW, buyW, valuation, feasibleVsBase };
   const greedy = allocateSellsGreedily(allocation, base);
   let current = greedy.result;
   const acceptedSell = greedy.acceptedSell;
@@ -80,7 +81,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
 
   // Defragment what the greedy scattered (see sellConsolidation.ts) — sellW is the source of
   // truth afterwards, so rebuild the accepted list from it
-  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, tailSpot, feasibleVsBase, current);
+  const consolidated = consolidateSellSlots(input, slots, sellW, buyW, valuation, feasibleVsBase, current);
   current = consolidated.result;
   if (consolidated.droppedShortRuns) {
     notes.push(
@@ -90,8 +91,9 @@ export function generatePlan(input: PlannerInput): PlanResult {
   acceptedSell.length = 0;
   for (let i = 0; i < slots.length; i++) if (sellW[i] > 0) acceptedSell.push(i);
 
-  // ---- Buy allocation: pre-buying against unavoidable imports, then arbitrage pairs (buyAllocation.ts) ----
-  const preBuy = preBuyAgainstUnavoidableImport(allocation, current, notes);
+  // ---- Buy allocation: pre-buying against unavoidable imports (and stocking up with a terminal value),
+  // then arbitrage pairs (buyAllocation.ts) ----
+  const preBuy = preBuyAtCheapHours(allocation, current, notes);
   current = preBuy.result;
   const acceptedBuy = preBuy.acceptedBuy;
   const arbitrage = allocateArbitragePairs(allocation, current, acceptedSell, acceptedBuy, notes);
@@ -110,7 +112,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     for (const slotIndex of acceptedSell) {
       if (!sellWindows.some(window => window.slotIndexes.includes(slotIndex))) sellW[slotIndex] = 0;
     }
-    current = simulate(input, slots, sellW, buyW, tailSpot);
+    current = simulate(input, slots, sellW, buyW, valuation);
   }
 
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
@@ -123,6 +125,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     finalResult: current,
     spotsAll,
     arbitrageBuySlots: arbitrage.arbitrageBuySlots,
+    stockingBuySlots: preBuy.stockingBuySlots,
   };
   const sells = sellWindows.map(window => toPlanned(window, packaging));
   const buys = buyWindows.map(window => toPlanned(window, packaging));
@@ -136,6 +139,8 @@ export function generatePlan(input: PlannerInput): PlanResult {
     `Horizon ${new Date(Math.max(input.nowMs, pricedSlots[0].startMs)).toISOString()} → ${new Date(pricedSlots[pricedSlots.length - 1].endMs).toISOString()} (+${input.constraintTailHours}h reserve tail)`
   );
   if (knobs.extra_reserve_kwh > 0) notes.push(`User extra reserve of ${knobs.extra_reserve_kwh} kWh respected`);
+  const terminalNote = terminalValueNote(terminal, current);
+  if (terminalNote) notes.push(terminalNote);
 
   const projection: PlanProjection = {
     startSocPercent: input.socPercent,
@@ -174,12 +179,8 @@ export function projectWithFixedWindows(input: PlannerInput): {
 } {
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(slot => slot.spot !== undefined);
-  const lastDaySpots = pricedSlots
-    .slice(-96)
-    .map(slot => slot.spot!)
-    .sort((lower, higher) => lower - higher);
-  const tailSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
-  const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), tailSpot);
+  const { valuation } = horizonValuation(input, pricedSlots);
+  const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), valuation);
   return {
     violationWh: result.violationWh,
     minSocPercent: Math.round((result.minSocWh / input.capacityWh) * 1000) / 10,
@@ -188,6 +189,41 @@ export function projectWithFixedWindows(input: PlannerInput): {
     endSocPercent: Math.round((result.endSocWh / input.capacityWh) * 1000) / 10,
     revenueSek: Math.round(result.revenueSek * 10) / 10,
   };
+}
+
+/**
+ * How a plan for this input prices what lies past the published prices: the unpriced constraint tail at
+ * the median of the last priced day (a conservative stand-in) and the energy left at the end at nothing,
+ * or both at the expected spot with an active terminal value (terminalValue.ts). generatePlan and
+ * projectWithFixedWindows share it, so a fresh plan and a replayed schedule count the same things (the
+ * opportunistic replan compares their revenue).
+ */
+function horizonValuation(
+  input: PlannerInput,
+  pricedSlots: Slot[]
+): { valuation: HorizonValuation; terminal: TerminalValuationResult } {
+  const terminal = terminalValuationFor(input);
+  const lastDaySpots = pricedSlots
+    .slice(-96)
+    .map(slot => slot.spot!)
+    .sort((lower, higher) => lower - higher);
+  const lastDayMedianSpot = lastDaySpots[Math.floor(lastDaySpots.length / 2)] ?? 0.5;
+  return {
+    valuation: {
+      tailSpot: terminal.valuation?.expectedSpot ?? lastDayMedianSpot,
+      endEnergySekPerKwh: terminal.valuation?.endEnergySekPerKwh ?? 0,
+    },
+    terminal,
+  };
+}
+
+/** The plan note on the terminal value: what end-of-plan energy is worth and its share of the projected revenue, or why it has none */
+function terminalValueNote(terminal: TerminalValuationResult, finalResult: SimResult): string | undefined {
+  if (terminal.unavailable) return `End-of-plan energy not valued: ${terminal.unavailable}`;
+  const valuation = terminal.valuation;
+  if (!valuation) return undefined;
+  const leftKwh = valuation.endEnergySekPerKwh > 0 ? finalResult.endEnergyValueSek / valuation.endEnergySekPerKwh : 0;
+  return `End-of-plan energy valued at ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh (${valuation.basis}): ${finalResult.endEnergyValueSek.toFixed(1)} SEK of the projected revenue is the ${leftKwh.toFixed(1)} kWh left above the emergency floor`;
 }
 
 function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {

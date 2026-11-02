@@ -25,6 +25,8 @@ export type PackagingContext = {
   spotsAll: number[];
   /** Buy slots the arbitrage pass accepted: their windows explain themselves as arbitrage */
   arbitrageBuySlots: Set<number>;
+  /** Buy slots the pre-buy pass took only to stock up for after the horizon (buyAllocation.ts) */
+  stockingBuySlots: Set<number>;
 };
 
 export function mergeAcceptedSlots(
@@ -75,7 +77,7 @@ export function mergeAcceptedSlots(
 }
 
 export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContext): PlannedWindow {
-  const { input, slots, finalResult, spotsAll, arbitrageBuySlots } = packaging;
+  const { input, slots, finalResult, spotsAll, arbitrageBuySlots, stockingBuySlots } = packaging;
   const cap = input.capacityWh;
   const spots = mergedWindow.slotIndexes.map(slotIndex => slots[slotIndex].spot!).filter(spot => spot !== undefined);
   const avgSpot = spots.reduce((sum, spot) => sum + spot, 0) / Math.max(spots.length, 1);
@@ -97,13 +99,18 @@ export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContex
         );
   const isArbitrage =
     mergedWindow.kind === "buy" && mergedWindow.slotIndexes.some(slotIndex => arbitrageBuySlots.has(slotIndex));
+  // A merged window can hold both kinds of pre-buy: it only reads as stocking up when nothing in it averts an import
+  const isStockingUp =
+    mergedWindow.kind === "buy" && mergedWindow.slotIndexes.every(slotIndex => stockingBuySlots.has(slotIndex));
   const approximateKwh = formatApproximateKwh(expectedKwh);
   const reason =
     mergedWindow.kind === "sell"
       ? `spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)} of horizon), ~${approximateKwh} kWh, SOC ${Math.round((socBefore / cap) * 100)}%→${Math.round((socAfter / cap) * 100)}%`
       : isArbitrage
         ? `arbitrage: buying ~${approximateKwh} kWh at ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}) to re-sell at the later price peak`
-        : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), pre-buying ~${approximateKwh} kWh to avoid pricier unavoidable import`;
+        : isStockingUp
+          ? `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), stocking up ~${approximateKwh} kWh for after the horizon`
+          : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), pre-buying ~${approximateKwh} kWh to avoid pricier unavoidable import`;
   return {
     startMs: mergedWindow.kind === "sell" ? sellWindowStartMs(mergedWindow, slots, input.nowMs) : mergedWindow.startMs,
     endMs: mergedWindow.endMs,

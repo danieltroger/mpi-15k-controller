@@ -7,10 +7,19 @@ import type { AutomaticTradingConfig } from "../config/config.types.ts";
 
 export type BoundedPlannerKnobName = keyof Pick<
   AutomaticTradingConfig,
-  "min_sell_power_watts" | "fragmentation_tolerance_sek_per_window"
+  | "min_sell_power_watts"
+  | "fragmentation_tolerance_sek_per_window"
+  | "terminal_value_scale"
+  | "terminal_value_trailing_days"
 >;
 
-export type PlannerKnobBounds = { defaultValue: number; min: number; max: number; unit: "W" | "SEK"; step: number };
+export type PlannerKnobBounds = {
+  defaultValue: number;
+  min: number;
+  max: number;
+  unit: "W" | "SEK" | "×" | "days";
+  step: number;
+};
 
 export const PLANNER_KNOB_BOUNDS = {
   // A leftover budget the greedy can't fit at full power is sold at the largest power that still keeps the
@@ -25,6 +34,14 @@ export const PLANNER_KNOB_BOUNDS = {
   // that out-earns a merged plan by less than that is model noise. 0 = merge only for a strict gain. Past
   // 1 SEK per run the planner would give up real money to tidy the schedule.
   fragmentation_tolerance_sek_per_window: { defaultValue: 0.2, min: 0, max: 1, unit: "SEK", step: 0.05 },
+  // k in the terminal value (terminalValue.ts): the share of the import a kWh left at the end of the plan
+  // avoids later. The most robust setting in the 2022-11 → 2026-11 backtest was 0.9 (1.0 lost money in a
+  // winter: the expected spot is a guess, and some kept energy is later sold cheaper or idles). 0 values it
+  // at nothing. Past 1.2 the planner would pay more to keep a kWh than the import it is meant to avoid.
+  terminal_value_scale: { defaultValue: 0.9, min: 0, max: 1.2, unit: "×", step: 0.05 },
+  // Days the trailing expected spot averages (expectedSpot.ts). 7 was the most robust in the backtest (14 and
+  // 30 days each lost money in some winter); 60 days of history is ~60 small one-off fetches.
+  terminal_value_trailing_days: { defaultValue: 7, min: 1, max: 60, unit: "days", step: 1 },
 } as const satisfies Record<BoundedPlannerKnobName, PlannerKnobBounds>;
 
 /**

@@ -25,7 +25,7 @@ export function allocateSellsGreedily(
   context: AllocationContext,
   base: SimResult
 ): { result: SimResult; acceptedSell: number[] } {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   const sellCandidates = slots
     .map((slot, slotIndex) => ({ slot, slotIndex }))
@@ -36,7 +36,7 @@ export function allocateSellsGreedily(
 
   let current = base;
   const acceptedSell: number[] = [];
-  const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, tailSpot, feasible: feasibleVsBase };
+  const powerSearch: SellPowerSearch = { input, slots, sellW, buyW, valuation, feasible: feasibleVsBase };
   // The largest fitting power of the last reduced slot rejected for too little gain. Its leftover
   // stays where it was, and the candidates after it are no pricier: one that can't take more power
   // than that can't gain more either, so its search starts just above (one simulation to rule it
@@ -45,7 +45,7 @@ export function allocateSellsGreedily(
   let gainRejectedWatts: number | undefined;
   for (const { slotIndex } of sellCandidates) {
     sellW[slotIndex] = knobs.max_sell_power_watts;
-    let trial = simulate(input, slots, sellW, buyW, tailSpot);
+    let trial = simulate(input, slots, sellW, buyW, valuation);
     let reducedWatts: number | undefined;
     if (!feasibleVsBase(trial)) {
       // Full power overdraws the remaining budget: sell what still fits here, so a leftover lands in
@@ -92,7 +92,7 @@ export function bridgeSellValleys(
   resultSoFar: SimResult,
   acceptedSell: number[]
 ): SimResult {
-  const { input, slots, sellW, buyW, tailSpot, feasibleVsBase } = context;
+  const { input, slots, sellW, buyW, valuation, feasibleVsBase } = context;
   const knobs = input.knobs;
   let current = resultSoFar;
   const maxGapSlots = 3;
@@ -116,7 +116,7 @@ export function bridgeSellValleys(
       }
       if (fillable.length !== gapSlots) continue;
       for (const j of fillable) sellW[j] = knobs.max_sell_power_watts;
-      const trial = simulate(input, slots, sellW, buyW, tailSpot);
+      const trial = simulate(input, slots, sellW, buyW, valuation);
       if (feasibleVsBase(trial) && trial.revenueSek - current.revenueSek >= -maxSmoothingLossSekPerSlot * gapSlots) {
         current = trial;
         acceptedSell.push(...fillable);

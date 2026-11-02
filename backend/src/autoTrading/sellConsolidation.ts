@@ -39,7 +39,7 @@
 import { simulate, slotTradableForSell } from "./simulate.ts";
 import { sellRampMinutesBetween } from "./feedInRamp.ts";
 import { largestFeasibleSellPower, SELL_POWER_STEP_WATTS } from "./reducedSellPower.ts";
-import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
+import type { HorizonValuation, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 /**
  * Shared mutable state of the local search. Helpers mutate sellW (the candidate schedule),
@@ -51,7 +51,7 @@ type SearchState = {
   slots: Slot[];
   sellW: number[];
   buyW: number[];
-  tailSpot: number;
+  valuation: HorizonValuation;
   feasible: (result: SimResult) => boolean;
   current: SimResult;
   trialsLeft: number;
@@ -78,11 +78,11 @@ export function consolidateSellSlots(
   slots: Slot[],
   sellW: number[],
   buyW: number[],
-  tailSpot: number,
+  valuation: HorizonValuation,
   feasible: (result: SimResult) => boolean,
   current: SimResult
 ): { result: SimResult; droppedShortRuns: number } {
-  const search: SearchState = { input, slots, sellW, buyW, tailSpot, feasible, current, trialsLeft: 400 };
+  const search: SearchState = { input, slots, sellW, buyW, valuation, feasible, current, trialsLeft: 400 };
   runConsolidationMoves(search);
   // A run shorter than min_window_minutes is dropped when the windows are merged, and its budget
   // with it. Drop it here instead, where the moves can still spend what it frees on the runs that
@@ -172,7 +172,7 @@ function dropShortRuns(search: SearchState): number {
   );
   if (!shortRuns.length) return 0;
   for (const run of shortRuns) for (const slotIndex of run) search.sellW[slotIndex] = 0;
-  search.current = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
+  search.current = simulate(search.input, search.slots, search.sellW, search.buyW, search.valuation);
   return shortRuns.length;
 }
 
@@ -212,7 +212,7 @@ function timeAdjacent(search: SearchState, earlier: number, later: number): bool
  */
 function acceptTrial(search: SearchState, minGainSek: number): boolean {
   if (search.trialsLeft-- <= 0) return false;
-  const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
+  const trial = simulate(search.input, search.slots, search.sellW, search.buyW, search.valuation);
   const requiredGainSek = minGainSek === 0 ? 1e-6 : minGainSek;
   if (search.feasible(trial) && trial.revenueSek >= search.current.revenueSek + requiredGainSek) {
     search.current = trial;
@@ -241,7 +241,7 @@ function tryAdd(search: SearchState, addIndex: number): boolean {
   const { max_sell_power_watts, min_sell_power_watts, min_gain_sek_per_slot } = search.input.knobs;
   if (search.trialsLeft-- <= 0) return false;
   search.sellW[addIndex] = max_sell_power_watts;
-  let trial: SimResult | undefined = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
+  let trial: SimResult | undefined = simulate(search.input, search.slots, search.sellW, search.buyW, search.valuation);
   if (!search.feasible(trial)) {
     trial = largestFeasibleSellPower(search, [addIndex], min_sell_power_watts, max_sell_power_watts)?.result;
   }
@@ -325,7 +325,13 @@ function equalizeChainPower(search: SearchState) {
     // Rounding never takes it below the body's lowest power, so it stays ≥ min_sell_power_watts
     const meanWatts = Math.max(roundedMeanWatts, Math.min(...savedWatts));
     for (const slotIndex of body) search.sellW[slotIndex] = meanWatts;
-    let trial: SimResult | undefined = simulate(search.input, search.slots, search.sellW, search.buyW, search.tailSpot);
+    let trial: SimResult | undefined = simulate(
+      search.input,
+      search.slots,
+      search.sellW,
+      search.buyW,
+      search.valuation
+    );
     if (!search.feasible(trial)) {
       // The mean keeps the setpoints' energy, but flattening also drops the step-ups' ramps, so the
       // body can deliver more than the budget allows: then the largest equal power that fits, from

@@ -1,19 +1,19 @@
 /**
  * The planner's battery/revenue simulation core: replay a candidate schedule (per-slot sell/buy
- * setpoints + fixed windows) over the forecast horizon and report revenue, floor violations and
- * the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts) and the
+ * setpoints + fixed windows) over the forecast horizon and report revenue (with the terminal value
+ * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts) and the
  * local search in sellConsolidation.ts, which is why it lives in its own module.
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
-import type { PlannerInput, SimResult, Slot } from "./planner.types.ts";
+import type { HorizonValuation, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 export function simulate(
   input: PlannerInput,
   slots: Slot[],
   sellW: number[],
   buyW: number[],
-  tailSpot: number
+  valuation: HorizonValuation
 ): SimResult {
   const knobs = input.knobs;
   const cap = input.capacityWh;
@@ -35,6 +35,7 @@ export function simulate(
   let sellExportWh = 0;
   let autoExportWh = 0;
   let importWh = 0;
+  let shortfallImportWh = 0;
   let boughtWh = 0;
   const socAfterSlot: number[] = new Array(slots.length);
   const autoExportWPerSlot: number[] = new Array(slots.length).fill(0);
@@ -47,7 +48,7 @@ export function simulate(
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
-    const spot = slot.spot ?? tailSpot;
+    const spot = slot.spot ?? valuation.tailSpot;
     const parasiticW = input.parasiticWatts;
     const sellSetW = Math.max(sellW[i], slot.fixedSellW);
     const requestedBuyW = Math.max(buyW[i], slot.fixedBuyW);
@@ -108,6 +109,7 @@ export function simulate(
       const deficitWh = floorEmergencyWh - socWh;
       const importedForHouseWh = deficitWh * knobs.discharge_efficiency;
       slotImportWh += importedForHouseWh;
+      shortfallImportWh += importedForHouseWh;
       socWh = floorEmergencyWh;
     }
 
@@ -129,6 +131,11 @@ export function simulate(
     socAfterSlot[i] = socWh;
   }
 
+  // The energy left at the end saves a later import (terminalValue.ts). Credited inside revenueSek, the
+  // number every allocation pass compares, so keeping a kWh competes with selling it on equal terms.
+  const endEnergyValueSek = (Math.max(0, socWh - floorEmergencyWh) / 1000) * valuation.endEnergySekPerKwh;
+  revenueSek += endEnergyValueSek;
+
   return {
     revenueSek,
     violationWh,
@@ -139,9 +146,11 @@ export function simulate(
     sellExportWhPerSlot,
     autoExportWh,
     importWh,
+    shortfallImportWh,
     boughtWh,
     socAfterSlot,
     autoExportWPerSlot,
+    endEnergyValueSek,
   };
 }
 

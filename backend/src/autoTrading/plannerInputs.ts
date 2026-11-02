@@ -1,7 +1,8 @@
 /**
  * Assembles the planner's input from the live trader: prices, the solar/elpatron/consumption forecasts,
- * the inverter's measured feed-in, the user's (immutable) schedule entries and the vetoes. Also turns
- * owned schedule entries into the fixed windows a re-plan or projection treats as given.
+ * the inverter's measured feed-in, the user's (immutable) schedule entries, the vetoes and, with the
+ * terminal value on, the expected spot after the horizon. Also turns owned schedule entries into the
+ * fixed windows a re-plan or projection treats as given.
  */
 
 import { untrack } from "solid-js";
@@ -13,6 +14,7 @@ import { fetchSolarForecast } from "./solarForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
+import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW, MEASURED_FEED_IN_MAX_AGE_MS } from "./measuredFeedIn.ts";
 import { entriesEqual } from "./scheduleOwnership.ts";
@@ -51,6 +53,9 @@ export async function buildPlannerInput(
     cfg.elpatron_switching
   );
   const { sells, buys } = userWindows(ctx, cfg);
+  const knobs = plannerKnobsFromConfig(cfg);
+  // Only fetched while the terminal value is on and in season; a failure plans without it (expectedSpot.ts)
+  const expectedSpot = await expectedSpotForPlan({ ...tradingConfig, ...knobs }, nowMs);
   return {
     nowMs,
     prices: prices.slots,
@@ -75,7 +80,8 @@ export async function buildPlannerInput(
     buyVetoWindows: ctx.state.vetoes
       .filter(veto => veto.kind === "buy")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),
-    knobs: plannerKnobsFromConfig(cfg),
+    expectedSpot,
+    knobs,
   };
 }
 

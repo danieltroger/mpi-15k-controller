@@ -1,5 +1,14 @@
 import type { ElpatronMode } from "../sharedTypes.ts";
 
+/**
+ * Where the planner's expected spot price after the priced horizon comes from (autoTrading/expectedSpot.ts):
+ * "trailing" = the mean daily-mean spot of the last terminal_value_trailing_days complete days. A
+ * weather-based "forecast" source is meant to join it.
+ */
+export type ExpectedSpotSource = "trailing";
+/** automatic_trading.terminal_value_mode: off, or the source of the expected spot the terminal value is priced at */
+export type TerminalValueMode = "off" | ExpectedSpotSource;
+
 export type AutomaticTradingConfig = {
   /** Master switch for the automatic day-ahead trading planner */
   enabled: boolean;
@@ -40,6 +49,22 @@ export type AutomaticTradingConfig = {
   min_buy_saving_sek_per_kwh: number;
   /** Buy cheap purely to re-sell at a later price peak when the spread beats fees + losses + margin */
   allow_arbitrage_buying: boolean;
+  /**
+   * Whether energy left in the battery at the end of the plan horizon is worth the import it avoids
+   * later (autoTrading/terminalValue.ts), and where the expected spot price after the horizon comes
+   * from. "off": it is worth nothing. Corrected to "off" (with a warning) when unknown.
+   */
+  terminal_value_mode: TerminalValueMode;
+  /** k: the share of that avoided import the end-of-plan energy is credited at. Bounds in plannerKnobBounds.ts, clamped. */
+  terminal_value_scale: number;
+  /** Complete days the "trailing" expected spot averages. Bounds in plannerKnobBounds.ts, clamped. */
+  terminal_value_trailing_days: number;
+  /**
+   * Comma-separated month numbers (1 = January, Swedish time) the terminal value applies in; outside
+   * them the planner behaves as with terminal_value_mode "off". Entries that aren't 1–12 are ignored
+   * with a warning.
+   */
+  terminal_value_months: string;
   /**
    * Minutes the inverter takes to ramp grid feed-in from 0 to the full inverter_max_ac_output_watts
    * (grid safety). It's a rate: a smaller target is reached proportionally sooner, and a mid-run
