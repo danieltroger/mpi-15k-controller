@@ -1,5 +1,5 @@
 import { catchify } from "../vendor/depictUtilishared.ts";
-import { onCleanup } from "solid-js";
+import { batch, onCleanup } from "solid-js";
 
 const timeoutBatches = new Map<
   number,
@@ -9,6 +9,9 @@ const timeoutBatches = new Map<
 /**
  * Function that runs a function at a future time with the option to prioritize it over other, non-prioritized functions scheduled at the same time.
  * The idea is that we want to always start feeding before we stop feeding, to avoid momentarily feeding 0 which re-starts the slow rampup of the inverter.
+ * Everything due at the same time runs in one solid batch, so no computation sees the moment in between
+ * either: a hold window ending as a sell window starts (or the other way round) would otherwise show
+ * feedWhenNoSolar both an import and an export for an instant, which it errorLogs (a P2 push).
  */
 export function batchedRunAtFutureTimeWithPriority(fn: VoidFunction, when: number, prioritised: boolean) {
   const existing = timeoutBatches.get(when);
@@ -17,15 +20,17 @@ export function batchedRunAtFutureTimeWithPriority(fn: VoidFunction, when: numbe
     const now = +new Date();
     const timeUntil = when - now;
     const timeout = setTimeout(
-      catchify(() => {
-        for (const fn of first) {
-          fn();
-        }
-        for (const fn of last) {
-          fn();
-        }
-        timeoutBatches.delete(when);
-      }),
+      catchify(() =>
+        batch(() => {
+          for (const fn of first) {
+            fn();
+          }
+          for (const fn of last) {
+            fn();
+          }
+          timeoutBatches.delete(when);
+        })
+      ),
       timeUntil
     );
     timeoutBatches.set(when, { first, last, timeout });

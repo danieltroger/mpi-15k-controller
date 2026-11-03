@@ -50,6 +50,11 @@ export type InverterStuckSnapshot = {
   sunElevationDegrees: number;
   /** Battery-side amps the buy schedule asks for right now (0/undefined outside buy windows) */
   commandedChargingAmps: number | undefined;
+  /**
+   * A hold window is what the buy schedule asks for (buying/scheduledBuyDecision.ts): the house runs on the
+   * grid and the battery only trickles, or rests at 0 A on a full pack, by design
+   */
+  holdWindowInForce: boolean;
   /** HECS readback: the inverter has confirmed AC charging is enabled (EDB1 landed) */
   acChargingEnabledOnInverter: boolean;
 };
@@ -88,6 +93,16 @@ export const DC_IDLE_MIN_BATTERY_VOLTS = 50.5;
  */
 export const HIGH_SOC_PERCENT = 90;
 export const HIGH_SOC_IDLE_MAX_HALL_WATTS = 60;
+/**
+ * During a hold window the house runs on the grid by design, so the battery idles whenever the trickle
+ * doesn't flow — on a full pack. A pack at least this full, or held at its charge voltage
+ * (BUY_CHECK_MAX_BATTERY_VOLTS), may rest at 0 A Idle/Idle through a hold; below it a working hold shows its
+ * trickle (+100–200 W, the charger's floor is ~4 A) on the hall, and a latch at the end of a heavy window
+ * chained into a hold doesn't (the latch read ~−27 W).
+ */
+export const HOLD_FULL_PACK_SOC_PERCENT = 95;
+/** A hall at or above this during a hold is its trickle arriving, however the inverter reports it */
+export const HOLD_TRICKLE_MIN_HALL_WATTS = 30;
 
 // ——— Rule A: PV stalled in daylight ———
 /** The 59.25 N winter maximum is only ~7°; dawn/dusk look-alikes all sit below 3° (report §4.3). */
@@ -117,7 +132,10 @@ export const BUY_CHECK_MIN_DELIVERED_FRACTION = 0.3;
  * Rule B, the main one (works day and night): the battery carries nothing, not even the
  * inverter's own draw, the inverter agrees it's idle, and the house runs on the grid — while the
  * battery isn't empty (low-voltage cut-off) and, when full, the hall is near zero rather than
- * showing a float hold's self-draw.
+ * showing a float hold's self-draw. During a hold window only where the hold doesn't explain an idle
+ * battery (holdExplainsIdleBattery): a full pack resting through a hold is what a hold looks like for hours
+ * every winter night, a hold whose trickle the hall sees is working. A latch the full-pack exemption hides
+ * shows again once the window ends.
  */
 export function evaluateDcSideIdle(snapshot: InverterStuckSnapshot): RuleEvaluation {
   const values = freshInverterValues(snapshot, [
@@ -136,6 +154,8 @@ export function evaluateDcSideIdle(snapshot: InverterStuckSnapshot): RuleEvaluat
     `${values.battery_power_direction}/${values["dc/ac_power_direction"]}, grid ${formatSignedWatts(values.ac_input_total_active_power)}, ` +
     `${values.battery_voltage} V, SOC ${formatSoc(snapshot.averageSOC)}`;
   if (batteryFlowEvidence(values, hallWatts)) return { observation: "healthy", detail: summary };
+  const holdExplanation = holdExplainsIdleBattery(snapshot, values.battery_voltage, hallWatts);
+  if (holdExplanation) return indeterminate(`${summary} (${holdExplanation})`);
   if (Math.abs(hallWatts) >= DC_IDLE_MAX_HALL_WATTS) {
     return indeterminate(`${summary} (hall between the idle and recovered bands)`);
   }
@@ -239,6 +259,21 @@ function buyCheckExclusion(
   if (snapshot.averageSOC === undefined) return "SOC unknown";
   if (fullPackHallTooHigh(snapshot.averageSOC, hallWatts)) {
     return `SOC ${Math.round(snapshot.averageSOC)}% with the hall at ${Math.round(hallWatts)} W could be a full pack's hold`;
+  }
+  return undefined;
+}
+
+/** Why a hold window in force explains an idle battery, or undefined when it doesn't (see HOLD_FULL_PACK_SOC_PERCENT) */
+function holdExplainsIdleBattery(
+  snapshot: InverterStuckSnapshot,
+  batteryVolts: number,
+  hallWatts: number
+): string | undefined {
+  if (!snapshot.holdWindowInForce) return undefined;
+  if (hallWatts >= HOLD_TRICKLE_MIN_HALL_WATTS) return "hold window, its trickle arriving";
+  if (batteryVolts >= BUY_CHECK_MAX_BATTERY_VOLTS) return "hold window, the pack held at its charge voltage";
+  if (snapshot.averageSOC !== undefined && snapshot.averageSOC >= HOLD_FULL_PACK_SOC_PERCENT) {
+    return "hold window on a full pack: it rests while the house runs on the grid";
   }
   return undefined;
 }

@@ -77,7 +77,7 @@ export function AutoTraderPanel() {
                       <For each={plan().windows}>
                         {w => (
                           <tr>
-                            <td>{w.kind === "sell" ? "Sell" : "Buy"}</td>
+                            <td>{w.kind === "sell" ? "Sell" : w.hold ? "Hold" : "Buy"}</td>
                             <td>
                               {fmtTime(w.start)} → {fmtTime(w.end)}
                             </td>

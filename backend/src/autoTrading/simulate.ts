@@ -1,12 +1,13 @@
 /**
  * The planner's battery/revenue simulation core: replay a candidate schedule (per-slot sell/buy
- * setpoints + fixed windows) over the forecast horizon and report revenue (with the terminal value
- * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts) and the
+ * setpoints, holds + fixed windows) over the forecast horizon and report revenue (with the terminal value
+ * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts, holdAllocation.ts) and the
  * local search in sellConsolidation.ts, which is why it lives in its own module.
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
-import type { HorizonValuation, PlannerInput, SimResult, Slot } from "./planner.types.ts";
+import { HOLD_CLASS_MAX_WATTS } from "./plannerKnobBounds.ts";
+import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
 /** A buy slot grid-charges only while the battery starts it below this share of its capacity */
 export const GRID_CHARGE_UP_TO_SOC_FRACTION = 0.98;
@@ -48,6 +49,7 @@ export function simulate(
   // where a window that is already running has got to (buildSlots works that out once).
   const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
   let reachedExportW = slots[0]?.feedInAtStartW ?? 0;
+  const modelHolds = holdsModelled(knobs, valuation);
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -57,6 +59,38 @@ export function simulate(
     const requestedBuyW = Math.max(buyW[i], slot.fixedBuyW);
     // Runtime never does both at once (feedWhenNoSolar errors out) — selling wins in our model
     const buySetW = sellSetW > 0 ? 0 : requestedBuyW;
+
+    const holdPowerW = modelHolds && sellSetW === 0 ? holdPowerInSlot(slot, buyW[i]) : 0;
+    if (holdPowerW > 0) {
+      // A hold (a buy window at a trickle): the house, the inverter's idle draw and its extra draw in charge
+      // mode come from the grid; PV and the trickle go into the battery, the trickle only as far as the
+      // battery has room; no baseline feed. The buy branch below credits PV to the house and the battery
+      // both and stops a window at 98 %; a hold runs the house from the grid at any SOC.
+      const headroomAcW = Math.max(0, (cap - socWh) / knobs.charge_efficiency / slot.durationH);
+      const trickleW = Math.max(0, Math.min(holdPowerW, headroomAcW - slot.pvW));
+      const holdImportWh = (slot.houseW + parasiticW + trickleW + knobs.hold_overhead_watts) * slot.durationH;
+      socWh += (slot.pvW + trickleW) * knobs.charge_efficiency * slot.durationH;
+      if (socWh > cap) {
+        // PV beyond the battery's room flows to the grid by itself, as in a full battery's idle slot
+        const overflowInBatteryWh = socWh - cap;
+        autoExportWh += overflowInBatteryWh / knobs.charge_efficiency;
+        autoExportWPerSlot[i] = Math.round(overflowInBatteryWh / knobs.charge_efficiency / slot.durationH);
+        revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
+        socWh = cap;
+      }
+      importWh += holdImportWh;
+      revenueSek -= (holdImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
+      // A sell right after a hold ramps from nothing: the baseline feed is off during buy windows
+      reachedExportW = 0;
+      const holdFloorWh = slot.pvW > slot.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
+      if (socWh < holdFloorWh) violationWh += holdFloorWh - socWh;
+      if (socWh < minSocWh) {
+        minSocWh = socWh;
+        minSocMs = slot.endMs;
+      }
+      socAfterSlot[i] = socWh;
+      continue;
+    }
 
     let exportW = 0;
     let gridChargeW = 0;
@@ -159,6 +193,38 @@ export function simulate(
     autoExportWPerSlot,
     endEnergyValueSek,
   };
+}
+
+/**
+ * Whether this plan models holds: hold_enabled, and only together with an active terminal value (without
+ * one, energy kept past the horizon is worth nothing, so a hold never pays). Off, simulate is exactly the
+ * one without holds, fixed low-power buy windows included: they stay buys.
+ * Not with buy windows inside the hold class either (holdsUnplannableReason): the plan would simulate its own
+ * buys as charges and every replay of them (a kept window, the gain gate, the reserve guard) as holds.
+ */
+export function holdsModelled(
+  knobs: Pick<PlannerKnobs, "hold_enabled" | "max_buy_power_watts">,
+  valuation: Pick<HorizonValuation, "endEnergySekPerKwh">
+): boolean {
+  return knobs.hold_enabled === true && valuation.endEnergySekPerKwh > 0 && holdsUnplannableReason(knobs) === undefined;
+}
+
+/** Why holds can't be planned with these knobs although hold_enabled is on, or undefined when they can */
+export function holdsUnplannableReason(knobs: Pick<PlannerKnobs, "max_buy_power_watts">): string | undefined {
+  if (knobs.max_buy_power_watts > HOLD_CLASS_MAX_WATTS) return undefined;
+  return `the buy charging power (${knobs.max_buy_power_watts} W) is within the ${HOLD_CLASS_MAX_WATTS} W hold class, so every buy window would run as a hold`;
+}
+
+/**
+ * The hold power in a slot that doesn't sell, in a plan that models holds: the hold pass's (slot.holdW), or
+ * a fixed buy window in the hold class (HOLD_CLASS_MAX_WATTS: a written hold the plan keeps, or the user's,
+ * which the runtime runs as a hold too while hold_enabled is on).
+ * A planned buy is a buy, and a fixed buy above hold power one too, even over a planned hold.
+ */
+function holdPowerInSlot(slot: Slot, plannedBuyW: number): number {
+  if (plannedBuyW > 0) return 0;
+  if (slot.fixedBuyW > 0) return slot.fixedBuyW <= HOLD_CLASS_MAX_WATTS ? slot.fixedBuyW : 0;
+  return slot.holdW;
 }
 
 export function overlapsVeto(

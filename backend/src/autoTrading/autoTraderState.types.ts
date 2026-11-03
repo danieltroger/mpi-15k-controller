@@ -27,6 +27,8 @@ export type StateWindow = {
   end: string;
   watts: number;
   kind: "sell" | "buy";
+  /** A buy window that holds: the house on the grid, the battery kept (PlannedWindow.hold). Absent otherwise and on old plans. */
+  hold?: boolean;
   reason: string;
   expected_kwh: number;
   avg_spot: number;

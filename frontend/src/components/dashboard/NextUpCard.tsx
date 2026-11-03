@@ -87,14 +87,7 @@ export function NextUpCard() {
         {nextWindow => (
           <>
             <div class="next-card__main">
-              {nextWindow().startMs <= now()
-                ? nextWindow().kind === "sell"
-                  ? "Selling"
-                  : "Buying"
-                : nextWindow().kind === "sell"
-                  ? "Sell"
-                  : "Buy"}{" "}
-              {formatWatts(nextWindow().watts)}
+              {windowLabel(nextWindow(), nextWindow().startMs <= now())} {formatWatts(nextWindow().watts)}
             </div>
             <div class="next-card__when">
               {nextWindow().startMs <= now()
@@ -128,7 +121,7 @@ export function NextUpCard() {
                 <span class={`next-card__kind next-card__kind--${window.kind}`} aria-hidden="true"></span>
                 <span>
                   <b>
-                    {window.kind === "sell" ? "Sell" : "Buy"} {formatWatts(window.watts)}
+                    {windowLabel(window, false)} {formatWatts(window.watts)}
                   </b>{" "}
                   · {windowTimeRange(window)}
                   <Show when={window.planned}>{planned => <> · {formatSpotOre(planned().avg_spot)}</>}</Show>
@@ -169,4 +162,11 @@ export function NextUpCard() {
       </div>
     </section>
   );
+}
+
+/** Sell / Buy / Hold (a buy window the planner wrote as a hold), as a verb while it runs */
+function windowLabel(window: UpcomingWindow, running: boolean): string {
+  if (window.kind === "sell") return running ? "Selling" : "Sell";
+  if (window.planned?.hold) return running ? "Holding" : "Hold";
+  return running ? "Buying" : "Buy";
 }

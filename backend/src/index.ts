@@ -148,7 +148,10 @@ function main() {
                     });
 
                     const { exportAmountForSelling, overheatSellStop } = shouldSellPower(config);
-                    const { chargingAmperageForBuying } = useShouldBuyPower({ config });
+                    const { chargingAmperageForBuying, holdWindowInForce } = useShouldBuyPower({
+                      config,
+                      temperatures,
+                    });
 
                     const { mqttValues } = useFromMqttProvider();
                     const { $usbValues, inverterStatus } = useInverterComms();
@@ -165,6 +168,7 @@ function main() {
                           currentBatteryPower: currentPower,
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                           chargingAmperageForBuying,
+                          holdWindowInForce,
                           acChargingEnabledOnInverter: () => $usbValues.ac_charge_battery === "enabled",
                           inverterStatus,
                         }),

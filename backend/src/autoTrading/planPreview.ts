@@ -174,7 +174,7 @@ for (const w of plan.sells) {
   console.log(`SELL ${fmt(w.startMs)} → ${fmt(w.endMs)} @ ${w.watts}W | ${w.reason}`);
 }
 for (const w of plan.buys) {
-  console.log(`BUY  ${fmt(w.startMs)} → ${fmt(w.endMs)} @ ${w.watts}W | ${w.reason}`);
+  console.log(`${w.hold ? "HOLD" : "BUY "} ${fmt(w.startMs)} → ${fmt(w.endMs)} @ ${w.watts}W | ${w.reason}`);
 }
 if (!plan.sells.length && !plan.buys.length) console.log("(no windows planned)");
 console.log("\nNotes:");

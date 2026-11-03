@@ -25,7 +25,9 @@
  * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
  * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying goes in
  * blocks and can stock up for after the horizon, the sells get a second pass once the buys have filled the
- * battery, and the unpriced tail is priced at the expected spot where that is higher.
+ * battery, and the unpriced tail is priced at the expected spot where that is higher. With hold_enabled it
+ * finally holds (holdAllocation.ts): in cheap dark quarters no trade took, the house runs from the grid
+ * through a trickle buy window while the battery keeps its energy.
  */
 
 import { simulate } from "./simulate.ts";
@@ -33,6 +35,7 @@ import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import { allocateArbitragePairs, preBuyAtCheapHours } from "./buyAllocation.ts";
+import { allocateHolds, holdNote, plannedHoldSlots } from "./holdAllocation.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
 import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
 import { SLOT_MS } from "./slotDuration.ts";
@@ -118,6 +121,12 @@ export function generatePlan(input: PlannerInput): PlanResult {
   const arbitrage = allocateArbitragePairs(allocation, current, acceptedSell, acceptedBuy, notes);
   current = arbitrage.result;
 
+  // ---- With a terminal value, the holds (holdAllocation.ts): last, in the quarters no trade took. Before
+  // the buys they "averted" the shortfall at dearer quarters than the pre-buy would have bought at, and left
+  // it nothing to do: ~100–230 SEK per winter worse than this in the backtest ----
+  const holdPass = allocateHolds(allocation, current);
+  current = holdPass.result;
+
   // ---- Merge windows (after all passes so arbitrage sells merge in too) ----
   const { windows: sellWindows, droppedShort } = mergeAcceptedSlots(
     slots,
@@ -136,6 +145,19 @@ export function generatePlan(input: PlannerInput): PlanResult {
 
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
 
+  // ---- Hold windows, as buy windows at the hold power: the hold pass left only runs of at least
+  // hold_min_window_minutes, and dropping a short sell run above frees no quarter a hold could have had ----
+  const holdSlots = plannedHoldSlots(allocation);
+  const { windows: holdWindows } = mergeAcceptedSlots(
+    slots,
+    holdSlots,
+    slots.map(slot => slot.holdW),
+    "buy",
+    knobs.hold_min_window_minutes
+  );
+  const holdPlanNote = holdNote(allocation, holdSlots, holdWindows.length, holdPass.budgetCut);
+  if (holdPlanNote) notes.push(holdPlanNote);
+
   // ---- Package result ----
   const spotsAll = pricedSlots.map(slot => slot.spot!).sort((lower, higher) => lower - higher);
   const packaging: PackagingContext = {
@@ -145,9 +167,14 @@ export function generatePlan(input: PlannerInput): PlanResult {
     spotsAll,
     arbitrageBuySlots: new Set([...arbitrage.arbitrageBuySlots, ...resoldStockingSlots]),
     stockingBuySlots: preBuy.stockingBuySlots,
+    holdSlots: new Set(holdSlots),
+    endEnergySekPerKwh: valuation.endEnergySekPerKwh,
   };
   const sells = sellWindows.map(window => toPlanned(window, packaging));
-  const buys = buyWindows.map(window => toPlanned(window, packaging));
+  // A hold chained to a buy block is a power step between two windows, ordered by start like the schedule
+  const buys = [...buyWindows, ...holdWindows]
+    .sort((earlier, later) => earlier.startMs - later.startMs)
+    .map(window => toPlanned(window, packaging));
 
   if (base.violationWh > 1) {
     notes.push(
@@ -317,6 +344,7 @@ export function buildSlots(input: PlannerInput): Slot[] {
       fixedBuyW: windowPowerAt(fixedBuys, startMs, endMs),
       feedInAtStartW: 0,
       runningWindowStartMs: undefined,
+      holdW: 0,
     });
   };
 

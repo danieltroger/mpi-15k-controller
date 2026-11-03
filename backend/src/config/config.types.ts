@@ -85,6 +85,33 @@ export type AutomaticTradingConfig = {
    */
   terminal_value_forecast_wait_seconds: number;
   /**
+   * Hold: in cheap dark quarters the planner writes a buy window at hold_power_watts, so the house runs
+   * from the grid and the battery keeps its energy for pricier hours (autoTrading/holdAllocation.ts).
+   * Planned only while the terminal value applies: without it kept energy is worth nothing to the planner.
+   * On, every buy window at or below HOLD_CLASS_MAX_WATTS (300 W) runs as a hold at runtime, a hand-written
+   * one too (buying/scheduledBuyDecision.ts); off, none does.
+   */
+  hold_enabled: boolean;
+  /** Charging power of a hold window. Bounds in plannerKnobBounds.ts, clamped (as every hold_* number). */
+  hold_power_watts: number;
+  /** The inverter's extra grid draw while holding vs idling, charged by the simulation */
+  hold_overhead_watts: number;
+  /** A held quarter must gain this much per kWh the house imports in it */
+  hold_margin_sek_per_kwh: number;
+  /** Hold runs shorter than this are dropped (after bridging) */
+  hold_min_window_minutes: number;
+  /** Gaps up to this long between two holds are held through when that costs ≤ fragmentation_tolerance_sek_per_window */
+  hold_bridge_minutes: number;
+  /**
+   * Runtime hold guard (buying/holdWindowGuard.ts): a hold drops out (the battery serves the house) once a
+   * phase's projected grid current reaches scheduled_power_buying.max_grid_input_amperage minus this
+   */
+  hold_grid_margin_amps: number;
+  /** …and resumes once every phase has stayed comfortably below that (and the battery warm) this long */
+  hold_reentry_minutes: number;
+  /** …and stays out while the coldest battery probe is at or below this (never below the freezing P1 + 1 °C) */
+  hold_min_battery_temp_celsius: number;
+  /**
    * Minutes the inverter takes to ramp grid feed-in from 0 to the full inverter_max_ac_output_watts
    * (grid safety). It's a rate: a smaller target is reached proportionally sooner, and a mid-run
    * step-up ramps too. Decreases are immediate.

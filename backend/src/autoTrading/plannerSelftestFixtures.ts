@@ -49,6 +49,13 @@ export const baseKnobs: PlannerKnobs = {
   terminal_value_forecast_max_deviation_sek: 1,
   terminal_value_forecast_max_age_hours: 6,
   terminal_value_forecast_wait_seconds: 30,
+  // Off, like the config default; on, it only acts with the terminal value (holdAllocation.ts)
+  hold_enabled: false,
+  hold_power_watts: 100,
+  hold_overhead_watts: 100,
+  hold_margin_sek_per_kwh: 0.2,
+  hold_min_window_minutes: 30,
+  hold_bridge_minutes: 30,
 };
 
 /** Every month: a terminal-value scenario is in season whatever day the selftest runs on */

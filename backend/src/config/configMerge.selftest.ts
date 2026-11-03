@@ -105,6 +105,38 @@ check(
     terminal_value_forecast_wait_seconds === 30
 );
 
+// ——— automatic_trading stored before the hold ———
+const {
+  hold_enabled,
+  hold_power_watts,
+  hold_overhead_watts,
+  hold_margin_sek_per_kwh,
+  hold_min_window_minutes,
+  hold_bridge_minutes,
+  hold_grid_margin_amps,
+  hold_reentry_minutes,
+  hold_min_battery_temp_celsius,
+  ...tradingBeforeHold
+} = default_config.automatic_trading;
+const healedHoldTrading = mergeWithDefaults({
+  automatic_trading: { ...tradingBeforeHold, enabled: true, terminal_value_mode: "trailing" },
+} as unknown as Partial<Config>).automatic_trading;
+check(
+  "merge: an older automatic_trading picks up the hold knobs, off (the planner and the hold guard read them raw)",
+  healedHoldTrading.enabled === true &&
+    healedHoldTrading.terminal_value_mode === "trailing" &&
+    healedHoldTrading.hold_enabled === false &&
+    hold_enabled === false &&
+    healedHoldTrading.hold_power_watts === hold_power_watts &&
+    healedHoldTrading.hold_overhead_watts === hold_overhead_watts &&
+    healedHoldTrading.hold_margin_sek_per_kwh === hold_margin_sek_per_kwh &&
+    healedHoldTrading.hold_min_window_minutes === hold_min_window_minutes &&
+    healedHoldTrading.hold_bridge_minutes === hold_bridge_minutes &&
+    healedHoldTrading.hold_grid_margin_amps === hold_grid_margin_amps &&
+    healedHoldTrading.hold_reentry_minutes === hold_reentry_minutes &&
+    healedHoldTrading.hold_min_battery_temp_celsius === hold_min_battery_temp_celsius
+);
+
 // ——— scheduled_power_selling stored before the overheat stop's inverter-temperature limits ———
 const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius, ...olderSelling } =
   default_config.scheduled_power_selling;

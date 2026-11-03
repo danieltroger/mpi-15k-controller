@@ -7,8 +7,23 @@ import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { inverterIdleWatts } from "../battery/ahLedgerDerivedValues.ts";
 import type { Config } from "../config/config.types.ts";
+import type { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
+import { decideScheduledBuy, type ScheduledBuy, wattsForInverter } from "./scheduledBuyDecision.ts";
+import { useHoldWindowGuard } from "./useHoldWindowGuard.ts";
+import { holdEnabledKnob } from "../autoTrading/plannerKnobs.ts";
 
-export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
+/**
+ * The battery-side amps the buy schedule asks for, and whether a hold window (a buy window at hold power,
+ * scheduledBuyDecision.ts) is what it asks for right now: the stuck-inverter alert must not read a hold's
+ * near-idle battery as a latch.
+ */
+export function useShouldBuyPower({
+  config,
+  temperatures,
+}: {
+  config: Accessor<Config>;
+  temperatures: ReturnType<typeof useTemperatures>;
+}) {
   const { clampedSocAh } = useBatteryValuesProvider();
   // Inverter idle draw the grid-charge sizing must leave headroom for; from the Ah ledger (drain_a × v_discharge).
   const idleConsumptionWatts = createMemo(() => inverterIdleWatts(config()));
@@ -51,26 +66,37 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
 
   let hitSOCLimit = false;
 
-  const powerFromSchedule = createMemo(() => {
+  // The SOC gate stops charging windows; with hold_enabled on, hold windows are exempt (scheduledBuyDecision.ts
+  // says why). Off, every window is gated as before holds existed.
+  const holdEnabled = createMemo(() => holdEnabledKnob(config().automatic_trading.hold_enabled));
+  const scheduledBuy = createMemo<ScheduledBuy | undefined>(() => {
     const soc = clampedSocAh();
     if (soc === undefined) return;
-    const { only_buy_below_soc, start_buying_again_below_soc } = config().scheduled_power_buying;
-    const limitToUse = hitSOCLimit ? start_buying_again_below_soc : only_buy_below_soc;
-    // take the maximum value of all schedule items
-    const values = scheduleOutput().map(schedule => schedule()());
-    let result = Math.max(...values);
-    if (Math.abs(result) === Infinity) {
-      result = 0;
-    }
+    const decision = decideScheduledBuy({
+      ...config().scheduled_power_buying,
+      scheduledWattsPerWindow: scheduleOutput().map(schedule => schedule()()),
+      soc,
+      hitSocLimit: hitSOCLimit,
+      holdEnabled: holdEnabled(),
+    });
+    hitSOCLimit = decision.hitSocLimit;
+    return decision;
+  });
+  const holdWatts = createMemo(() => scheduledBuy()?.holdWatts ?? 0);
+  const holdWanted = createMemo(() => holdWatts() > 0);
+  const { holdAllowed } = useHoldWindowGuard({
+    config,
+    holdWanted,
+    holdWatts,
+    idleConsumptionWatts,
+    temperatures,
+  });
+  const holdWindowInForce = createMemo(() => holdWanted() && holdAllowed());
 
-    if (soc < limitToUse) {
-      hitSOCLimit = false;
-      return result;
-    } else if (result) {
-      // Only allow hitting SOC limit while we're buying power
-      hitSOCLimit = true;
-    }
-    return 0;
+  const powerFromSchedule = createMemo(() => {
+    const decision = scheduledBuy();
+    if (!decision) return;
+    return wattsForInverter(decision, holdAllowed());
   });
 
   const maxGridAmps = createMemo(() => config().scheduled_power_buying.max_grid_input_amperage);
@@ -91,7 +117,8 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
     return Math.min(unlimitedAmperage, maxAmperage);
   });
 
-  // Round to 10-ampere accuracy for now to avoid running into rate-limiting too much
+  // Whole amps, at least 1 (a hold at 50 W is MUCHGC0010, at 100 W MUCHGC0020): the write throttle
+  // (setterChangeThrottle.ts) is what keeps the per-phase load noise from reaching the inverter
   const chargingAmperageForBuying = createMemo(() => {
     const amperage = chargingAmperageForBuyingUnlimited();
     if (!amperage) return amperage;
@@ -113,7 +140,7 @@ export function useShouldBuyPower({ config }: { config: Accessor<Config> }) {
 
   useLogGridAmperageEvaluation({ maxBatteryChargingAmperage, chargingAmperageForBuying });
 
-  return { chargingAmperageForBuying };
+  return { chargingAmperageForBuying, holdWindowInForce };
 }
 
 export function useLogGridAmperageEvaluation({
