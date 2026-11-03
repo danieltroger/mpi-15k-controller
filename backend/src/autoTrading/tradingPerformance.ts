@@ -1,9 +1,10 @@
 import type Influx from "influx";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
+import { settleBacklog } from "./settlementBacklog.ts";
 import { type AutoTraderState, type DayForecast, type RealizedDay, saveAutoTraderState } from "./autoTraderState.ts";
 
 /**
@@ -87,14 +88,14 @@ export function captureForecastLog(state: AutoTraderState, input: PlannerInput, 
       planned_sell_kwh: round1(day.sellKwh),
     };
   }
-  const cutoff = stockholmDateOf(input.nowMs - 7 * 24 * 3600_000);
+  const cutoff = addDays(todayStr, -7);
   state.forecast_log = Object.fromEntries(Object.entries(log).filter(([date]) => date >= cutoff));
 }
 
 /**
  * Settle every completed local day not yet measured (up to a few days of backlog, so a transient
- * failure on one day is retried on the next run rather than stranded), writing each day's realized
- * P&L + forecast error to InfluxDB. Non-fatal throughout.
+ * failure on one day is retried on the next run rather than stranded: settlementBacklog.ts), writing
+ * each day's realized P&L + forecast error to InfluxDB. Non-fatal throughout.
  */
 export async function settleRecentDays(
   influxClient: Influx.InfluxDB | undefined,
@@ -105,21 +106,16 @@ export async function settleRecentDays(
   if (!influxClient || settlementInFlight) return;
   settlementInFlight = true;
   try {
-    const today = stockholmDateOf(Date.now());
-    const candidates: string[] = [];
-    for (let daysAgo = 3; daysAgo >= 1; daysAgo--) {
-      const date = stockholmDateOf(Date.now() - daysAgo * 24 * 3600_000);
-      if (date >= today) continue; // only fully-completed days
-      if (state.last_settled_date && date <= state.last_settled_date) continue;
-      candidates.push(date);
-    }
-    for (const date of candidates) {
-      const realized = await settleTradingDay(influxClient, date, priceArea, fees, state.forecast_log[date]);
-      if (!realized) continue; // e.g. prices not yet published / a transient hiccup — retry next run
-      state.last_settled_date = date;
-      state.last_settlement = { ...realized, settled_at: new Date().toISOString() };
-      await saveAutoTraderState(state);
-    }
+    await settleBacklog({
+      today: stockholmDateOf(Date.now()),
+      lastSettledDate: state.last_settled_date,
+      settleDay: date => settleTradingDay(influxClient, date, priceArea, fees, state.forecast_log[date]),
+      recordSettled: async (date, realized) => {
+        state.last_settled_date = date;
+        state.last_settlement = { ...realized, settled_at: new Date().toISOString() };
+        await saveAutoTraderState(state);
+      },
+    });
   } finally {
     settlementInFlight = false;
   }

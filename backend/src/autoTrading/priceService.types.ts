@@ -7,7 +7,7 @@ import type { PriceSlot15 } from "./planner.types.ts";
  */
 export type FetchedPrices = {
   slots: PriceSlot15[];
-  /** Whether the last fetched day extends past ~22:00 local tomorrow (i.e. tomorrow's prices are in) */
+  /** Whether `slots` hold any of tomorrow's (the next Stockholm calendar day's) prices, i.e. they're published */
   coversTomorrow: boolean;
   fetchedAtMs: number;
   horizonEndMs: number;

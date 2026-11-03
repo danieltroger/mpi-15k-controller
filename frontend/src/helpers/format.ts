@@ -1,5 +1,6 @@
 import { type Accessor, createSignal, onCleanup } from "solid-js";
 import { isServer } from "solid-js/web";
+import { addDays, stockholmDateOf } from "../../../backend/src/utilities/stockholmDate";
 
 /**
  * Shared number/time formatting so every page shows "6.9 kW" and "2 min ago" instead of raw
@@ -77,10 +78,11 @@ export function formatShortDateTime(msOrIso: number | string | Date): string {
 
 /** "Today" / "Tomorrow" / "lör 12 juli" for schedule windows. */
 export function formatDayWord(targetMs: number, nowMs: number): string {
-  const dayString = (ms: number) => new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
-  const target = dayString(targetMs);
-  if (target === dayString(nowMs)) return "Today";
-  if (target === dayString(nowMs + 24 * 3600 * 1000)) return "Tomorrow";
+  const target = stockholmDateOf(targetMs);
+  const today = stockholmDateOf(nowMs);
+  if (target === today) return "Today";
+  // The next calendar day, not the date of now + 24 h, which is off by one next to midnight on DST days
+  if (target === addDays(today, 1)) return "Tomorrow";
   return new Date(targetMs).toLocaleDateString("sv-SE", { weekday: "short", day: "numeric", month: "short" });
 }
 
