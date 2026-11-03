@@ -12,7 +12,7 @@
  * money against the terminal value alone, ~100–230 SEK per winter behind holding last.
  */
 
-import { holdsModelled, holdsUnplannableReason, overlapsVeto, simulate } from "./simulate.ts";
+import { holdGridDrawWatts, holdsModelled, holdsUnplannableReason, overlapsVeto, simulate } from "./simulate.ts";
 import { isRunningHoldSlot } from "./runningHold.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type { AllocationContext, SimResult } from "./planner.types.ts";
@@ -33,9 +33,9 @@ export type HoldPassResult = {
 
 /**
  * Main: holds the free dark quarters where that pays, cheapest first, keeping a hold when the plan gains at
- * least hold_margin_sek_per_kwh per kWh the house (with the inverter's idle draw) imports in that quarter.
+ * least hold_margin_sek_per_kwh per kWh the hold draws from the grid in that quarter (holdGridImportKwh).
  * The gain is what simulate counts: the import now against the battery energy kept (its end-of-plan value,
- * a later shortfall import averted), the lost baseline feed, the trickle and hold_overhead_watts. Then gaps of
+ * a later shortfall import averted), the lost baseline feed, the net DC-in and hold_overhead_watts. Then gaps of
  * up to hold_bridge_minutes between holds are held through when that costs at most
  * fragmentation_tolerance_sek_per_window, and runs shorter than hold_min_window_minutes are dropped. Leaves
  * each hold's power in slot.holdW; a no-op unless the plan models holds. A running hold the plan re-plans
@@ -94,16 +94,23 @@ export function holdNote(
   if (!holdSlots.length) return budgetCut ? `No holds${budgetNote}` : undefined;
   const knobs = input.knobs;
   const hours = holdSlots.reduce((sum, slotIndex) => sum + slots[slotIndex].durationH, 0);
-  const houseKwh = holdHouseKwh(context, holdSlots);
-  return `Holding in ${windowCount} window(s), ${hours.toFixed(1)} h: the house runs on the grid at cheap hours (~${houseKwh.toFixed(1)} kWh) and the battery keeps its energy — ${knobs.hold_power_watts} W trickle, ${knobs.hold_overhead_watts} W assumed extra grid draw, ${knobs.hold_margin_sek_per_kwh} SEK/kWh margin${budgetNote}`;
+  const gridKwh = holdGridImportKwh(context, holdSlots);
+  return `Holding in ${windowCount} window(s), ${hours.toFixed(1)} h: the house runs on the grid at cheap hours (~${gridKwh.toFixed(1)} kWh) and the battery keeps its energy — ${knobs.hold_power_watts} W windows netting ${knobs.hold_net_dc_in_watts} W into the battery, ${knobs.hold_overhead_watts} W assumed extra grid draw, ${knobs.hold_margin_sek_per_kwh} SEK/kWh margin${budgetNote}`;
 }
 
-/** What the house and the inverter's idle draw import over these hold slots (kWh) */
-export function holdHouseKwh(context: Pick<AllocationContext, "input" | "slots">, holdSlots: number[]): number {
+/**
+ * What these hold slots draw from the grid (kWh, simulate.ts' holdGridDrawWatts at the full net DC-in): the
+ * measure the hold margin is per kWh of. It used to be the house plus the ledger's idle draw, which is ~0 W live
+ * but was 140 W in the backtest's planner, so the live margin was ~20 % laxer than the backtested one.
+ */
+export function holdGridImportKwh(context: Pick<AllocationContext, "input" | "slots">, holdSlots: number[]): number {
   const { input, slots } = context;
   return (
     holdSlots.reduce(
-      (sum, slotIndex) => sum + (slots[slotIndex].houseW + input.parasiticWatts) * slots[slotIndex].durationH,
+      (sum, slotIndex) =>
+        sum +
+        Math.max(0, holdGridDrawWatts(slots[slotIndex].houseW, input.knobs.hold_net_dc_in_watts, input.knobs)) *
+          slots[slotIndex].durationH,
       0
     ) / 1000
   );
@@ -120,7 +127,7 @@ function acceptCheapestHolds(pass: HoldPass) {
     .map((slot, slotIndex) => ({ slot, slotIndex }))
     .filter(({ slotIndex }) => slotHoldable(pass.context, slotIndex))
     .sort((cheaper, pricier) => cheaper.slot.spot! - pricier.slot.spot!);
-  for (const { slot } of candidates) {
+  for (const { slot, slotIndex } of candidates) {
     if (pass.trialsLeft <= 0) {
       pass.budgetCut = true;
       return;
@@ -129,8 +136,8 @@ function acceptCheapestHolds(pass: HoldPass) {
     pass.trialsLeft--;
     const trial = simulate(input, slots, sellW, buyW, valuation);
     const gainSek = trial.revenueSek - pass.current.revenueSek;
-    const houseImportKwh = ((slot.houseW + input.parasiticWatts) * slot.durationH) / 1000;
-    if (feasibleVsBase(trial) && gainSek > 0 && gainSek >= knobs.hold_margin_sek_per_kwh * houseImportKwh) {
+    const gridImportKwh = holdGridImportKwh(pass.context, [slotIndex]);
+    if (feasibleVsBase(trial) && gainSek > 0 && gainSek >= knobs.hold_margin_sek_per_kwh * gridImportKwh) {
       pass.current = trial;
     } else {
       slot.holdW = 0;

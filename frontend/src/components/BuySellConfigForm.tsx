@@ -375,7 +375,9 @@ function BuySellFormInner(props: { getConfig: Accessor<Config> }) {
           >
             With Hold at cheap hours on, a buy window of 300 W or less is a hold: the house and the car run from the
             grid, the battery keeps its energy, and the hold guard ends it if a phase gets near “Max grid draw”.
-          </Show>
+          </Show>{" "}
+          Set the car to 13 A or less: if a kettle on the car's phase ends the hold and that phase stays busy, the
+          battery charges the car for the rest of the window (up to ~40 kWh).
         </p>
         <FieldArray of={buySellForm} name="rows">
           {fieldArray => (

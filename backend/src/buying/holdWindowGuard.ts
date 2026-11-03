@@ -22,13 +22,6 @@
  * a hold's 1–6 A before EDB0, so nothing new reaches the inverter.
  */
 
-/**
- * "Comfortably below": the re-entry level sits this far under the drop-out level, so a load hovering at it
- * can't flap the hold. 2 A: with the defaults (22 A, margin 2 A) the hold drops out at 20 A and resumes
- * below 18 A, so the EV charging alone (~16.5 A per phase with the house's base load) holds, and the EV
- * plus a kettle on its phase drops out until the kettle is off.
- */
-export const REENTRY_HYSTERESIS_AMPS = 2;
 /** The battery must be this much warmer than the hold minimum to resume (the freezing P1 clears at +1 °C too) */
 export const REENTRY_HYSTERESIS_CELSIUS = 1;
 /**
@@ -74,6 +67,11 @@ export type HoldGuardSettings = {
   gridMarginAmps: number;
   /** automatic_trading.hold_reentry_minutes (bounded) */
   reentryMinutes: number;
+  /**
+   * automatic_trading.hold_reentry_hysteresis_amps (bounded): "comfortably below" is this far under the drop-out
+   * level, so a load hovering at it can't flap the hold (plannerKnobBounds.ts says what it trades off)
+   */
+  reentryHysteresisAmps: number;
   /** hold_min_battery_temp_celsius, never below the freezing P1's threshold + 1 °C (holdGuardMinBatteryCelsius) */
   minBatteryCelsius: number;
 };
@@ -272,7 +270,7 @@ function dropOutCause(
 function comfortableReadings(readings: HoldGuardReadings, settings: HoldGuardSettings): boolean {
   const { grid, coldestBatteryCelsius } = readings;
   if (grid.status !== "ok") return false;
-  if (worstPhase(grid.ampsPerPhase).amps > dropOutAmps(settings) - REENTRY_HYSTERESIS_AMPS) return false;
+  if (worstPhase(grid.ampsPerPhase).amps > dropOutAmps(settings) - settings.reentryHysteresisAmps) return false;
   return (
     coldestBatteryCelsius === undefined ||
     coldestBatteryCelsius > settings.minBatteryCelsius + REENTRY_HYSTERESIS_CELSIUS

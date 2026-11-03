@@ -1,8 +1,9 @@
 /**
- * Self-test of simulate.ts's hold slot: the house, the inverter's idle draw, hold_overhead_watts and the
- * trickle come from the grid, PV and the trickle go into the battery (the trickle only as far as there is
- * room), no baseline feed, at any SOC; a sell or a planned buy in the slot wins; fixed buy windows at hold
- * power are holds only while the plan models holds; with holds not modelled a held slot is an idle one.
+ * Self-test of simulate.ts's hold slot: the house, hold_overhead_watts and the net DC-in's AC side come from
+ * the grid; PV and hold_net_dc_in_watts go into the battery (the net DC-in only as far as there is room, a
+ * negative one covering part of the house), while the ledger's idle draw stays a battery draw; no baseline
+ * feed, at any SOC; a sell or a planned buy in the slot wins; fixed buy windows at hold power are holds only
+ * while the plan models holds; with holds not modelled a held slot is an idle one.
  * Run from backend/ with:
  *   yarn node src/autoTrading/simulateHold.selftest.ts
  */
@@ -17,7 +18,18 @@ const SPOT = 0.4;
 const CAPACITY_WH = 65000;
 const QUARTER_H = 0.25;
 const ON: HorizonValuation = { tailSpot: SPOT, endEnergySekPerKwh: 2.5 };
-const holdKnobs = { ...baseKnobs, hold_enabled: true, hold_power_watts: 100, hold_overhead_watts: 100 };
+const NET_DC_IN_W = 40;
+const holdKnobs = {
+  ...baseKnobs,
+  hold_enabled: true,
+  hold_power_watts: 100,
+  hold_overhead_watts: 100,
+  hold_net_dc_in_watts: NET_DC_IN_W,
+};
+/** The battery's idle draw in a hold quarter (Wh): the ledger's, on the battery side as in an idle quarter */
+const HOLD_IDLE_DRAIN_WH = (PARASITIC_W / baseKnobs.discharge_efficiency) * QUARTER_H;
+/** What a hold quarter draws from the grid with the net DC-in flowing (Wh) */
+const HOLD_IMPORT_WH = (HOUSE_W + 100 + NET_DC_IN_W / baseKnobs.charge_efficiency) * QUARTER_H;
 
 /** Two dark quarters at SPOT; the first one held (or with the given fixed buy) */
 function twoQuarters({
@@ -56,16 +68,16 @@ function importPriceSek(wh: number): number {
   const idle = simulate(input, slots, none(), none(), ON);
   slots[0].holdW = 100;
   const held = simulate(input, slots, none(), none(), ON);
-  const expectedImportWh = (HOUSE_W + PARASITIC_W + 100 + 100) * QUARTER_H;
+  const expectedImportWh = HOLD_IMPORT_WH;
   const startWh = 0.6 * CAPACITY_WH;
   check(
-    "hold: the house, idle draw, overhead and trickle all come from the grid",
+    "hold: the house, the overhead and the net DC-in (over the charge efficiency) come from the grid, not the idle draw",
     Math.abs(held.importWh - expectedImportWh) < 1e-6,
-    `(${held.importWh.toFixed(1)} Wh, expected ${expectedImportWh})`
+    `(${held.importWh.toFixed(1)} Wh, expected ${expectedImportWh.toFixed(1)})`
   );
   check(
-    "hold: only the trickle goes into the battery",
-    Math.abs(held.socAfterSlot[0] - (startWh + 100 * baseKnobs.charge_efficiency * QUARTER_H)) < 1e-6,
+    "hold: the battery gets the net DC-in and still gives the ledger's idle draw",
+    Math.abs(held.socAfterSlot[0] - (startWh + NET_DC_IN_W * QUARTER_H - HOLD_IDLE_DRAIN_WH)) < 1e-6,
     `(${(held.socAfterSlot[0] - startWh).toFixed(2)} Wh)`
   );
   const idleDrainWh = startWh - idle.socAfterSlot[0];
@@ -104,9 +116,23 @@ function importPriceSek(wh: number): number {
   slots[0].holdW = 100;
   const held = simulate(input, slots, none(), none(), ON);
   check(
-    "full battery: no trickle, the house, idle draw and overhead still from the grid, SOC stays at full",
-    Math.abs(held.importWh - (HOUSE_W + PARASITIC_W + 100) * QUARTER_H) < 1e-6 && held.socAfterSlot[0] === CAPACITY_WH,
+    "full battery: no net DC-in, the house and overhead still from the grid, only the idle draw leaves the battery",
+    Math.abs(held.importWh - (HOUSE_W + 100) * QUARTER_H) < 1e-6 &&
+      Math.abs(held.socAfterSlot[0] - (CAPACITY_WH - HOLD_IDLE_DRAIN_WH)) < 1e-6,
     `(${held.importWh.toFixed(1)} Wh, SOC ${held.socAfterSlot[0]})`
+  );
+}
+
+// ---------- A negative net DC-in: the battery still covers a little of the house, the meter sees less ----------
+{
+  const { input, slots, none } = twoQuarters({ knobs: { ...holdKnobs, hold_net_dc_in_watts: -50 } });
+  slots[0].holdW = 100;
+  const held = simulate(input, slots, none(), none(), ON);
+  check(
+    "net DC-in −50 W: the grid draws 50 W less and the battery gives 50 W DC more",
+    Math.abs(held.importWh - (HOUSE_W + 100 - 50) * QUARTER_H) < 1e-6 &&
+      Math.abs(held.socAfterSlot[0] - (0.6 * CAPACITY_WH - 50 * QUARTER_H - HOLD_IDLE_DRAIN_WH)) < 1e-6,
+    `(${held.importWh.toFixed(1)} Wh)`
   );
 }
 
@@ -116,9 +142,11 @@ function importPriceSek(wh: number): number {
   slots[0].holdW = 100;
   const held = simulate(input, slots, none(), none(), ON);
   check(
-    "PV during a hold: PV and the trickle charge the battery, the import is unchanged",
-    Math.abs(held.socAfterSlot[0] - (0.6 * CAPACITY_WH + (400 + 100) * baseKnobs.charge_efficiency * QUARTER_H)) <
-      1e-6 && Math.abs(held.importWh - (HOUSE_W + PARASITIC_W + 200) * QUARTER_H) < 1e-6
+    "PV during a hold: PV and the net DC-in charge the battery, the import is unchanged",
+    Math.abs(
+      held.socAfterSlot[0] -
+        (0.6 * CAPACITY_WH + (400 * baseKnobs.charge_efficiency + NET_DC_IN_W) * QUARTER_H - HOLD_IDLE_DRAIN_WH)
+    ) < 1e-6 && Math.abs(held.importWh - HOLD_IMPORT_WH) < 1e-6
   );
 }
 
@@ -173,8 +201,7 @@ function importPriceSek(wh: number): number {
   const fixedAsHold = simulate(modelled.input, modelled.slots, modelled.none(), modelled.none(), ON);
   check(
     "holds modelled: a fixed 100 W buy window (a written hold the plan keeps) is a hold",
-    Math.abs(fixedAsHold.importWh - (HOUSE_W + PARASITIC_W + 100 + 100) * QUARTER_H) < 1e-6 &&
-      fixedAsHold.boughtWh === 0
+    Math.abs(fixedAsHold.importWh - HOLD_IMPORT_WH) < 1e-6 && fixedAsHold.boughtWh === 0
   );
   const heavy = twoQuarters({ fixedBuys: [{ ...fixedHold[0], watts: 3000 }] });
   const heavyBuy = simulate(heavy.input, heavy.slots, heavy.none(), heavy.none(), ON);

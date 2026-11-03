@@ -5,7 +5,7 @@
  * other runs (daily, startup, manual, veto-clear) pass nothing running and may reshape everything. No IO.
  */
 
-import { HOLD_CLASS_MAX_WATTS } from "./plannerKnobBounds.ts";
+import { isHoldWindow } from "./plannerKnobBounds.ts";
 import { generatePlan } from "./planner.ts";
 import { ownedEntriesAsWindows } from "./plannerInputs.ts";
 import type { AutoTraderState } from "./autoTraderState.types.ts";
@@ -60,11 +60,10 @@ function runningHoldEntry(
   runningBuys: OwnedEntries["buying"],
   holdEnabled: boolean
 ): { key: string; window: FixedWindow } | undefined {
-  if (!holdEnabled) return undefined;
   for (const [key, entry] of Object.entries(runningBuys)) {
     const watts = Number(entry.charging_power);
     const window = { startMs: +new Date(key), endMs: +new Date(entry.end_time), watts };
-    if (watts > 0 && watts <= HOLD_CLASS_MAX_WATTS && isFinite(window.startMs) && isFinite(window.endMs)) {
+    if (isHoldWindow(watts, holdEnabled) && isFinite(window.startMs) && isFinite(window.endMs)) {
       return { key, window };
     }
   }

@@ -8,7 +8,7 @@
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
-import { HOLD_CLASS_MAX_WATTS } from "./plannerKnobBounds.ts";
+import { HOLD_CLASS_MAX_WATTS, isHoldWindow } from "./plannerKnobBounds.ts";
 import {
   extraImportWatts,
   feedReadingShortfallWatts,
@@ -69,16 +69,20 @@ export function simulate(
     // Runtime never does both at once (feedWhenNoSolar errors out) — selling wins in our model
     const buySetW = sellSetW > 0 ? 0 : requestedBuyW;
 
-    const holdPowerW = modelHolds && sellSetW === 0 ? holdPowerInSlot(slot, buyW[i]) : 0;
+    const holdPowerW = modelHolds && sellSetW === 0 ? holdPowerInSlot(slot, buyW[i], knobs.hold_enabled) : 0;
     if (holdPowerW > 0) {
-      // A hold (a buy window at a trickle): the house, the inverter's idle draw and its extra draw in charge
-      // mode come from the grid; PV and the trickle go into the battery, the trickle only as far as the
-      // battery has room; no baseline feed. The buy branch below credits PV to the house and the battery
-      // both and stops a window at 98 %; a hold runs the house from the grid at any SOC.
-      const headroomAcW = Math.max(0, (cap - socWh) / knobs.charge_efficiency / slot.durationH);
-      const trickleW = Math.max(0, Math.min(holdPowerW, headroomAcW - slot.pvW));
-      const holdImportWh = (slot.houseW + parasiticW + trickleW + knobs.hold_overhead_watts) * slot.durationH;
-      socWh += (slot.pvW + trickleW) * knobs.charge_efficiency * slot.durationH;
+      // A hold (a buy window at a trickle): the house and the inverter's extra draw in charge mode come from the
+      // grid. PV and the hold's net DC-in go into the battery: hold_net_dc_in_watts, what the measured holds
+      // netted at the battery's terminals (the trickle less the inverter's own DC draw) whatever the window's
+      // power, and only as far as the battery has room. The ledger's idle draw stays a battery draw: it tracks
+      // the hall's zero drift, which a hold doesn't move onto the grid. No baseline feed. The buy branch below
+      // credits PV to the house and the battery both and stops a window at 98 %; a hold runs the house from the
+      // grid at any SOC.
+      const roomDcW = Math.max(0, (cap - socWh) / slot.durationH - slot.pvW * knobs.charge_efficiency);
+      const netDcInW = Math.min(knobs.hold_net_dc_in_watts, roomDcW);
+      const holdImportWh = holdGridDrawWatts(slot.houseW, netDcInW, knobs) * slot.durationH;
+      socWh +=
+        (slot.pvW * knobs.charge_efficiency + netDcInW - parasiticW / knobs.discharge_efficiency) * slot.durationH;
       if (socWh > cap) {
         // PV beyond the battery's room flows to the grid by itself, as in a full battery's idle slot
         const overflowInBatteryWh = socWh - cap;
@@ -247,14 +251,28 @@ export function holdsUnplannableReason(knobs: Pick<PlannerKnobs, "max_buy_power_
 }
 
 /**
- * The hold power in a slot that doesn't sell, in a plan that models holds: the hold pass's (slot.holdW), or
- * a fixed buy window in the hold class (HOLD_CLASS_MAX_WATTS: a written hold the plan keeps, or the user's,
- * which the runtime runs as a hold too while hold_enabled is on).
- * A planned buy is a buy, and a fixed buy above hold power one too, even over a planned hold.
+ * What a hold draws from the grid (W): the house, the inverter's extra draw in charge mode and the net DC-in's
+ * AC side. A positive net DC-in comes through the charger; a negative one is the battery covering that much
+ * of the house, which the meter then doesn't see (how hold_overhead_watts was measured: meter − house − the
+ * hall's DC-in/0.95, or + its DC-out). Also the measure of the hold margin (holdAllocation.ts).
  */
-function holdPowerInSlot(slot: Slot, plannedBuyW: number): number {
+export function holdGridDrawWatts(
+  houseW: number,
+  netDcInW: number,
+  knobs: Pick<PlannerKnobs, "hold_overhead_watts" | "charge_efficiency">
+): number {
+  return houseW + knobs.hold_overhead_watts + (netDcInW > 0 ? netDcInW / knobs.charge_efficiency : netDcInW);
+}
+
+/**
+ * The hold power in a slot that doesn't sell, in a plan that models holds (> 0 = the slot holds): the hold
+ * pass's (slot.holdW), or a fixed buy window in the hold class (isHoldWindow: a written hold the plan keeps,
+ * or the user's, which the runtime runs as a hold too while hold_enabled is on). A planned buy is a buy, and
+ * a fixed buy above hold power one too, even over a planned hold.
+ */
+function holdPowerInSlot(slot: Slot, plannedBuyW: number, holdEnabled: boolean): number {
   if (plannedBuyW > 0) return 0;
-  if (slot.fixedBuyW > 0) return slot.fixedBuyW <= HOLD_CLASS_MAX_WATTS ? slot.fixedBuyW : 0;
+  if (slot.fixedBuyW > 0) return isHoldWindow(slot.fixedBuyW, holdEnabled) ? slot.fixedBuyW : 0;
   return slot.holdW;
 }
 

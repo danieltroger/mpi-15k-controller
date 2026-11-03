@@ -18,7 +18,7 @@
 
 import { holdsModelled } from "./simulate.ts";
 import { terminalValuationFor } from "./terminalValue.ts";
-import { HOLD_CLASS_MAX_WATTS } from "./plannerKnobBounds.ts";
+import { isHoldWindow } from "./plannerKnobBounds.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type { PlannerInput, Slot } from "./planner.types.ts";
 
@@ -43,8 +43,7 @@ export function resolveRunningHold(input: PlannerInput): ResolvedRunningHold {
     currentQuarter !== undefined &&
     runningHold.startMs <= input.nowMs &&
     runningHold.endMs > input.nowMs &&
-    runningHold.watts > 0 &&
-    runningHold.watts <= HOLD_CLASS_MAX_WATTS &&
+    isHoldWindow(runningHold.watts, input.knobs.hold_enabled) &&
     holdsModelled(input.knobs, { endEnergySekPerKwh });
   if (!reshapes) {
     return {

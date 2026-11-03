@@ -250,7 +250,7 @@ finishSelftest();
 
 /**
  * A 90 % battery, 600 W house, PV over the house 09:00–15:00 both days; the nights 22:00–06:00 at 0.3 SEK,
- * the evenings 17–21 at 2.0, the rest 1.2, published through the end of tomorrow; the terminal value on at
+ * the evenings 17–21 at 2.0, the rest 1.3, published through the end of tomorrow; the terminal value on at
  * the given expected spot
  */
 function nightInput(
@@ -270,14 +270,15 @@ function nightInput(
         if (blipAtMs !== undefined && testDayStartMs + hour * HOUR_MS === blipAtMs) return 1.6;
         if (hourOfDay >= 22 || hourOfDay < 6) return NIGHT_SPOT;
         if (hourOfDay >= 17 && hourOfDay < 21) return 2.0;
-        return 1.2;
+        return 1.3;
       }),
       solarWattsAt: ms => {
         const hourOfDay = ((ms - testDayStartMs) / HOUR_MS) % 24;
         return hourOfDay >= 9 && hourOfDay <= 15 ? 2000 : 0;
       },
       houseLoadWattsAt: () => 600,
-      parasiticWatts: 230,
+      // The Ah ledger's idle draw, as live (~0 W): the inverter's own draw is in the hold's overhead and net DC-in
+      parasiticWatts: 0,
       socPercent,
       capacityWh: 65000,
       constraintTailHours: 12,

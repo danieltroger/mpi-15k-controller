@@ -41,6 +41,7 @@ export type PlannerKnobs = Pick<
   | "hold_enabled"
   | "hold_power_watts"
   | "hold_overhead_watts"
+  | "hold_net_dc_in_watts"
   | "hold_margin_sek_per_kwh"
   | "hold_min_window_minutes"
   | "hold_bridge_minutes"

@@ -96,7 +96,12 @@ export type AutomaticTradingConfig = {
   hold_power_watts: number;
   /** The inverter's extra grid draw while holding vs idling, charged by the simulation */
   hold_overhead_watts: number;
-  /** A held quarter must gain this much per kWh the house imports in it */
+  /**
+   * What a hold nets into the battery at its terminals (hall sensor 2: the trickle less the inverter's own DC
+   * draw), credited by the simulation; may be negative
+   */
+  hold_net_dc_in_watts: number;
+  /** A held quarter must gain this much per kWh the hold draws from the grid in it */
   hold_margin_sek_per_kwh: number;
   /** Hold runs shorter than this are dropped (after bridging) */
   hold_min_window_minutes: number;
@@ -109,6 +114,8 @@ export type AutomaticTradingConfig = {
   hold_grid_margin_amps: number;
   /** …and resumes once every phase has stayed comfortably below that (and the battery warm) this long */
   hold_reentry_minutes: number;
+  /** "Comfortably below": this many amps under the drop-out level */
+  hold_reentry_hysteresis_amps: number;
   /** …and stays out while the coldest battery probe is at or below this (never below the freezing P1 + 1 °C) */
   hold_min_battery_temp_celsius: number;
   /**

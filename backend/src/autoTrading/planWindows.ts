@@ -5,7 +5,7 @@
  * auto-trader writes to the schedule — its start, expected energy, average spot and the reason text.
  */
 
-import { holdHouseKwh } from "./holdAllocation.ts";
+import { holdGridImportKwh } from "./holdAllocation.ts";
 import { isRunningHoldSlot } from "./runningHold.ts";
 import type { PlannedWindow, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
@@ -138,20 +138,20 @@ export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContex
 }
 
 /**
- * "hold: house on grid at X, battery saved for Y": what the house imports at what price, and what the kept
+ * "hold: house on grid at X, battery saved for Y": what the hold draws from the grid at what price, and what the kept
  * energy is for — the dearest spot still ahead in the prices, or, with none dearer, the end-of-plan value
  */
 function holdReason(mergedWindow: MergedWindow, packaging: PackagingContext, avgSpot: number): string {
   const { slots, spotsAll, endEnergySekPerKwh } = packaging;
   const lastSlotIndex = mergedWindow.slotIndexes[mergedWindow.slotIndexes.length - 1];
-  const houseKwh = holdHouseKwh(packaging, mergedWindow.slotIndexes);
+  const gridKwh = holdGridImportKwh(packaging, mergedWindow.slotIndexes);
   const laterSpots = slots.slice(lastSlotIndex + 1).flatMap(slot => (slot.spot === undefined ? [] : [slot.spot]));
   const laterPeakSpot = laterSpots.length ? Math.max(...laterSpots) : undefined;
   const savedFor =
     laterPeakSpot !== undefined && laterPeakSpot > avgSpot
       ? `pricier hours (up to ${laterPeakSpot.toFixed(2)} SEK/kWh spot ahead)`
       : `after the horizon (worth ${endEnergySekPerKwh.toFixed(2)} SEK/kWh)`;
-  return `hold: house on grid at ${avgSpot.toFixed(2)} SEK/kWh spot (P${percentileOf(avgSpot, spotsAll)}), ~${formatApproximateKwh(houseKwh)} kWh; battery saved for ${savedFor}`;
+  return `hold: house on grid at ${avgSpot.toFixed(2)} SEK/kWh spot (P${percentileOf(avgSpot, spotsAll)}), ~${formatApproximateKwh(gridKwh)} kWh from the grid; battery saved for ${savedFor}`;
 }
 
 /**

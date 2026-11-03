@@ -14,7 +14,7 @@ import {
 import type { Config } from "../../../../backend/src/config/config.types";
 import type { AutoTraderStatus, StateWindow } from "../../../../backend/src/autoTrading/autoTraderState.types";
 import { addDays, stockholmDateOf } from "../../../../backend/src/utilities/stockholmDate";
-import { HOLD_CLASS_MAX_WATTS } from "../../../../backend/src/autoTrading/plannerKnobBounds";
+import { isHoldWindow } from "../../../../backend/src/autoTrading/plannerKnobBounds";
 
 type UpcomingWindow = ScheduleWindow & { planned?: StateWindow };
 
@@ -171,11 +171,10 @@ export function NextUpCard() {
 
 /**
  * Sell / Buy / Hold, as a verb while it runs. A buy window is a hold the way the runtime tells one
- * (scheduledBuyDecision.ts): hold_enabled on and at most HOLD_CLASS_MAX_WATTS, the planner's and a
- * hand-written one (the car charged from the grid) alike.
+ * (isHoldWindow), the planner's and a hand-written one (the car charged from the grid) alike.
  */
 function windowLabel(window: UpcomingWindow, running: boolean, holdEnabled: boolean): string {
   if (window.kind === "sell") return running ? "Selling" : "Sell";
-  if (holdEnabled && window.watts > 0 && window.watts <= HOLD_CLASS_MAX_WATTS) return running ? "Holding" : "Hold";
+  if (window.kind === "buy" && isHoldWindow(window.watts, holdEnabled)) return running ? "Holding" : "Hold";
   return running ? "Buying" : "Buy";
 }

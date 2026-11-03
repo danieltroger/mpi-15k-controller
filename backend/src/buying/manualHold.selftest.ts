@@ -16,7 +16,6 @@ import {
   type HoldGuardSettings,
   type HoldGuardState,
   projectedHoldGridAmps,
-  REENTRY_HYSTERESIS_AMPS,
   stepHoldWindowGuard,
 } from "./holdWindowGuard.ts";
 import { generatePlan } from "../autoTrading/planner.ts";
@@ -86,7 +85,13 @@ const EV_KEY = new Date(EV_WINDOW.startMs).toISOString();
 // Live: 22 A max grid draw, margin 2 A → out at 20 A, back below 18 A. The projection adds a third of the
 // inverter's idle draw (the Ah ledger's, ~0 W), the hold's extra grid draw (170 W) and the trickle (100 W) to
 // each phase.
-const LIVE: HoldGuardSettings = { maxGridInputAmps: 22, gridMarginAmps: 2, reentryMinutes: 15, minBatteryCelsius: 5 };
+const LIVE: HoldGuardSettings = {
+  maxGridInputAmps: 22,
+  gridMarginAmps: 2,
+  reentryMinutes: 15,
+  reentryHysteresisAmps: 2,
+  minBatteryCelsius: 5,
+};
 const INVERTER_AND_TRICKLE_WATTS = 0 + 170 + 100;
 const GRID_VOLTS = 235;
 const KETTLE_WATTS = 2000;
@@ -97,7 +102,7 @@ const KETTLE_WATTS = 2000;
   const busiest = busiestPhaseAmps(evAtNight);
   check(
     "EV at 16 A with the night's p90 base projects ~17.3 A on its busiest phase: under 18 A, the hold runs",
-    busiest > 17 && busiest < dropOutAmps(LIVE) - REENTRY_HYSTERESIS_AMPS,
+    busiest > 17 && busiest < dropOutAmps(LIVE) - LIVE.reentryHysteresisAmps,
     `(${busiest.toFixed(1)} A)`
   );
   const night = runGuard([...repeatReading(evAtNight, 60 * 60)], LIVE);
@@ -133,7 +138,8 @@ const KETTLE_WATTS = 2000;
     stuckOut.slice(0, 60).every(state => state.phase === "allowed") &&
       stuckOut.slice(250).every(state => state.phase === "dropped_out")
   );
-  // What gets the hold back in: the car at 13 A (Tesla app), or a 20 A breaker's margin of 0 (out at 22 A)
+  // What gets the hold back in: the car at 13 A (Tesla app), a 20 A breaker's margin of 0 (out at 22 A), or a
+  // narrower re-entry gap (hold_reentry_hysteresis_amps)
   const evAt13Amps = evReadings({ busiestPhaseBaseWatts: 450, evAmps: 13 });
   const evAt13AndKettle = evReadings({ busiestPhaseBaseWatts: 450 + KETTLE_WATTS, evAmps: 13 });
   check(
@@ -148,6 +154,13 @@ const KETTLE_WATTS = 2000;
     runGuard(
       [...repeatReading(evBusyPhase, 60), ...repeatReading(evAndKettle, 180), ...repeatReading(evBusyPhase, 16 * 60)],
       { ...LIVE, gridMarginAmps: 0 }
+    ).at(-1)?.phase === "allowed"
+  );
+  check(
+    "a 1 A re-entry gap (back below 19 A): back in 15 min after the kettle at 16 A, the breakers' level unchanged",
+    runGuard(
+      [...repeatReading(evBusyPhase, 60), ...repeatReading(evAndKettle, 180), ...repeatReading(evBusyPhase, 16 * 60)],
+      { ...LIVE, reentryHysteresisAmps: 1 }
     ).at(-1)?.phase === "allowed"
   );
 }
@@ -288,7 +301,8 @@ function eveningInput({
         return hourOfDay >= 9 && hourOfDay <= 15 ? 2000 : 0;
       },
       houseLoadWattsAt: () => 600,
-      parasiticWatts: 230,
+      // The Ah ledger's idle draw, as live (~0 W)
+      parasiticWatts: 0,
       socPercent: 80,
       capacityWh: 65000,
       constraintTailHours: 12,
