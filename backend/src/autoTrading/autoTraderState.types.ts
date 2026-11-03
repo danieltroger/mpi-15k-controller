@@ -1,4 +1,4 @@
-import type { PlanProjection, SocSeriesPoint } from "./planner.types.ts";
+import type { ExpectedSpotEstimate, PlanProjection, SocSeriesPoint } from "./planner.types.ts";
 
 /**
  * Pure type declarations for the auto trader's persisted state and its published status. Kept free
@@ -42,6 +42,12 @@ export type AutoTraderState = {
     windows: StateWindow[];
     /** Projected SOC per 15-min slot — the price/plan chart's battery line. Absent on old plans. */
     soc_series?: SocSeriesPoint[];
+    /**
+     * The expected spot after the horizon the plan valued its end energy at, and where it came from (for
+     * "forecast", the outlook's D+2…D+4 or why the trailing mean stood in). Absent while the terminal
+     * value is off or out of season, and on plans made before it was recorded.
+     */
+    expected_spot?: ExpectedSpotEstimate;
   };
   /** Exactly the schedule entries the auto trader wrote (used to tell ours from the user's) */
   owned_entries: {

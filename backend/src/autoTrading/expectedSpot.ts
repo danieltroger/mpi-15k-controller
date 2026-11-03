@@ -1,9 +1,10 @@
 /**
  * p̂, the spot price the planner expects after its priced horizon: the terminal value and the unpriced tail
  * are priced at it (terminalValue.ts). One estimator per ExpectedSpotSource — "trailing" averages recent
- * days; a weather-based "forecast" source (a pure SE3 daily price outlook) is meant to plug in next to it,
- * returning the same ExpectedSpotEstimate. Runs at plan time on the pi, so it never throws: a failure is an
- * estimate without a value, and the plan runs without a terminal value and says why in its notes.
+ * days; "forecast" takes the SE3 price outlook's predicted D+2…D+4 from the weather forecast
+ * (expectedSpotForecast.ts), with the trailing estimate as its anchor and fallback. Runs at plan time on the
+ * pi, so it never throws: a failure is an estimate without a value, and the plan runs without a terminal
+ * value and says why in its notes.
  */
 import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
@@ -11,27 +12,47 @@ import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
 import { type DailyMeanSpot, dailyMeanSpots } from "./priceHistory.ts";
 import { isExpectedSpotSource, terminalValueInSeason } from "./terminalValue.ts";
-import type { ExpectedSpotEstimate, PlannerKnobs } from "./planner.types.ts";
+import { forecastMeanSpot } from "./expectedSpotForecast.ts";
+import type { ExpectedSpotEstimate, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 
 /** The settings the estimators read: the automatic_trading section with its knobs corrected (plannerKnobs.ts) */
 export type ExpectedSpotSettings = Pick<AutomaticTradingConfig, "price_area" | "replan_retry_minutes"> &
-  Pick<PlannerKnobs, "terminal_value_mode" | "terminal_value_months" | "terminal_value_trailing_days">;
+  Pick<
+    PlannerKnobs,
+    | "terminal_value_mode"
+    | "terminal_value_months"
+    | "terminal_value_trailing_days"
+    | "terminal_value_forecast_max_deviation_sek"
+    | "terminal_value_forecast_max_age_hours"
+    | "terminal_value_forecast_wait_seconds"
+  >;
 
-type ExpectedSpotEstimator = (settings: ExpectedSpotSettings, nowMs: number) => Promise<ExpectedSpotEstimate>;
-
-const ESTIMATORS: Record<ExpectedSpotSource, ExpectedSpotEstimator> = {
-  trailing: trailingMeanSpot,
+export type ExpectedSpotRequest = {
+  nowMs: number;
+  /** The plan's own prices (today, and tomorrow once published): the outlook reads their daily means */
+  publishedSlots: PriceSlot15[];
 };
 
-/** Main: p̂ for a plan made at nowMs; undefined when the terminal value is off or out of season */
+type ExpectedSpotEstimator = (
+  settings: ExpectedSpotSettings,
+  request: ExpectedSpotRequest
+) => Promise<ExpectedSpotEstimate>;
+
+const ESTIMATORS: Record<ExpectedSpotSource, ExpectedSpotEstimator> = {
+  trailing: (settings, request) => trailingMeanSpot(settings, request.nowMs),
+  forecast: async (settings, request) =>
+    forecastMeanSpot(settings, request, await trailingMeanSpot(settings, request.nowMs)),
+};
+
+/** Main: p̂ for a plan made at request.nowMs; undefined when the terminal value is off or out of season */
 export async function expectedSpotForPlan(
   settings: ExpectedSpotSettings,
-  nowMs: number
+  request: ExpectedSpotRequest
 ): Promise<ExpectedSpotEstimate | undefined> {
   const source = settings.terminal_value_mode;
-  if (!isExpectedSpotSource(source) || !terminalValueInSeason(settings, nowMs)) return undefined;
+  if (!isExpectedSpotSource(source) || !terminalValueInSeason(settings, request.nowMs)) return undefined;
   try {
-    return await ESTIMATORS[source](settings, nowMs);
+    return await ESTIMATORS[source](settings, request);
   } catch (error) {
     warnLog(`Expected spot (${source}) failed — planning without a terminal value`, error);
     return { expectedSpot: undefined, source, detail: `estimating the expected spot failed: ${String(error)}` };

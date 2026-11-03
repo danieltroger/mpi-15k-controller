@@ -5,6 +5,7 @@ import { useWebSocket } from "~/components/WebSocketProvider";
 import { configSet } from "~/helpers/configPatches";
 import { useConfigPatcher } from "~/helpers/useConfigPatcher";
 import { formatKwh, formatSek, formatShortDateTime } from "~/helpers/format";
+import { expectedSpotText } from "~/helpers/expectedSpotText";
 import type { WsAction } from "../../../backend/src/wsContract.types";
 
 const fmtTime = (iso: string | undefined) => (iso ? formatShortDateTime(iso) : "—");
@@ -58,6 +59,9 @@ export function AutoTraderPanel() {
                   {` Value of energy left at plan end: ~${plan().projection.endEnergyValueSek} SEK (not cash, not in the figures above).`}
                 </Show>
               </p>
+              <Show when={plan().expected_spot}>
+                {expectedSpot => <p class="buy-sell-config__meta">{expectedSpotText(expectedSpot())}</p>}
+              </Show>
               <Show when={plan().windows.length} fallback={<p class="buy-sell-config__hint">No windows planned.</p>}>
                 <div class="buy-sell-config__table-wrap">
                   <table class="buy-sell-config__table">

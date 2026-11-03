@@ -7,6 +7,7 @@
  *   yarn node src/autoTrading/planPreview.ts          # SOC from InfluxDB
  *   TERMINAL_VALUE_MODE=trailing yarn node src/autoTrading/planPreview.ts   # preview the terminal value
  *                                                    # before switching automatic_trading.terminal_value_mode on
+ *   TERMINAL_VALUE_MODE=forecast yarn node src/autoTrading/planPreview.ts   # …priced at the SE3 price outlook
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
@@ -104,13 +105,24 @@ if (terminalValueModeOverride?.correction) console.log(`TERMINAL_VALUE_MODE: ${t
 const knobs = terminalValueModeOverride
   ? { ...configuredKnobs, terminal_value_mode: terminalValueModeOverride.value }
   : configuredKnobs;
-// The live trader estimates it the same way (plannerInputs.ts); past days' prices are fetched from the price API
-const expectedSpot = await expectedSpotForPlan({ ...tradingConfig, ...knobs }, previewNowMs);
+// The live trader estimates it the same way (planRun.ts); past days' prices are fetched from the price API,
+// and for "forecast" the weather from open-meteo
+const expectedSpot = await expectedSpotForPlan(
+  { ...tradingConfig, ...knobs },
+  { nowMs: previewNowMs, publishedSlots: prices.slots }
+);
 console.log(
   expectedSpot
-    ? `Expected spot after the horizon (${expectedSpot.source}): ${expectedSpot.expectedSpot === undefined ? "unavailable" : `${expectedSpot.expectedSpot.toFixed(3)} SEK/kWh`} — ${expectedSpot.detail}\n`
-    : `Terminal value: ${knobs.terminal_value_mode === "off" ? "off" : `not in season (months ${knobs.terminal_value_months})`} — TERMINAL_VALUE_MODE=trailing previews it\n`
+    ? `Expected spot after the horizon (${expectedSpot.source}): ${expectedSpot.expectedSpot === undefined ? "unavailable" : `${expectedSpot.expectedSpot.toFixed(3)} SEK/kWh`} — ${expectedSpot.detail}`
+    : `Terminal value: ${knobs.terminal_value_mode === "off" ? "off" : `not in season (months ${knobs.terminal_value_months})`} — TERMINAL_VALUE_MODE=trailing or =forecast previews it`
 );
+const outlookSummary = expectedSpot?.forecast;
+if (outlookSummary?.used) {
+  console.log(
+    `  outlook issued ${outlookSummary.issueDate} (weather ${outlookSummary.weatherFetchedAt}): ${outlookSummary.days.map(day => `D+${day.leadDays} ${day.date} ${day.predictedMeanSpot.toFixed(3)}`).join(", ")}; mean ${outlookSummary.predictedMeanSpot.toFixed(3)} vs trailing ${outlookSummary.trailingSpot.toFixed(3)}${outlookSummary.limited ? " (held at the deviation limit)" : ""}`
+  );
+}
+console.log();
 
 const runningSellSchedule = sellScheduleWindows(config.scheduled_power_selling.schedule);
 const fixedSells = runningSellSchedule.filter(window => window.endMs > Date.now());

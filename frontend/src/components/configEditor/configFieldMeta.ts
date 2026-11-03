@@ -295,12 +295,13 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "terminal_value_mode"],
         "End-of-plan energy value",
-        "Off: whatever is left in the battery when a plan's horizon ends (the ~35 hours of published prices plus the reserve tail) is worth nothing to the planner. It then never stocks up on a cheap day unless it sees an import coming within the horizon, and it sells down to the floor right before an expensive spell it can't see yet. Trailing mean: that energy is worth the import it saves later, at the recent average spot price. The planner then keeps energy rather than sell it for less, buys in contiguous blocks (still selling a peak worth more than the energy), and prices the reserve tail at the expected spot when that is above the last priced day's median. Backtested over four winters (2022–2026, this house's real load, solar and prices) at the defaults: 200–340 SEK saved per winter (170–240 planned on the live consumption forecast), and positive in every winter and in autumn 2026. The revenue figures stay cash; the plan reports the value of the energy left at its end separately. Applies from the next plan run.",
+        "Off: whatever is left in the battery when a plan's horizon ends (the ~35 hours of published prices plus the reserve tail) is worth nothing to the planner. It then never stocks up on a cheap day unless it sees an import coming within the horizon, and it sells down to the floor right before an expensive spell it can't see yet. Trailing mean: that energy is worth the import it saves later, at the recent average spot price. The planner then keeps energy rather than sell it for less, buys in contiguous blocks (still selling a peak worth more than the energy), and prices the reserve tail at the expected spot when that is above the last priced day's median. Backtested over four winters (2022–2026, this house's real load, solar and prices) at the defaults: 200–340 SEK saved per winter (170–240 planned on the live consumption forecast), and positive in every winter and in autumn 2026. Price outlook: the same, but the expected spot is the SE3 outlook's predicted mean spot of the 2nd–4th day after the day-ahead prices, from the open-meteo wind and temperature forecast, held near the trailing mean (limit below). On its out-of-sample winter 2025/26 and autumn 2026 it saved another 37 and 16 SEK over the trailing mean on the real load (19 and 6 on the live consumption forecast), by cycling the battery more: 60–160 kWh more discharge that winter, so at a battery wear cost of ~0.1 SEK per kWh most of the gain on the live forecast is gone. Wherever the outlook can't be had (another price area, April–September issue days, a fetch failing or too slow, a day of price history missing), the plan uses the trailing mean and says why in its notes. The revenue figures stay cash; the plan reports the value of the energy left at its end separately. Applies from the next plan run.",
         {
           heading: "End-of-plan energy value",
           options: [
             { value: "off", label: "Off — worth nothing" },
             { value: "trailing", label: "Trailing mean spot price" },
+            { value: "forecast", label: "Price outlook (SE3 weather forecast)" },
           ],
         }
       ),
@@ -326,6 +327,24 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         ["automatic_trading", "terminal_value_months"],
         "Active months",
         `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. Only October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}, the default) has been backtested. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
+      ),
+      f(
+        ["automatic_trading", "terminal_value_forecast_max_deviation_sek"],
+        "Price outlook: max distance from the trailing mean",
+        `Price outlook only: how far its expected spot may stray from the trailing mean before it is held at that distance. The outlook works in log prices, so a dear day-ahead price and a big swing in wind or temperature can predict far outside anything recent; this caps what one wild prediction can do to the plan. Out of sample it strayed at most ~1 SEK (99 % within 0.8). In the backtest a limit of 0.75–1 SEK cost nothing (at most 0.1 SEK in a period), while 0.5 cost 13–15 SEK in winter 2025/26 and 0.25 gave up most of the gain. Lower trusts the outlook less (0 = always the trailing mean); higher lets an outlier through. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_forecast_max_deviation_sek")}`,
+        plannerKnobInput("terminal_value_forecast_max_deviation_sek")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_forecast_max_age_hours"],
+        "Price outlook: weather forecast max age",
+        `Price outlook only: a plan reuses the last weather forecast while it is younger than this and fetches a new one otherwise (one open-meteo call). When that fetch fails, the plan uses the trailing mean until one works, retried after the price retry interval. Lower follows forecast updates sooner at the cost of more fetches on the pi; higher keeps planning on an older forecast through an open-meteo outage (the backtested skill was on forecasts a day old). Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_forecast_max_age_hours")}`,
+        plannerKnobInput("terminal_value_forecast_max_age_hours")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_forecast_wait_seconds"],
+        "Price outlook: max wait for its inputs",
+        `Price outlook only: how long a plan waits for the weather forecast and any missing days of the 30-day price history it needs (up to ~22 after a restart, otherwise none or one). Past this the plan uses the trailing mean and the fetch carries on, so the next plan has it. Lower never holds a plan up for long; higher rides out a slow network or a busy pi before falling back. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_forecast_wait_seconds")}`,
+        plannerKnobInput("terminal_value_forecast_wait_seconds")
       ),
       f(
         ["automatic_trading", "charge_efficiency"],

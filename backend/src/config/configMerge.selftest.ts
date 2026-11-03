@@ -84,6 +84,27 @@ check(
     terminal_value_min_saving_sek_per_kwh === 1
 );
 
+// ——— automatic_trading stored with the terminal value (#82) but before the price outlook's knobs ———
+const {
+  terminal_value_forecast_max_deviation_sek,
+  terminal_value_forecast_max_age_hours,
+  terminal_value_forecast_wait_seconds,
+  ...tradingBeforeForecast
+} = default_config.automatic_trading;
+const healedForecastTrading = mergeWithDefaults({
+  automatic_trading: { ...tradingBeforeForecast, terminal_value_mode: "trailing" },
+} as unknown as Partial<Config>).automatic_trading;
+check(
+  "merge: an automatic_trading from before the price outlook picks up its knobs and keeps its mode",
+  healedForecastTrading.terminal_value_mode === "trailing" &&
+    healedForecastTrading.terminal_value_forecast_max_deviation_sek === terminal_value_forecast_max_deviation_sek &&
+    healedForecastTrading.terminal_value_forecast_max_age_hours === terminal_value_forecast_max_age_hours &&
+    healedForecastTrading.terminal_value_forecast_wait_seconds === terminal_value_forecast_wait_seconds &&
+    terminal_value_forecast_max_deviation_sek === 1 &&
+    terminal_value_forecast_max_age_hours === 6 &&
+    terminal_value_forecast_wait_seconds === 30
+);
+
 // ——— scheduled_power_selling stored before the overheat stop's inverter-temperature limits ———
 const { only_sell_below_inverter_temp_celsius, start_selling_again_below_inverter_temp_celsius, ...olderSelling } =
   default_config.scheduled_power_selling;

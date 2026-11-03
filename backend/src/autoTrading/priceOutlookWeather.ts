@@ -17,18 +17,30 @@ import type {
  * caller falls back to its other price source.
  */
 export async function fetchOutlookWeather(nowMs: number): Promise<OutlookWeather | undefined> {
+  try {
+    return await requireOutlookWeather(nowMs);
+  } catch (error) {
+    warnLog(`Price outlook: ${describeError(error)}, no outlook this time`);
+    return undefined;
+  }
+}
+
+/**
+ * The same forecast, or an Error saying why there is none, for a caller that reports the failure
+ * itself (the planner's weather cache warns once per failing streak and quotes it in plan notes)
+ */
+export async function requireOutlookWeather(nowMs: number): Promise<OutlookWeather> {
   let payload: unknown;
   try {
     payload = await fetchOpenMeteoJson(`${OPEN_METEO_FORECAST_API}?${outlookForecastParams()}`);
   } catch (error) {
-    warnLog("Price outlook: open-meteo weather fetch failed, no outlook this time:", describeError(error));
-    return undefined;
+    // The request URL (all 11 coordinates) would bury the reason in a plan note
+    throw new Error(`open-meteo weather fetch failed (${withoutTrailingUrl(describeError(error))})`);
   }
   try {
     return parseOutlookWeather(payload, nowMs);
   } catch (error) {
-    warnLog("Price outlook: unusable open-meteo weather response, no outlook this time:", describeError(error));
-    return undefined;
+    throw new Error(`unusable open-meteo weather response (${describeError(error)})`);
   }
 }
 
@@ -112,6 +124,11 @@ function pointSamples(entry: unknown, index: number, variable: string): HourlyWe
     if (value !== null) samples.push({ atMs: unixSeconds * 1000, value });
   });
   return samples;
+}
+
+/** fetchOpenMeteoJson ends its message with ": <url>" */
+function withoutTrailingUrl(message: string): string {
+  return message.replace(/: https?:\/\/\S+$/, "");
 }
 
 function isUnixSecondsArray(value: unknown): value is number[] {
