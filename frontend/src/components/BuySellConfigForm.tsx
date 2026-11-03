@@ -353,7 +353,7 @@ function BuySellFormInner(props: { getConfig: Accessor<Config> }) {
             label="Max grid draw"
             unit="A"
             min={0}
-            help="Cap on total grid current while charging — protects the main fuse."
+            help="Cap on total grid current while charging — protects the main fuse. A hold ends at this minus the hold guard's breaker margin (Config)."
           />
         </div>
       </section>
@@ -365,6 +365,19 @@ function BuySellFormInner(props: { getConfig: Accessor<Config> }) {
           <span class="buy-sell-config__kind-inline">⚡ planned</span>
           badge were written by the auto-trader — edit or delete them freely: an edited window becomes yours and is
           planned around; deleting one blocks trading in that time range until unblocked.
+        </p>
+        <p class="buy-sell-config__hint">
+          To charge the car from the grid without cycling the battery: add a ~100 W buy window for the charging hours
+          and plug in at the house charger.{" "}
+          <Show
+            when={props.getConfig().automatic_trading?.hold_enabled === true}
+            fallback="That needs “Hold at cheap hours” (Config → Automatic trading) on: while it is off, a small buy window is a charge like any other, stopped at “Stop charging above” and without the hold guard."
+          >
+            With Hold at cheap hours on, a buy window of 300 W or less is a hold: the house and the car run from the
+            grid, the battery keeps its energy, and the hold guard ends it if a phase gets near “Max grid draw”.
+          </Show>{" "}
+          Set the car to 13 A or less: if a kettle on the car's phase ends the hold and that phase stays busy, the
+          battery charges the car for the rest of the window (up to ~40 kWh).
         </p>
         <FieldArray of={buySellForm} name="rows">
           {fieldArray => (

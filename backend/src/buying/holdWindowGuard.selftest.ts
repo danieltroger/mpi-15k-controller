@@ -20,7 +20,6 @@ import {
   OVERLOAD_CONFIRM_MS,
   projectedHoldGridAmps,
   READING_MAX_AGE_MS,
-  REENTRY_HYSTERESIS_AMPS,
   stepHoldWindowGuard,
   type TimedReading,
 } from "./holdWindowGuard.ts";
@@ -37,6 +36,7 @@ const SETTINGS: HoldGuardSettings = {
   maxGridInputAmps: 22,
   gridMarginAmps: 2,
   reentryMinutes: 15,
+  reentryHysteresisAmps: 2,
   minBatteryCelsius: 5,
 };
 const SECOND_MS = 1000;
@@ -187,13 +187,23 @@ function droppedOutState(): HoldGuardState {
 {
   // Hovering between the re-entry and the drop-out level (18–20 A) stays out: no flapping
   const hovering: HoldGuardReadings = {
-    grid: phases(dropOutAmps(SETTINGS) - REENTRY_HYSTERESIS_AMPS / 2, 3, 3),
+    grid: phases(dropOutAmps(SETTINGS) - SETTINGS.reentryHysteresisAmps / 2, 3, 3),
     coldestBatteryCelsius: 11,
   };
   const { states } = run(repeat(hovering, 40), { from: droppedOutState(), stepMs: MINUTE_MS });
   check(
     "a load hovering at 19 A (between 18 and 20 A) keeps the hold out",
     states.every(state => state.phase === "dropped_out")
+  );
+  // hold_reentry_hysteresis_amps 0.5: comfortably below is under 19.5 A, so 19 A resumes after the wait
+  const narrow = run(repeat(hovering, 40), {
+    from: droppedOutState(),
+    stepMs: MINUTE_MS,
+    settings: { ...SETTINGS, reentryHysteresisAmps: 0.5 },
+  });
+  check(
+    "with a 0.5 A re-entry gap the same 19 A load resumes after the 15 min wait",
+    narrow.transitions.findIndex(transition => transition?.kind === "resumed") === SETTINGS.reentryMinutes
   );
 }
 {

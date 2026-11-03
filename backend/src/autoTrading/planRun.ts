@@ -10,9 +10,10 @@ import { wait } from "../vendor/depictUtilishared.ts";
 import { fetchPrices, type FetchedPrices } from "./priceService.ts";
 import { type AutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import { captureForecastLog } from "./tradingPerformance.ts";
-import { generatePlan, projectWithFixedWindows } from "./planner.ts";
+import { projectWithFixedWindows } from "./planner.ts";
 import { activeOwnedEntries, applyPlan, reconcileOwnership } from "./scheduleOwnership.ts";
 import { buildPlannerInput, ownedEntriesAsWindows } from "./plannerInputs.ts";
+import { replanAroundRunningWindows } from "./replanAroundRunningWindows.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
 import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { ensureStateLoaded, refreshStatus, type TraderCtx, withScheduleLock } from "./traderContext.ts";
@@ -27,7 +28,10 @@ type RunPlanOptions = {
    * replan so a working plan isn't churned for pennies).
    */
   gainGateSek?: number;
-  /** Treat currently-executing owned windows as fixed so an in-progress trade is never interrupted */
+  /**
+   * Treat currently-executing owned windows as fixed so an in-progress trade is never interrupted; a running
+   * hold only through the current quarter, re-planned after it (replanAroundRunningWindows.ts)
+   */
   keepActiveWindows?: boolean;
   /** Plan with these prices instead of fetching (the guard passes its own, possibly cached, fetch) */
   prices?: FetchedPrices;
@@ -78,16 +82,16 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
       const freshCfg = untrack(ctx.config);
       reconcileOwnership(ctx, freshCfg);
 
-      // A window that is running right now must not be rewritten mid-sell — plan around it
-      // and keep it (opportunistic and guard replans; a full plan may reshape everything).
-      const keepOwned: AutoTraderState["owned_entries"] = keepActiveWindows
+      // A window that is running right now must not be rewritten mid-sell — plan around it and keep it
+      // (opportunistic and guard replans; a full plan may reshape everything). A running hold is kept only
+      // through the current quarter and re-planned after it.
+      const running: AutoTraderState["owned_entries"] = keepActiveWindows
         ? activeOwnedEntries(ctx, Date.now())
         : { selling: {}, buying: {} };
-
-      const input = await buildPlannerInput(ctx, freshCfg, prices, plannedSoc, expectedSpot);
-      input.fixedSells = [...input.fixedSells, ...ownedEntriesAsWindows(keepOwned.selling, "power_watts")];
-      input.fixedBuys = [...input.fixedBuys, ...ownedEntriesAsWindows(keepOwned.buying, "charging_power")];
-      const result = generatePlan(input);
+      const { input, result, keepOwned } = replanAroundRunningWindows(
+        await buildPlannerInput(ctx, freshCfg, prices, plannedSoc, expectedSpot),
+        running
+      );
 
       if (gainGateSek !== undefined) {
         // What would the windows currently in the config earn under the same live conditions?

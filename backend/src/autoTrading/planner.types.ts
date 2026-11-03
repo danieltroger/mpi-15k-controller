@@ -41,6 +41,7 @@ export type PlannerKnobs = Pick<
   | "hold_enabled"
   | "hold_power_watts"
   | "hold_overhead_watts"
+  | "hold_net_dc_in_watts"
   | "hold_margin_sek_per_kwh"
   | "hold_min_window_minutes"
   | "hold_bridge_minutes"
@@ -86,6 +87,12 @@ export type PlannerInput = {
    */
   measuredFeedInW?: number;
   fixedBuys: FixedWindow[];
+  /**
+   * A hold window of ours running at nowMs, in a re-plan that keeps the running windows (runningHold.ts): not
+   * in fixedBuys. When the plan models holds it holds through the current quarter as written and is re-planned
+   * from the next one on (PlanResult.runningHoldReshaped); otherwise it is planned around as given, whole.
+   */
+  runningHold?: FixedWindow;
   /** Time ranges where the user deleted an auto-created window — the planner must not re-add there. */
   sellVetoWindows: { startMs: number; endMs: number }[];
   buyVetoWindows: { startMs: number; endMs: number }[];
@@ -169,6 +176,12 @@ export type PlanResult = {
   projection: PlanProjection;
   /** Projected SOC per slot under the final plan — the frontend chart draws this as a line. */
   socSeries: SocSeriesPoint[];
+  /**
+   * The plan re-planned PlannerInput.runningHold from the next quarter on: `buys` then holds a hold window
+   * keyed at its start (through at least the current quarter), which replaces it. Absent when there was none,
+   * or the plan only planned around it as given (the caller keeps it then).
+   */
+  runningHoldReshaped?: true;
 };
 export type Slot = {
   startMs: number;

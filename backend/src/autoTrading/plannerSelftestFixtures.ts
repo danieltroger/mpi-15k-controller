@@ -54,6 +54,7 @@ export const baseKnobs: PlannerKnobs = {
   hold_enabled: false,
   hold_power_watts: 100,
   hold_overhead_watts: 100,
+  hold_net_dc_in_watts: 40,
   hold_margin_sek_per_kwh: 0.2,
   hold_min_window_minutes: 30,
   hold_bridge_minutes: 30,

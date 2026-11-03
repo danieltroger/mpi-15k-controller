@@ -81,6 +81,10 @@ export function holdGuardSettings(config: Config): HoldGuardSettings {
     maxGridInputAmps: config.scheduled_power_buying.max_grid_input_amperage,
     gridMarginAmps: boundedTradingKnob("hold_grid_margin_amps", tradingConfig.hold_grid_margin_amps),
     reentryMinutes: boundedTradingKnob("hold_reentry_minutes", tradingConfig.hold_reentry_minutes),
+    reentryHysteresisAmps: boundedTradingKnob(
+      "hold_reentry_hysteresis_amps",
+      tradingConfig.hold_reentry_hysteresis_amps
+    ),
     minBatteryCelsius: holdGuardMinBatteryCelsius(
       boundedTradingKnob("hold_min_battery_temp_celsius", tradingConfig.hold_min_battery_temp_celsius),
       config.alerting.charging_battery_temp_p1_celsius

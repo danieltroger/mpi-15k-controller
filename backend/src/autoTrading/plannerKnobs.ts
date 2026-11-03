@@ -58,6 +58,7 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     hold_enabled: holdEnabledKnob(tradingConfig.hold_enabled),
     hold_power_watts: boundedTradingKnob("hold_power_watts", tradingConfig.hold_power_watts),
     hold_overhead_watts: boundedTradingKnob("hold_overhead_watts", tradingConfig.hold_overhead_watts),
+    hold_net_dc_in_watts: boundedTradingKnob("hold_net_dc_in_watts", tradingConfig.hold_net_dc_in_watts),
     hold_margin_sek_per_kwh: boundedTradingKnob("hold_margin_sek_per_kwh", tradingConfig.hold_margin_sek_per_kwh),
     hold_min_window_minutes: boundedTradingKnob("hold_min_window_minutes", tradingConfig.hold_min_window_minutes),
     hold_bridge_minutes: boundedTradingKnob("hold_bridge_minutes", tradingConfig.hold_bridge_minutes),

@@ -89,15 +89,17 @@ export const default_config: Config = {
       PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_deviation_sek.defaultValue,
     terminal_value_forecast_max_age_hours: PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_age_hours.defaultValue,
     terminal_value_forecast_wait_seconds: PLANNER_KNOB_BOUNDS.terminal_value_forecast_wait_seconds.defaultValue,
-    // Ships off: the planner part is backtested, the runtime overhead (hold_overhead_watts) isn't measured yet
+    // Ships off: switched on by hand on the live system, with hold_overhead_watts at the measured 170 W
     hold_enabled: false,
     hold_power_watts: PLANNER_KNOB_BOUNDS.hold_power_watts.defaultValue,
     hold_overhead_watts: PLANNER_KNOB_BOUNDS.hold_overhead_watts.defaultValue,
+    hold_net_dc_in_watts: PLANNER_KNOB_BOUNDS.hold_net_dc_in_watts.defaultValue,
     hold_margin_sek_per_kwh: PLANNER_KNOB_BOUNDS.hold_margin_sek_per_kwh.defaultValue,
     hold_min_window_minutes: PLANNER_KNOB_BOUNDS.hold_min_window_minutes.defaultValue,
     hold_bridge_minutes: PLANNER_KNOB_BOUNDS.hold_bridge_minutes.defaultValue,
     hold_grid_margin_amps: PLANNER_KNOB_BOUNDS.hold_grid_margin_amps.defaultValue,
     hold_reentry_minutes: PLANNER_KNOB_BOUNDS.hold_reentry_minutes.defaultValue,
+    hold_reentry_hysteresis_amps: PLANNER_KNOB_BOUNDS.hold_reentry_hysteresis_amps.defaultValue,
     hold_min_battery_temp_celsius: PLANNER_KNOB_BOUNDS.hold_min_battery_temp_celsius.defaultValue,
     sell_ramp_minutes: 10,
     min_window_minutes: 15,

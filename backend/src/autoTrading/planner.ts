@@ -27,7 +27,8 @@
  * blocks and can stock up for after the horizon, the sells get a second pass once the buys have filled the
  * battery, and the unpriced tail is priced at the expected spot where that is higher. With hold_enabled it
  * finally holds (holdAllocation.ts): in cheap dark quarters no trade took, the house runs from the grid
- * through a trickle buy window while the battery keeps its energy.
+ * through a trickle buy window while the battery keeps its energy. A hold of ours already running is kept
+ * through the current quarter and re-planned after it (runningHold.ts), not frozen like other running windows.
  */
 
 import { simulate } from "./simulate.ts";
@@ -35,7 +36,8 @@ import { runningFeedAtNow, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { allocateSellsGreedily, bridgeSellValleys } from "./sellAllocation.ts";
 import { consolidateSellSlots } from "./sellConsolidation.ts";
 import { allocateArbitragePairs, preBuyAtCheapHours } from "./buyAllocation.ts";
-import { allocateHolds, holdNote, plannedHoldSlots } from "./holdAllocation.ts";
+import { allocateHolds, holdNote, holdWattsBySlot, plannedHoldSlots } from "./holdAllocation.ts";
+import { resolveRunningHold, runningHoldNote } from "./runningHold.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
 import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
 import { SLOT_MS } from "./slotDuration.ts";
@@ -52,7 +54,10 @@ import type {
 
 export { SLOT_MS };
 
-export function generatePlan(input: PlannerInput): PlanResult {
+export function generatePlan(plannerInput: PlannerInput): PlanResult {
+  // A running hold holds through the current quarter as written and is re-planned after it, or, in a plan that
+  // can't value holding on, is planned around whole (runningHold.ts)
+  const { input, reshapesRunningHold } = resolveRunningHold(plannerInput);
   const knobs = input.knobs;
   const notes: string[] = [];
   const slots = buildSlots(input);
@@ -145,18 +150,16 @@ export function generatePlan(input: PlannerInput): PlanResult {
 
   const { windows: buyWindows } = mergeAcceptedSlots(slots, acceptedBuy, buyW, "buy", knobs.min_window_minutes);
 
-  // ---- Hold windows, as buy windows at the hold power: the hold pass left only runs of at least
-  // hold_min_window_minutes, and dropping a short sell run above frees no quarter a hold could have had ----
+  // ---- Hold windows, as buy windows at the hold power. No minimum length here: the hold pass applied
+  // hold_min_window_minutes already (and spared the run continuing a running hold, which this would measure
+  // from the current quarter, not from where it started), and dropping a short sell run above frees no
+  // quarter a hold could have had ----
   const holdSlots = plannedHoldSlots(allocation);
-  const { windows: holdWindows } = mergeAcceptedSlots(
-    slots,
-    holdSlots,
-    slots.map(slot => slot.holdW),
-    "buy",
-    knobs.hold_min_window_minutes
-  );
+  const { windows: holdWindows } = mergeAcceptedSlots(slots, holdSlots, holdWattsBySlot(allocation), "buy", 0);
   const holdPlanNote = holdNote(allocation, holdSlots, holdWindows.length, holdPass.budgetCut);
   if (holdPlanNote) notes.push(holdPlanNote);
+  const runningHoldPlanNote = runningHoldNote(input, holdWindows, slots);
+  if (runningHoldPlanNote) notes.push(runningHoldPlanNote);
 
   // ---- Package result ----
   const spotsAll = pricedSlots.map(slot => slot.spot!).sort((lower, higher) => lower - higher);
@@ -209,7 +212,7 @@ export function generatePlan(input: PlannerInput): PlanResult {
     autoExportW: current.autoExportWPerSlot[index],
   }));
 
-  return { sells, buys, notes, projection, socSeries };
+  return { sells, buys, notes, projection, socSeries, ...(reshapesRunningHold ? { runningHoldReshaped: true } : {}) };
 }
 
 /**
@@ -239,9 +242,10 @@ function droppedShortRunsNote(droppedShortRuns: number, knobs: PlannerInput["kno
 
 /**
  * Project SOC with only the given fixed windows (no new allocation). Used by the periodic guard to
- * check whether the already-written schedule is still safe under live SOC + fresh forecasts.
+ * check whether the already-written schedule is still safe under live SOC + fresh forecasts. A runningHold
+ * counts as written, whole: this replays the schedule, it doesn't re-plan it.
  */
-export function projectWithFixedWindows(input: PlannerInput): {
+export function projectWithFixedWindows(plannerInput: PlannerInput): {
   violationWh: number;
   minSocPercent: number;
   minSocAt: string;
@@ -252,6 +256,10 @@ export function projectWithFixedWindows(input: PlannerInput): {
   /** As generatePlan's endEnergyValueSek, 0 without a terminal value: compare plans on revenueSek plus this */
   endEnergyValueSek: number;
 } {
+  const { runningHold, ...withoutRunningHold } = plannerInput;
+  const input: PlannerInput = runningHold
+    ? { ...withoutRunningHold, fixedBuys: [...withoutRunningHold.fixedBuys, runningHold] }
+    : withoutRunningHold;
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(slot => slot.spot !== undefined);
   const { valuation } = horizonValuation(input, pricedSlots);

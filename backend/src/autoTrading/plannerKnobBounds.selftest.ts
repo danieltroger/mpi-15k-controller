@@ -25,11 +25,14 @@ const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: numbe
   { knobName: "terminal_value_forecast_wait_seconds", inBounds: 60, tooLow: 1, tooHigh: 600 },
   { knobName: "hold_power_watts", inBounds: 200, tooLow: 20, tooHigh: 5000 },
   { knobName: "hold_overhead_watts", inBounds: 150, tooLow: -50, tooHigh: 2000 },
+  // The one knob that may be negative (the battery still giving a little during a hold): clamped, not reset
+  { knobName: "hold_net_dc_in_watts", inBounds: -50, tooLow: -500, tooHigh: 1000 },
   { knobName: "hold_margin_sek_per_kwh", inBounds: 0.2, tooLow: -0.1, tooHigh: 1.5 },
   { knobName: "hold_min_window_minutes", inBounds: 60, tooLow: 5, tooHigh: 600 },
   { knobName: "hold_bridge_minutes", inBounds: 45, tooLow: -15, tooHigh: 240 },
   { knobName: "hold_grid_margin_amps", inBounds: 3, tooLow: -1, tooHigh: 16 },
   { knobName: "hold_reentry_minutes", inBounds: 30, tooLow: 0.5, tooHigh: 600 },
+  { knobName: "hold_reentry_hysteresis_amps", inBounds: 1, tooLow: 0.2, tooHigh: 10 },
   { knobName: "hold_min_battery_temp_celsius", inBounds: 8, tooLow: -5, tooHigh: 40 },
 ];
 
@@ -37,9 +40,9 @@ for (const { knobName, inBounds, tooLow, tooHigh } of CASES) {
   const { defaultValue, min, max } = PLANNER_KNOB_BOUNDS[knobName];
   const passed = effectivePlannerKnob(knobName, inBounds);
   check(`${knobName}: an in-bounds value passes unchanged`, passed.value === inBounds && !passed.correction);
-  // A negative value isn't a plausible setting at all (both knobs are ≥ 0), so it gets the default
+  // A negative value isn't a plausible setting for a knob whose minimum isn't, so it gets the default
   const lowered = effectivePlannerKnob(knobName, tooLow);
-  const expectedForTooLow = tooLow < 0 ? defaultValue : min;
+  const expectedForTooLow = tooLow < 0 && min >= 0 ? defaultValue : min;
   check(
     `${knobName}: below the minimum is corrected`,
     lowered.value === expectedForTooLow && !!lowered.correction,

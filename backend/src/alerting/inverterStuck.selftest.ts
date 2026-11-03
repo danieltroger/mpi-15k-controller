@@ -255,6 +255,40 @@ check(
   "healthy"
 );
 {
+  // The measured quiet holds (2025-11-01 and 2026-01-25, 1–4 A asked, below a full pack): the inverter reported
+  // 3–5 A Charging, 0 A Idle/Idle in at most 3 of ~600–1000 readings per hold; the hall nets the inverter's own
+  // DC draw out of the trickle, so its minute means ran from −50 W to +55 W, below the 30 W trickle mark for a
+  // tenth of the time. Six hours of that, a 0 A Idle/Idle reading every 2 h among them, must not page.
+  const quietHoldHallWatts = [-50, -19, 12, 27, 36, 38, 46, 55];
+  let rules = INVERTER_STUCK_IDLE_STATE;
+  let actionDuringQuietHold: InverterStuckAlertAction | undefined;
+  for (let minute = 0; minute <= 6 * 60; minute++) {
+    const idleReading = minute % 120 === 60;
+    const step = stepInverterStuckAlert(
+      rules,
+      evaluateInverterStuckRules(
+        snapshotAt(nowMs + minute * 60_000, {
+          hallWatts: quietHoldHallWatts[minute % quietHoldHallWatts.length],
+          batteryCurrent: idleReading ? 0 : 3,
+          batteryDirection: idleReading ? "Idle" : "Charging",
+          dcAcDirection: idleReading ? "Idle" : "AC to DC",
+          batteryVolts: 53.5,
+          averageSOC: 70,
+          gridWatts: 900,
+          commandedAmps: 2,
+          acChargingEnabled: true,
+          holdWindowInForce: true,
+        })
+      ),
+      nowMs + minute * 60_000,
+      DEFAULT_SETTINGS
+    );
+    rules = step.state;
+    actionDuringQuietHold ??= step.action;
+  }
+  check("6 h of a quiet hold (hall −50…+55 W, inverter at 3 A) raise no stuck alert", actionDuringQuietHold, undefined);
+}
+{
   // Thirty minutes of the full-pack hold signature: no "DC side idle" during the window, the P2 once it is over
   let rules = INVERTER_STUCK_IDLE_STATE;
   let actionDuringHold: InverterStuckAlertAction | undefined;

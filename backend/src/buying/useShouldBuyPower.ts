@@ -1,6 +1,5 @@
-import { type Accessor, createEffect, createMemo, createSignal, mapArray } from "solid-js";
+import { type Accessor, createEffect, createMemo } from "solid-js";
 import { logLog } from "../utilities/logging.ts";
-import { batchedRunAtFutureTimeWithPriority } from "../utilities/batchedRunAtFutureTimeWithPriority.ts";
 import { calculateChargingAmperage } from "./calculateChargingAmperage.ts";
 import { reactiveBatteryVoltage } from "../mqttValues/mqttHelpers.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
@@ -10,6 +9,7 @@ import type { Config } from "../config/config.types.ts";
 import type { useTemperatures } from "../temperatureMeasuring/useTemperatures.ts";
 import { decideScheduledBuy, type ScheduledBuy, wattsForInverter } from "./scheduledBuyDecision.ts";
 import { useHoldWindowGuard } from "./useHoldWindowGuard.ts";
+import { scheduledBuyWattsPerEntry } from "./scheduledBuyWatts.ts";
 import { holdEnabledKnob } from "../autoTrading/plannerKnobs.ts";
 
 /**
@@ -27,42 +27,7 @@ export function useShouldBuyPower({
   const { clampedSocAh } = useBatteryValuesProvider();
   // Inverter idle draw the grid-charge sizing must leave headroom for; from the Ah ledger (drain_a × v_discharge).
   const idleConsumptionWatts = createMemo(() => inverterIdleWatts(config()));
-  const scheduleOutput = createMemo(
-    mapArray(
-      () => Object.keys(config().scheduled_power_buying.schedule),
-      startTime => {
-        const [wantedPower, setWantedPower] = createSignal<Accessor<number>>(() => 0);
-        const scheduleItem = () => config().scheduled_power_buying.schedule[startTime];
-        const startTimestamp = +new Date(startTime);
-        const memoizedEnd = createMemo(() => +new Date(scheduleItem().end_time));
-        const now = +new Date();
-
-        createEffect(() => {
-          const end = memoizedEnd();
-          const setEndTimeout = () =>
-            batchedRunAtFutureTimeWithPriority(() => setWantedPower(() => () => 0), end, false);
-
-          // If already in the timeslot, set buying directly
-          if (startTimestamp <= now && now <= end) {
-            setWantedPower(() => () => scheduleItem().charging_power);
-            setEndTimeout();
-          } else if (startTimestamp > now) {
-            // If schedule item starts in the future, set timeout for both start and end
-            batchedRunAtFutureTimeWithPriority(
-              () => setWantedPower(() => () => scheduleItem().charging_power),
-              startTimestamp,
-              true
-            );
-            setEndTimeout();
-          } else {
-            // If schedule item has ended, set buying to 0
-            setWantedPower(() => () => 0);
-          }
-        });
-        return wantedPower;
-      }
-    )
-  );
+  const scheduleOutput = scheduledBuyWattsPerEntry(() => config().scheduled_power_buying.schedule);
 
   let hitSOCLimit = false;
 

@@ -1,5 +1,5 @@
 import type { Config } from "../config/config.types.ts";
-import { HOLD_CLASS_MAX_WATTS } from "../autoTrading/plannerKnobBounds.ts";
+import { isHoldWindow } from "../autoTrading/plannerKnobBounds.ts";
 
 /**
  * What the buy schedule asks for right now, before the hold guard — pure, so the selftest can walk a hold
@@ -64,11 +64,6 @@ export type BuySocGateLimits = Pick<
   Config["scheduled_power_buying"],
   "only_buy_below_soc" | "start_buying_again_below_soc"
 >;
-
-/** A buy window's power counts as a hold only with hold_enabled on, and up to the hold class */
-function isHoldWindow(watts: number, holdEnabled: boolean): boolean {
-  return holdEnabled && watts > 0 && watts <= HOLD_CLASS_MAX_WATTS;
-}
 
 function highest(values: number[]): number {
   const maximum = Math.max(...values);

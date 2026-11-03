@@ -24,11 +24,13 @@ export type BoundedPlannerKnobName = keyof Pick<
 export type HoldKnobName =
   | "hold_power_watts"
   | "hold_overhead_watts"
+  | "hold_net_dc_in_watts"
   | "hold_margin_sek_per_kwh"
   | "hold_min_window_minutes"
   | "hold_bridge_minutes"
   | "hold_grid_margin_amps"
   | "hold_reentry_minutes"
+  | "hold_reentry_hysteresis_amps"
   | "hold_min_battery_temp_celsius";
 
 export type PlannerKnobBounds = {
@@ -48,6 +50,15 @@ export type PlannerKnobBounds = {
  * hold_power_watts' maximum is set from it, never the other way round, so a wider knob can't widen the class.
  */
 export const HOLD_CLASS_MAX_WATTS = 300;
+
+/**
+ * Whether a buy window at this charging power is a hold: hold_enabled on and within the hold class. The one
+ * test the runtime (scheduledBuyDecision.ts), the planner (simulate.ts, runningHold.ts), the re-plan
+ * (replanAroundRunningWindows.ts) and the dashboard share, so they can't drift apart.
+ */
+export function isHoldWindow(watts: number, holdEnabled: boolean): boolean {
+  return holdEnabled && watts > 0 && watts <= HOLD_CLASS_MAX_WATTS;
+}
 
 export const PLANNER_KNOB_BOUNDS = {
   // A leftover budget the greedy can't fit at full power is sold at the largest power that still keeps the
@@ -99,17 +110,33 @@ export const PLANNER_KNOB_BOUNDS = {
   // take more than this at the low end. At most the hold class (HOLD_CLASS_MAX_WATTS): above it a window is a
   // charge, not a hold.
   hold_power_watts: { defaultValue: 100, min: 50, max: HOLD_CLASS_MAX_WATTS, unit: "W", step: 10 },
-  // What the inverter draws from the grid while holding beyond the house, its idle draw and the trickle.
-  // Measured against the utility meter over four 2025-26 holds (65 quarters, 2025-11-01 to 2026-03-15):
-  // median 166–177 W per hold, ~170 W pooled, net of the grid-side shed. With the charger on, the inverter
-  // draws ~40 W more than passing the grid through (~130 W). In the 2022-11 → 2026-11 backtest on top of the terminal value
-  // (margin 0.2, the planner set to the plant's draw) holding saved ~200 SEK per winter at 0 W, ~80 at 50 W,
-  // ~60 at 100 W and ~20 at 150 W: at the measured draw a hold is worth about nothing, so holds stay off.
-  // Set too low it loses money; this is the meter-level overhead, which the meter calibration doesn't add to.
+  // What the inverter draws from the grid while holding beyond the house and the battery's net DC-in
+  // (hold_net_dc_in_watts). Measured against the utility meter over four 2025-26 holds (65 quarters,
+  // 2025-11-01 to 2026-03-15) as meter − house − hall DC-in/0.95: median 166–177 W per hold, ~170 W pooled, net
+  // of the grid-side shed. With the charger on, the inverter draws ~40 W more than passing the grid through
+  // (~130 W). The inverter's own draw is inside it, so the simulation keeps the Ah ledger's idle draw
+  // (parasiticWatts, which tracks the hall's zero drift) on the battery side during a hold, not on top of this.
+  // Backtest 2022-11 → 2026-11 on top of the terminal value (margin 0.2), the plant holding as measured (house +
+  // ~42 W + 170 W at the meter, ~40 W net into the battery) against the night drain measured in the same weeks as
+  // those holds (~210 W at a 300 W feed): ~80 SEK per winter, ~120 with battery wear at 0.17 SEK per discharged
+  // kWh, positive in every winter. A planner that believes a larger drain, as the live one does (323 W: the
+  // 300 W feed over the discharge efficiency), holds ~7.5 h a night instead of ~3 for ~45–65 wear-free. The #84
+  // harness charged the inverter's ~140 W idle draw on top of the 170 W and found about nothing; pairing the
+  // holds' DC-in with the Oct 2026 drain (~300 W, a later hall zero) showed ~180. Only a drain and a DC-in
+  // measured a few days apart add up. This is the meter-level overhead, which the meter calibration doesn't add to.
   hold_overhead_watts: { defaultValue: 170, min: 0, max: 1000, unit: "W", step: 10 },
-  // A held quarter must gain this much per kWh the house imports in it, so a hold the overhead or a forecast
-  // miss turns into a loss stays out. In the backtest 0.2 was positive in every winter at every overhead from
-  // 0 to 150 W; 0.1 lost in some winter from 50 W up, and 0 up to ~140 SEK.
+  // What a hold nets into the battery at its terminals, as hall sensor 2 shows it: the charger's trickle less
+  // the inverter's own DC draw. The simulation credits the battery this (and the grid pays it over the charge
+  // efficiency); negative = the battery still gives a little. The 2 A-class holds of 2025-11-01 and 2026-01-25
+  // netted 36–38 W (minute means −50…+55 W) although the inverter reported ~4 A: crediting hold_power_watts × 0.95
+  // (95 W at 100 W), as before, made holds look ~55 W better per hour than measured. 6 A holds netted ~210 W.
+  // Re-measure it under today's hall calibration before relying on it: the zero has moved 100+ W between seasons.
+  hold_net_dc_in_watts: { defaultValue: 40, min: -300, max: HOLD_CLASS_MAX_WATTS, unit: "W", step: 10 },
+  // A held quarter must gain this much per kWh the hold draws from the grid in it (the house, the overhead and the
+  // net DC-in), so a hold the overhead or a forecast miss turns into a loss stays out. The denominator used to be
+  // the house plus the ledger's idle draw: ~0 W live but 140 W in the backtest's planner, so the live margin was
+  // ~20 % laxer than the one backtested. In the #84 backtest 0.2 was positive in every winter at every overhead
+  // from 0 to 150 W; 0.1 lost in some winter from 50 W up, and 0 up to ~140 SEK.
   hold_margin_sek_per_kwh: { defaultValue: 0.2, min: 0, max: 1, unit: "SEK/kWh", step: 0.05 },
   // Hold runs shorter than this are dropped: each window is an EDB1/EDB0 pair and two charge-current writes.
   // 30–60 min with 30 min bridging gave 0.5–0.7 windows a day at the same value as 15 min.
@@ -129,6 +156,13 @@ export const PLANNER_KNOB_BOUNDS = {
   // before the hold resumes. Each drop-out and re-entry is an EDB0/EDB1 pair; 15 min caps a flapping load
   // at four of them an hour.
   hold_reentry_minutes: { defaultValue: 15, min: 1, max: 120, unit: "min", step: 1 },
+  // How far under the drop-out level every phase must stay for the hold to resume, so a load hovering at the
+  // level can't flap it. 2 A: with 22 A and a 2 A margin a hold drops out at 20 A and resumes below 18 A. The
+  // car at 16 A per phase projects ~17.3 A on its busiest phase at night: with ~450 W more on that phase it sits
+  // above 18 A, and a hold a kettle ended never resumes, so the battery charges the car (up to ~40 kWh). 1 A
+  // leaves room for that. Under 0.5 A a load hovering at the level, with 1–2 A of per-phase reading jitter, is
+  // out and back at every re-entry wait (four EDB0/EDB1 pairs an hour at 15 min).
+  hold_reentry_hysteresis_amps: { defaultValue: 2, min: 0.5, max: 5, unit: "A", step: 0.5 },
   // A hold trickles into the battery, ~200 W at the charger's low end, and the "Charging a freezing battery"
   // P1 fires above 200 W at alerting.charging_battery_temp_p1_celsius. The guard keeps the battery out of a
   // hold while its coldest probe is at or below this, never less than 1 °C above the P1 threshold.

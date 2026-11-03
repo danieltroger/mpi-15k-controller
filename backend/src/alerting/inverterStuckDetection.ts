@@ -104,12 +104,18 @@ export const HIGH_SOC_IDLE_MAX_HALL_WATTS = 60;
 /**
  * During a hold window the house runs on the grid by design, so the battery idles whenever the trickle
  * doesn't flow — on a full pack. A pack at least this full, or held at its charge voltage
- * (BUY_CHECK_MAX_BATTERY_VOLTS), may rest at 0 A Idle/Idle through a hold; below it a working hold shows its
- * trickle (+100–200 W, the charger's floor is ~4 A) on the hall, and a latch at the end of a heavy window
- * chained into a hold doesn't (the latch read ~−27 W).
+ * (BUY_CHECK_MAX_BATTERY_VOLTS), may rest at 0 A Idle/Idle through a hold. Below it a working hold reports its
+ * trickle: in the five measured 2025-26 holds (1–11 A asked) the inverter read 3–10 A Charging, and 0 A
+ * Idle/Idle in at most 5 readings of each hold's ~600–8500, so it never shows the latch's 30 unbroken minutes;
+ * a latch at the end of a heavy window chained into a hold reads 0 A Idle/Idle throughout.
  */
 export const HOLD_FULL_PACK_SOC_PERCENT = 95;
-/** A hall at or above this during a hold is its trickle arriving, however the inverter reports it */
+/**
+ * A hall at or above this during a hold is its trickle arriving, however the inverter reports it (the latch
+ * read ~−27 W). Only a backstop for an inverter that misreports a working hold as idle: the hall nets the
+ * inverter's own DC draw out of the trickle, so a low-current hold's minute means ran from −50 to +55 W
+ * (median ~37 W), under this a tenth of the time. What keeps a quiet hold from paging is the inverter's report.
+ */
 export const HOLD_TRICKLE_MIN_HALL_WATTS = 30;
 
 const GRID_RELAY_OPEN_ON_PURPOSE = "grid relay open on purpose (Off-Grid III)";
