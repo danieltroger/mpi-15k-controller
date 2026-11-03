@@ -434,6 +434,7 @@ function exportedWh(sellWatts: number[], { pvW }: { pvW: number }): number {
     fixedBuyW: 0,
     feedInAtStartW: 0,
     runningWindowStartMs: undefined,
+    holdW: 0,
   }));
   const rampInput: PlannerInput = {
     nowMs: testDayStartMs,

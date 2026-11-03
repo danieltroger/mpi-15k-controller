@@ -806,6 +806,7 @@ for (const cooldownMinutes of [0, 1]) {
       averageSOC: 76,
       sunElevationDegrees: -20,
       commandedChargingAmps: 0,
+      holdWindowInForce: false,
       acChargingEnabledOnInverter: false,
     }),
     nowMs,

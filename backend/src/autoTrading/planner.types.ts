@@ -38,6 +38,12 @@ export type PlannerKnobs = Pick<
   | "terminal_value_forecast_max_deviation_sek"
   | "terminal_value_forecast_max_age_hours"
   | "terminal_value_forecast_wait_seconds"
+  | "hold_enabled"
+  | "hold_power_watts"
+  | "hold_overhead_watts"
+  | "hold_margin_sek_per_kwh"
+  | "hold_min_window_minutes"
+  | "hold_bridge_minutes"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
   runtime_soc_floor_percent: number;
@@ -120,6 +126,11 @@ export type PlannedWindow = {
   endMs: number;
   watts: number;
   kind: "sell" | "buy";
+  /**
+   * A buy window that holds (holdAllocation.ts): the house runs from the grid at a trickle charge so the
+   * battery keeps its energy. Absent on every other window.
+   */
+  hold?: true;
   reason: string;
   expectedKwh: number;
   avgSpot: number;
@@ -177,6 +188,13 @@ export type Slot = {
    * slot 0's is set: a new window that continues that feed is keyed no earlier (planWindows.ts).
    */
   runningWindowStartMs: number | undefined;
+  /**
+   * The hold power planned in this slot (holdAllocation.ts), 0 = none. Part of the candidate schedule like
+   * sellW/buyW, but kept on the slot so every pass's simulations see the holds without passing them along;
+   * a sell or buy the later passes put into the slot wins over it (simulate.ts), and only the hold pass
+   * sets or clears it. buildSlots starts every slot at 0.
+   */
+  holdW: number;
 };
 export type SimResult = {
   revenueSek: number;

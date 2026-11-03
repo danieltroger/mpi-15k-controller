@@ -347,6 +347,60 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         plannerKnobInput("terminal_value_forecast_wait_seconds")
       ),
       f(
+        ["automatic_trading", "hold_enabled"],
+        "Hold at cheap hours",
+        "Plans holds only while the end-of-plan energy value above applies (it's what kept energy is worth): in cheap dark quarters no sell or buy uses, the planner writes a buy window at the hold power. The inverter runs the house from the grid and only trickles into the battery, which keeps its energy for dearer hours, and the Trading page lists it as a hold. Backtested over four winters on top of the end-of-plan value: ~60 SEK per winter at the 100 W extra grid draw assumed below, ~200 at none, positive in every winter; that draw isn't measured yet. On, every buy window at or below 300 W runs as a hold, a hand-written one too: exempt from \"Stop charging above\", watched by the hold guard below, its full-pack rest kept out of the inverter-stuck alert. Off, nothing is planned or treated as a hold: a small buy window is a charge like any other. Planning applies from the next plan run, the runtime part at once.",
+        { heading: "Hold (the house on the grid at cheap hours)" }
+      ),
+      f(
+        ["automatic_trading", "hold_power_watts"],
+        "Hold charging power",
+        `The charging power written into hold windows, sent to the inverter in whole battery amps of at least 1 (50 W is 1 A, 100 W 2 A). The planner counts this much going into the battery; past low-current windows charged ~4 A (~200 W) whatever 1–4 A was asked, so the battery may take more. Higher brings in more energy at the hold's price, and past 200 W real charge the battery-freezing alert's level. At most 300 W, the size up to which a buy window counts as a hold. If "Buy charging power" is 300 W or less, every buy would be a hold, so the planner plans none and says so. Applies from the next plan run. ${describePlannerKnobBounds("hold_power_watts")}`,
+        plannerKnobInput("hold_power_watts")
+      ),
+      f(
+        ["automatic_trading", "hold_overhead_watts"],
+        "Hold: extra grid draw",
+        `What the inverter draws from the grid while holding on top of the house, its own idle draw and the trickle. Not measured yet, and what holding is worth hangs on it, so the planner charges every hold for this much. Backtest at the default margin: ~200 SEK per winter at 0 W, ~80 at 50 W, ~60 at 100 W, ~20 at 150 W. Set below the real draw it loses money; set to 100 W where the real draw is nothing it still saved ~180. To measure it: switch Hold on with the end-of-plan value off (the planner then writes no holds), add a 100 W buy window for a quiet night on the Trading page (it runs as a hold: no SOC stop, the hold guard watching the breakers), and compare its grid import with the house load plus the idle draw. Applies from the next plan run. ${describePlannerKnobBounds("hold_overhead_watts")}`,
+        plannerKnobInput("hold_overhead_watts")
+      ),
+      f(
+        ["automatic_trading", "hold_margin_sek_per_kwh"],
+        "Hold margin",
+        `A quarter is held only if that gains at least this much per kWh the house imports in it. Higher holds less, where the gain is clear; lower also holds marginal quarters that the extra grid draw or a forecast miss can turn into a loss. In the backtest 0.2 was positive in every winter at every extra draw from 0 to 150 W; 0.1 lost in some winter from 50 W up. Applies from the next plan run. ${describePlannerKnobBounds("hold_margin_sek_per_kwh")}`,
+        plannerKnobInput("hold_margin_sek_per_kwh")
+      ),
+      f(
+        ["automatic_trading", "hold_min_window_minutes"],
+        "Shortest hold",
+        `Hold runs shorter than this are dropped. Each hold window switches AC charging on and off and sets the charging current twice; longer means fewer, longer windows and gives up short cheap spells. Applies from the next plan run. ${describePlannerKnobBounds("hold_min_window_minutes")}`,
+        plannerKnobInput("hold_min_window_minutes")
+      ),
+      f(
+        ["automatic_trading", "hold_bridge_minutes"],
+        "Hold through gaps up to",
+        `A gap this long or shorter between two holds is held through when that costs at most the fragmentation tolerance per window, so one window replaces two. 0 = never. Applies from the next plan run. ${describePlannerKnobBounds("hold_bridge_minutes")}`,
+        plannerKnobInput("hold_bridge_minutes")
+      ),
+      f(
+        ["automatic_trading", "hold_grid_margin_amps"],
+        "Hold guard: breaker margin",
+        `During a hold the whole house load, the EV charger included, runs through the grid breakers, and the charging current can't go below 1 A to make room. The hold guard ends a hold (AC charging off, the battery serves the house) once a phase has drawn "Max grid draw" (Buy windows & guards) minus this for 5 s (dips under it shorter than 5 s don't count), and logs a warning; it also ends one when the grid readings are over a minute old or a phase has no grid voltage. Larger ends holds on smaller loads; smaller leaves less room for the ~10–20 s the switch-over takes. A hold can sit just under this level for hours (the car charging at night), so before switching Hold on make sure "Max grid draw" suits the real breakers: 18–20 A for an hour can trip a 16 A one. Applies at once. ${describePlannerKnobBounds("hold_grid_margin_amps")}`,
+        plannerKnobInput("hold_grid_margin_amps")
+      ),
+      f(
+        ["automatic_trading", "hold_reentry_minutes"],
+        "Hold guard: resume after",
+        `How long every phase must stay 2 A below the guard's level (and the battery warm enough) before a hold resumes, and how long a hold waits after a controller start, so a restart never starts one blind. Shorter resumes sooner, but a load that cycles can then switch AC charging off and on several times an hour. Applies at once. ${describePlannerKnobBounds("hold_reentry_minutes")}`,
+        plannerKnobInput("hold_reentry_minutes")
+      ),
+      f(
+        ["automatic_trading", "hold_min_battery_temp_celsius"],
+        "Hold guard: coldest battery",
+        `No hold while the coldest battery probe is at or below this (and never within 1 °C of the "Charging a freezing battery" alert's threshold): a hold trickles into the battery, ~200 W at the charger's low end, and that alert pages above 200 W. A hold resumes once the probe is 1 °C warmer for the resume time. Applies at once. ${describePlannerKnobBounds("hold_min_battery_temp_celsius")}`,
+        plannerKnobInput("hold_min_battery_temp_celsius")
+      ),
+      f(
         ["automatic_trading", "charge_efficiency"],
         "Charge efficiency",
         "Fraction of bought AC energy that actually lands in the battery.",
@@ -815,7 +869,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["scheduled_power_buying", "only_buy_below_soc"],
         "Stop charging above",
-        "Grid charging stops once battery charge reaches this.",
+        "Grid charging stops once battery charge reaches this. With Hold on (Automatic trading), hold windows (buy windows at or below 300 W) are exempt: they only trickle into the battery, and gating them would leave the battery carrying the house through hours the plan kept its energy for.",
         { unit: "% SOC", min: 0, max: 100 }
       ),
       f(
@@ -827,7 +881,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["scheduled_power_buying", "max_grid_input_amperage"],
         "Max grid draw",
-        "Cap on total grid current while charging — protects the main fuse.",
+        "Cap on per-phase grid current while charging — protects the main fuse. A hold window can't charge less to make room, so the hold guard ends it below this (Automatic trading → Hold guard: breaker margin).",
         { unit: "A", min: 0 }
       ),
     ],

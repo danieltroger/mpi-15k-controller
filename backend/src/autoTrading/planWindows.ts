@@ -5,6 +5,7 @@
  * auto-trader writes to the schedule — its start, expected energy, average spot and the reason text.
  */
 
+import { holdHouseKwh } from "./holdAllocation.ts";
 import type { PlannedWindow, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 export type MergedWindow = {
@@ -27,6 +28,10 @@ export type PackagingContext = {
   arbitrageBuySlots: Set<number>;
   /** Buy slots the pre-buy pass took only to stock up for after the horizon (buyAllocation.ts) */
   stockingBuySlots: Set<number>;
+  /** The slots written as holds (holdAllocation.ts): their windows are holds */
+  holdSlots: Set<number>;
+  /** What a DC kWh left at plan end is worth (HorizonValuation): what a hold at the end of the prices keeps it for */
+  endEnergySekPerKwh: number;
 };
 
 export function mergeAcceptedSlots(
@@ -102,24 +107,47 @@ export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContex
   // A merged window can hold both kinds of pre-buy: it only reads as stocking up when nothing in it averts an import
   const isStockingUp =
     mergedWindow.kind === "buy" && mergedWindow.slotIndexes.every(slotIndex => stockingBuySlots.has(slotIndex));
+  // Holds are merged apart from the buys (planner.ts), so a window is all holds or none
+  const isHold =
+    mergedWindow.kind === "buy" && mergedWindow.slotIndexes.every(slotIndex => packaging.holdSlots.has(slotIndex));
   const approximateKwh = formatApproximateKwh(expectedKwh);
   const reason =
     mergedWindow.kind === "sell"
       ? `spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)} of horizon), ~${approximateKwh} kWh, SOC ${Math.round((socBefore / cap) * 100)}%→${Math.round((socAfter / cap) * 100)}%`
-      : isArbitrage
-        ? `arbitrage: buying ~${approximateKwh} kWh at ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}) to re-sell at the later price peak`
-        : isStockingUp
-          ? `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), stocking up ~${approximateKwh} kWh for after the horizon`
-          : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), pre-buying ~${approximateKwh} kWh to avoid pricier unavoidable import`;
+      : isHold
+        ? holdReason(mergedWindow, packaging, avgSpot)
+        : isArbitrage
+          ? `arbitrage: buying ~${approximateKwh} kWh at ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}) to re-sell at the later price peak`
+          : isStockingUp
+            ? `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), stocking up ~${approximateKwh} kWh for after the horizon`
+            : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), pre-buying ~${approximateKwh} kWh to avoid pricier unavoidable import`;
   return {
     startMs: mergedWindow.kind === "sell" ? sellWindowStartMs(mergedWindow, slots, input.nowMs) : mergedWindow.startMs,
     endMs: mergedWindow.endMs,
     watts: mergedWindow.watts,
     kind: mergedWindow.kind,
+    ...(isHold ? { hold: true as const } : {}),
     reason,
     expectedKwh,
     avgSpot,
   };
+}
+
+/**
+ * "hold: house on grid at X, battery saved for Y": what the house imports at what price, and what the kept
+ * energy is for — the dearest spot still ahead in the prices, or, with none dearer, the end-of-plan value
+ */
+function holdReason(mergedWindow: MergedWindow, packaging: PackagingContext, avgSpot: number): string {
+  const { slots, spotsAll, endEnergySekPerKwh } = packaging;
+  const lastSlotIndex = mergedWindow.slotIndexes[mergedWindow.slotIndexes.length - 1];
+  const houseKwh = holdHouseKwh(packaging, mergedWindow.slotIndexes);
+  const laterSpots = slots.slice(lastSlotIndex + 1).flatMap(slot => (slot.spot === undefined ? [] : [slot.spot]));
+  const laterPeakSpot = laterSpots.length ? Math.max(...laterSpots) : undefined;
+  const savedFor =
+    laterPeakSpot !== undefined && laterPeakSpot > avgSpot
+      ? `pricier hours (up to ${laterPeakSpot.toFixed(2)} SEK/kWh spot ahead)`
+      : `after the horizon (worth ${endEnergySekPerKwh.toFixed(2)} SEK/kWh)`;
+  return `hold: house on grid at ${avgSpot.toFixed(2)} SEK/kWh spot (P${percentileOf(avgSpot, spotsAll)}), ~${formatApproximateKwh(houseKwh)} kWh; battery saved for ${savedFor}`;
 }
 
 /**

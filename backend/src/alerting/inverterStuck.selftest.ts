@@ -68,6 +68,7 @@ type SnapshotValues = {
   averageSOC?: number;
   sunElevation?: number;
   commandedAmps?: number;
+  holdWindowInForce?: boolean;
   acChargingEnabled?: boolean;
   inverterAgeMs?: number;
   hallAgeMs?: number;
@@ -94,6 +95,7 @@ function snapshotAt(nowMs: number, values: SnapshotValues = {}): InverterStuckSn
     averageSOC: values.averageSOC ?? 37,
     sunElevationDegrees: values.sunElevation ?? -20,
     commandedChargingAmps: values.commandedAmps ?? 0,
+    holdWindowInForce: values.holdWindowInForce ?? false,
     acChargingEnabledOnInverter: values.acChargingEnabled ?? false,
   };
 }
@@ -187,6 +189,99 @@ check(
   evaluateDcSideIdle(snapshotAt(nowMs, { hallAgeMs: 60_000 })).observation,
   "indeterminate"
 );
+// A hold window runs the house from the grid with the battery at a trickle, or at 0 A Idle/Idle once full:
+// the latch signature by design, for hours a night
+const fullPackHold: SnapshotValues = { hallWatts: -20, batteryVolts: 54.4, averageSOC: 99, gridWatts: 1400 };
+check(
+  "full pack, house on the grid, outside a hold → failing (the latch from a full pack)",
+  evaluateDcSideIdle(snapshotAt(nowMs, fullPackHold)).observation,
+  "failing"
+);
+check(
+  "the same during a hold window → indeterminate, not failing",
+  evaluateDcSideIdle(snapshotAt(nowMs, { ...fullPackHold, holdWindowInForce: true })).observation,
+  "indeterminate"
+);
+check(
+  "a hold's trickle the inverter reports as 0 A Idle (hall +90 W, SOC 60%) → indeterminate during the hold",
+  evaluateDcSideIdle(snapshotAt(nowMs, { hallWatts: 90, averageSOC: 60, gridWatts: 900, holdWindowInForce: true }))
+    .observation,
+  "indeterminate"
+);
+check(
+  "a full pack held at its charge voltage through a hold (55.8 V, ledger at 93%) → indeterminate",
+  evaluateDcSideIdle(
+    snapshotAt(nowMs, { ...fullPackHold, batteryVolts: 55.8, averageSOC: 93, holdWindowInForce: true })
+  ).observation,
+  "indeterminate"
+);
+// A heavy window chained into a hold that latched at its end: below a full pack not even the trickle arrives
+const latchedIntoHold: SnapshotValues = { hallWatts: -25, batteryVolts: 53.4, averageSOC: 72, gridWatts: 1300 };
+check(
+  "a latch at a heavy window chained into a hold (SOC 72%, hall −25 W) → failing, hold or not",
+  evaluateDcSideIdle(snapshotAt(nowMs, { ...latchedIntoHold, holdWindowInForce: true })).observation,
+  "failing"
+);
+{
+  let rules = INVERTER_STUCK_IDLE_STATE;
+  let raisedAtMinute: number | undefined;
+  for (let minute = 0; minute <= 40 && raisedAtMinute === undefined; minute++) {
+    const step = stepInverterStuckAlert(
+      rules,
+      evaluateInverterStuckRules(snapshotAt(nowMs + minute * 60_000, { ...latchedIntoHold, holdWindowInForce: true })),
+      nowMs + minute * 60_000,
+      DEFAULT_SETTINGS
+    );
+    rules = step.state;
+    if (step.action === "raise_p2") raisedAtMinute = minute;
+  }
+  check("…and pages within the hold, 30 min in", raisedAtMinute, 30);
+}
+check(
+  "a hold the inverter reports charging at 2 A → healthy (flow evidence still counts)",
+  evaluateDcSideIdle(
+    snapshotAt(nowMs, {
+      hallWatts: 105,
+      batteryCurrent: 2,
+      batteryDirection: "Charging",
+      dcAcDirection: "AC to DC",
+      holdWindowInForce: true,
+    })
+  ).observation,
+  "healthy"
+);
+{
+  // Thirty minutes of the full-pack hold signature: no "DC side idle" during the window, the P2 once it is over
+  let rules = INVERTER_STUCK_IDLE_STATE;
+  let actionDuringHold: InverterStuckAlertAction | undefined;
+  for (let minute = 0; minute <= 40; minute++) {
+    const step = stepInverterStuckAlert(
+      rules,
+      evaluateInverterStuckRules(snapshotAt(nowMs + minute * 60_000, { ...fullPackHold, holdWindowInForce: true })),
+      nowMs + minute * 60_000,
+      DEFAULT_SETTINGS
+    );
+    rules = step.state;
+    actionDuringHold ??= step.action;
+  }
+  check("40 min of a full-pack hold raise no stuck alert", actionDuringHold, undefined);
+  let actionAfterHold: InverterStuckAlertAction | undefined;
+  for (let minute = 41; minute <= 75; minute++) {
+    const step = stepInverterStuckAlert(
+      rules,
+      evaluateInverterStuckRules(snapshotAt(nowMs + minute * 60_000, fullPackHold)),
+      nowMs + minute * 60_000,
+      DEFAULT_SETTINGS
+    );
+    rules = step.state;
+    actionAfterHold ??= step.action;
+  }
+  check(
+    "the same signature 30 min after the hold ends still raises the P2 (a latch the hold hid)",
+    actionAfterHold,
+    "raise_p2"
+  );
+}
 
 // ——— Rule A: PV stalled in daylight ———
 check(
@@ -245,6 +340,13 @@ check(
 check(
   "1 A command (fuse headroom eaten by the house) → indeterminate",
   evaluateBuyWindowNotCharging(snapshotAt(nowMs, { ...deadWindow, commandedAmps: 1, hallWatts: 3 })).observation,
+  "indeterminate"
+);
+check(
+  "a hold at its largest power (300 W, 6 A) taking nothing → indeterminate: Rule C never arms for a hold",
+  evaluateBuyWindowNotCharging(
+    snapshotAt(nowMs, { ...deadWindow, commandedAmps: 6, hallWatts: 2, holdWindowInForce: true })
+  ).observation,
   "indeterminate"
 );
 check(

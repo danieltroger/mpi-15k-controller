@@ -59,6 +59,8 @@ export function startInverterStuckAlerts(ctx: {
   averageSOC: Accessor<number | undefined>;
   currentBatteryPower: Accessor<CurrentBatteryPowerBroadcast | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
+  /** A hold window is in force: the DC-side-idle signature is what a hold looks like (inverterStuckDetection.ts) */
+  holdWindowInForce: Accessor<boolean>;
   acChargingEnabledOnInverter: Accessor<boolean>;
   /** What the inverter says about itself: the alert quotes its fault code while it reports Fault mode */
   inverterStatus: Accessor<InverterOperatingStatus>;
@@ -184,6 +186,7 @@ function takeSnapshot(
     averageSOC: ctx.averageSOC(),
     sunElevationDegrees: sunElevationDegrees(nowMs, latitude, longitude),
     commandedChargingAmps: ctx.chargingAmperageForBuying(),
+    holdWindowInForce: ctx.holdWindowInForce(),
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter(),
   };
 }

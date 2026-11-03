@@ -15,6 +15,7 @@ import type { InverterEpisodePaging } from "./inverterFaultAlertPolicy.ts";
 import type { InverterOperatingStatus } from "../inverterComms/inverterStatus.types.ts";
 import { describeTelemetryStaleness, inverterTelemetryStaleness } from "./inverterTelemetryStaleness.ts";
 import { temperatureStaleAfterMs } from "../temperatureMeasuring/thermometerSweepSettings.ts";
+import { batteryProbeReadings } from "../temperatureMeasuring/batteryProbes.ts";
 
 /**
  * The watchers: each rule reads signals that already drive the rest of the controller and turns
@@ -37,6 +38,8 @@ export function startAlertRules(ctx: {
   autoTraderStatus: Accessor<AutoTraderStatus | undefined>;
   /** Battery-side amps the buy schedule is asking for (0/undefined outside buy windows) */
   chargingAmperageForBuying: Accessor<number | undefined>;
+  /** A hold window is what the buy schedule asks for (buying/scheduledBuyDecision.ts): the house runs on the grid by design */
+  holdWindowInForce: Accessor<boolean>;
   /** HECS readback: the inverter confirmed AC charging is enabled */
   acChargingEnabledOnInverter: Accessor<boolean>;
   /** The inverter's own MOD/CFS/WS report (inverterComms/useInverterStatus.ts) */
@@ -72,12 +75,7 @@ export function startAlertRules(ctx: {
 
   // ——— battery probe temperature (cells + bus bars; cooling_* probes sit on the inverter air path) ———
   const batteryProbes = createMemo(() =>
-    Object.values(ctx.temperatures())
-      .map(reading => reading())
-      .filter(
-        (reading): reading is NonNullable<typeof reading> =>
-          !!reading && (reading.label.startsWith("cell") || reading.label.includes("bus_bar"))
-      )
+    batteryProbeReadings(Object.values(ctx.temperatures()).map(reading => reading()))
   );
   const batteryTempAlert = edgeAlert("battery-temp", "P1", { resolveNotice: true });
   createEffect(() => {
@@ -235,6 +233,7 @@ export function startAlertRules(ctx: {
     averageSOC: ctx.averageSOC,
     currentBatteryPower: ctx.currentBatteryPower,
     chargingAmperageForBuying: ctx.chargingAmperageForBuying,
+    holdWindowInForce: ctx.holdWindowInForce,
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter,
     inverterStatus: ctx.inverterStatus,
     paging: inverterEpisodePaging,

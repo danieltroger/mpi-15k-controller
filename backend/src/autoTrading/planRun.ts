@@ -122,6 +122,7 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
           end: new Date(window.endMs).toISOString(),
           watts: window.watts,
           kind: window.kind,
+          ...(window.hold ? { hold: true } : {}),
           reason: window.reason,
           expected_kwh: Math.round(window.expectedKwh * 10) / 10,
           avg_spot: Math.round(window.avgSpot * 1000) / 1000,
