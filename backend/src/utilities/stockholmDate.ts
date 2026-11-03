@@ -11,7 +11,11 @@ export function stockholmDateOf(ms: number): string {
   return STOCKHOLM_DATE_FORMAT.format(ms);
 }
 
-/** A calendar date plus whole days, DST-free (plain date arithmetic, no instants involved) */
+/**
+ * A calendar date plus whole days, DST-free (plain date arithmetic, no instants involved). "N days from
+ * today" is addDays(stockholmDateOf(nowMs), N), never stockholmDateOf(nowMs + N × 24 h): when that span
+ * crosses a DST switch, the instant is off by one day in the hour next to midnight.
+ */
 export function addDays(date: string, days: number): string {
   const [year, month, dayOfMonth] = calendarDateParts(date);
   return new Date(Date.UTC(year, month - 1, dayOfMonth + days)).toISOString().slice(0, 10);

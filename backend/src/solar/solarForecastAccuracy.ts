@@ -3,7 +3,7 @@ import { type Accessor, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { fetchSolarForecast } from "../autoTrading/solarForecast.ts";
-import { stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { logLog, warnLog } from "../utilities/logging.ts";
 import { msUntilNextLocalTime } from "../utilities/msUntilNextLocalTime.ts";
 import { influxClientQuery } from "./influxQuery.ts";
@@ -85,7 +85,7 @@ async function recordForecast(ctx: AccuracyContext, lead: "short" | "day_ahead")
     );
     const nowMs = Date.now();
     const currentHourMs = Math.floor(nowMs / 3600_000) * 3600_000;
-    const tomorrow = stockholmDateOf(nowMs + 86_400_000);
+    const tomorrow = addDays(stockholmDateOf(nowMs), 1);
     const hours = forecast.hours.filter(hour =>
       lead === "short" ? hour.hourStartMs === currentHourMs : stockholmDateOf(hour.hourStartMs) === tomorrow
     );
@@ -118,8 +118,9 @@ async function recordForecast(ctx: AccuracyContext, lead: "short" | "day_ahead")
 async function settleRecentDays(ctx: AccuracyContext, options: { alert: boolean }) {
   const influxClient = ctx.influxClient();
   if (!influxClient) return;
+  const today = stockholmDateOf(Date.now());
   for (let daysBack = BACKLOG_DAYS; daysBack >= 1; daysBack--) {
-    const date = stockholmDateOf(Date.now() - daysBack * 86_400_000);
+    const date = addDays(today, -daysBack);
     const isYesterday = daysBack === 1;
     const { startMs, endMs } = localDayBounds(date);
     const settled = await dailyPointExists(influxClient, startMs, endMs).catch((error: unknown) => {

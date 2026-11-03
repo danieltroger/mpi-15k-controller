@@ -1,6 +1,6 @@
 import { type Accessor, createSignal } from "solid-js";
-import { logLog } from "../utilities/logging.ts";
-import { stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { logLog, warnLog } from "../utilities/logging.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PriceSlot15 } from "./planner.types.ts";
 import type { FetchedPrices } from "./priceService.types.ts";
@@ -9,7 +9,7 @@ export type { FetchedPrices } from "./priceService.types.ts";
 
 const PRICE_API_BASE = "https://www.elprisetjustnu.se/api/v1/prices";
 
-type ApiEntry = { SEK_per_kWh: number; time_start: string; time_end: string };
+export type ApiEntry = { SEK_per_kWh: number; time_start: string; time_end: string };
 
 let cache: { area: string; value: FetchedPrices } | undefined;
 
@@ -21,12 +21,8 @@ const [getLatestSpotPrices, setLatestSpotPrices] = createSignal<FetchedPrices | 
  */
 export const latestSpotPrices: Accessor<FetchedPrices | undefined> = getLatestSpotPrices;
 
-async function fetchDay(area: string, offsetDays: number): Promise<ApiEntry[] | undefined> {
-  const [year, month, day] = stockholmDateOf(Date.now() + offsetDays * 24 * 3600 * 1000).split("-");
-  return fetchDayByDate(area, year, month, day);
-}
-
-async function fetchDayByDate(area: string, year: string, month: string, day: string): Promise<ApiEntry[] | undefined> {
+async function fetchDayByDate(area: string, date: string): Promise<ApiEntry[] | undefined> {
+  const [year, month, day] = date.split("-");
   const url = `${PRICE_API_BASE}/${year}/${month}-${day}_${area}.json`;
   const controller = new AbortController();
   // Generous timeout: this pi's CPU is often pegged (SOC worker) which slows TLS + event loop
@@ -44,22 +40,42 @@ async function fetchDayByDate(area: string, year: string, month: string, day: st
   }
 }
 
-/** Normalise API entries to 15-min slots (handles the pre-2025-10 hourly-era days too). */
-function entriesToSlots(entries: ApiEntry[]): PriceSlot15[] {
-  const slots: PriceSlot15[] = [];
+/**
+ * Normalise API entries to 15-min slots (handles the pre-2025-10 hourly-era days too), one slot per start:
+ * the planner needs distinct, sorted slots, and a start seen twice (overlapping entries, or one day fetched
+ * twice) would count that quarter-hour's energy twice. Keeps the first price and warns, never silently.
+ */
+export function entriesToSlots(entries: ApiEntry[]): PriceSlot15[] {
+  const slotsByStartMs = new Map<number, PriceSlot15>();
+  const duplicates: string[] = [];
   for (const entry of entries) {
     const startMs = +new Date(entry.time_start);
     const endMs = +new Date(entry.time_end);
     if (!isFinite(startMs) || !isFinite(endMs) || typeof entry.SEK_per_kWh !== "number") continue;
-    for (let t = startMs; t < endMs; t += SLOT_MS) slots.push({ startMs: t, spot: entry.SEK_per_kWh });
+    for (let slotStartMs = startMs; slotStartMs < endMs; slotStartMs += SLOT_MS) {
+      const kept = slotsByStartMs.get(slotStartMs);
+      if (kept) {
+        duplicates.push(`${new Date(slotStartMs).toISOString()} (kept ${kept.spot}, dropped ${entry.SEK_per_kWh})`);
+        continue;
+      }
+      slotsByStartMs.set(slotStartMs, { startMs: slotStartMs, spot: entry.SEK_per_kWh });
+    }
   }
-  return slots.sort((a, b) => a.startMs - b.startMs);
+  if (duplicates.length) {
+    const listed = duplicates.slice(0, MAX_LISTED_DUPLICATES).join(", ");
+    warnLog(
+      `Price API: ${duplicates.length} duplicate 15-min slot(s) dropped, each start's first price kept:`,
+      duplicates.length > MAX_LISTED_DUPLICATES ? `${listed}, …` : listed
+    );
+  }
+  return [...slotsByStartMs.values()].sort((first, second) => first.startMs - second.startMs);
 }
+
+const MAX_LISTED_DUPLICATES = 8;
 
 /** Fetch one specific date's (YYYY-MM-DD) 15-min spot prices; [] if the day isn't published. */
 export async function fetchPriceSlotsForDate(area: string, dateStr: string): Promise<PriceSlot15[]> {
-  const [year, month, day] = dateStr.split("-");
-  const entries = await fetchDayByDate(area, year, month, day);
+  const entries = await fetchDayByDate(area, dateStr);
   return entries ? entriesToSlots(entries) : [];
 }
 
@@ -79,8 +95,9 @@ export async function fetchPrices(area: string, forceRefresh = false): Promise<F
     return cache.value;
   }
 
-  const [today, tomorrow] = await Promise.all([fetchDay(area, 0), fetchDay(area, 1)]);
-  if (!today) throw new Error("Price API has no data for today");
+  const { todayDate, tomorrowDate } = priceDatesToFetch(Date.now());
+  const [today, tomorrow] = await Promise.all([fetchDayByDate(area, todayDate), fetchDayByDate(area, tomorrowDate)]);
+  if (!today) throw new Error(`Price API has no data for today (${todayDate})`);
 
   const slots = entriesToSlots([...today, ...(tomorrow ?? [])]);
 
@@ -106,4 +123,15 @@ export async function fetchPrices(area: string, forceRefresh = false): Promise<F
 
 export function getCachedPrices(area: string): FetchedPrices | undefined {
   return cache?.area === area ? cache.value : undefined;
+}
+
+/**
+ * The Stockholm days fetchPrices asks for: today and the next calendar day. Not the date of now + 24 h: in
+ * the 25-hour autumn day's first hour that instant is still today (today fetched twice, every slot doubled,
+ * "tomorrow included" wrongly true), and in the spring-forward eve's last hour it is already Monday (Sunday's
+ * published prices never fetched, the horizon ending at midnight).
+ */
+export function priceDatesToFetch(nowMs: number): { todayDate: string; tomorrowDate: string } {
+  const todayDate = stockholmDateOf(nowMs);
+  return { todayDate, tomorrowDate: addDays(todayDate, 1) };
 }

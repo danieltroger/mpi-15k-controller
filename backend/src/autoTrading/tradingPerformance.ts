@@ -1,6 +1,6 @@
 import type Influx from "influx";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { stockholmDateOf } from "../utilities/stockholmDate.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
@@ -87,7 +87,7 @@ export function captureForecastLog(state: AutoTraderState, input: PlannerInput, 
       planned_sell_kwh: round1(day.sellKwh),
     };
   }
-  const cutoff = stockholmDateOf(input.nowMs - 7 * 24 * 3600_000);
+  const cutoff = addDays(todayStr, -7);
   state.forecast_log = Object.fromEntries(Object.entries(log).filter(([date]) => date >= cutoff));
 }
 
@@ -108,8 +108,8 @@ export async function settleRecentDays(
     const today = stockholmDateOf(Date.now());
     const candidates: string[] = [];
     for (let daysAgo = 3; daysAgo >= 1; daysAgo--) {
-      const date = stockholmDateOf(Date.now() - daysAgo * 24 * 3600_000);
-      if (date >= today) continue; // only fully-completed days
+      // Calendar days before today, so only fully-completed days, each once
+      const date = addDays(today, -daysAgo);
       if (state.last_settled_date && date <= state.last_settled_date) continue;
       candidates.push(date);
     }
