@@ -8,6 +8,7 @@ import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/ther
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
 import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../autoTrading/terminalValue.ts";
+import { DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -141,6 +142,9 @@ export const default_config: Config = {
       snow_nowcast: true,
     },
   },
+  // Ships on: an accuracy correction of the grid readings, calibrated against the meter (2026-11-03).
+  // All zero = the meter is assumed to see exactly the reading, as before.
+  meter_calibration: { ...DEFAULT_METER_CALIBRATION },
   usb_parameter_setting: {
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     poll_values_interval_seconds: 60 * 5,
@@ -232,8 +236,8 @@ export const default_config: Config = {
 
 /**
  * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model),
- * elpatron_switching, scheduled_power_selling, usb_parameter_setting, temperature_saving and
- * soc_calculations merge one level deeper: knobs get added over time, and a config.json written
+ * elpatron_switching, meter_calibration, scheduled_power_selling, usb_parameter_setting, temperature_saving
+ * and soc_calculations merge one level deeper: knobs get added over time, and a config.json written
  * before a knob existed must still pick up its default (the planner, the elpatron load model and the
  * SOC ledger do raw arithmetic on these — a missing knob would silently NaN every projection; a
  * missing alerting threshold would silently never alert; a missing inverter-temperature limit would
@@ -263,6 +267,7 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
     alerting,
     automatic_trading: mergeAutomaticTrading(partial.automatic_trading),
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
+    meter_calibration: { ...default_config.meter_calibration, ...partial.meter_calibration },
     // A stored schedule (even an empty one) replaces the default's sample entry wholesale, as before
     scheduled_power_selling: {
       ...default_config.scheduled_power_selling,

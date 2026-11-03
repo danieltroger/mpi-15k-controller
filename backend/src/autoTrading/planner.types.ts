@@ -1,11 +1,11 @@
-import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
+import type { AutomaticTradingConfig, ExpectedSpotSource, MeterCalibrationConfig } from "../config/config.types.ts";
 import type { ForecastSpotSummary } from "./expectedSpotForecast.types.ts";
 
 export type PriceSlot15 = { startMs: number; spot: number };
 export type FixedWindow = { startMs: number; endMs: number; watts: number };
 /**
- * Knobs are the automatic_trading config section verbatim (spread it in), plus two values
- * that live elsewhere in the config: the runtime sell cutoff and the baseline night feed.
+ * Knobs are the automatic_trading config section verbatim (spread it in), plus what lives elsewhere
+ * in the config: the runtime sell cutoff, the baseline night feed and the meter calibration.
  * The callers pass the knobs of plannerKnobBounds.ts corrected to their bounds.
  */
 export type PlannerKnobs = Pick<
@@ -49,6 +49,8 @@ export type PlannerKnobs = Pick<
   runtime_soc_floor_percent: number;
   /** feed_from_battery_when_no_solar.feed_amount_watts */
   baseline_feed_watts: number;
+  /** The meter_calibration section, corrected to its bounds: revenue is credited at what the meter counts (simulate.ts) */
+  meter_calibration: MeterCalibrationConfig;
 };
 export type PlannerInput = {
   nowMs: number;

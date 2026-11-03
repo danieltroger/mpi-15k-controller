@@ -12,6 +12,10 @@ import {
   PLANNER_KNOB_BOUNDS,
 } from "../../../../backend/src/autoTrading/plannerKnobBounds";
 import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../../../../backend/src/autoTrading/terminalValue";
+import {
+  METER_CALIBRATION_BOUNDS,
+  type MeterCalibrationSettingName,
+} from "../../../../backend/src/grid/meterCalibrationBounds";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -117,6 +121,16 @@ function plannerKnobInput(knobName: BoundedPlannerKnobName): Partial<ConfigField
 }
 function describePlannerKnobBounds(knobName: BoundedPlannerKnobName): string {
   const { min, max, unit, defaultValue } = PLANNER_KNOB_BOUNDS[knobName];
+  return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
+}
+
+/** Number-input hints for a meter calibration setting: the bounds the backend clamps to */
+function meterCalibrationInput(settingName: MeterCalibrationSettingName): Partial<ConfigFieldMeta> {
+  const { min, max, unit, step } = METER_CALIBRATION_BOUNDS[settingName];
+  return { unit, min, max, step };
+}
+function describeMeterCalibrationBounds(settingName: MeterCalibrationSettingName): string {
+  const { min, max, unit, defaultValue } = METER_CALIBRATION_BOUNDS[settingName];
   return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
 }
 
@@ -1065,6 +1079,51 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "PV2 protection voltage",
         "Above this PV string 2 voltage, surplus is forced through to the grid.",
         { unit: "V" }
+      ),
+    ],
+  },
+  {
+    id: "meter-calibration",
+    title: "Grid meter calibration",
+    description:
+      "How the inverter's grid reading maps onto the utility meter. The reading leaves out the inverter's own draw, so the meter counts less export and more import than the inverter shows; these numbers come from the meter's 15-min import and export data (November 2026). The daily settlement, the planner's revenue and the meter-equivalent grid fields in InfluxDB use them. The raw reading stays as it is, and everything that protects the hardware (the grid-current guards, the buy-window step-down, stuck detection, the hold guard) keeps acting on it. All zero = the meter is assumed to see exactly the reading, as before the calibration.",
+    rootKeys: ["meter_calibration"],
+    fields: [
+      f(
+        ["meter_calibration", "export_draw_watts"],
+        "Inverter draw while exporting",
+        `While feeding the grid, the meter counts this much less than the inverter's reading: its own draw (fans, control electronics) that the reading leaves out. Measured 197–206 W on the night feed (a ~250 W reading reached the meter as ~48 W), the same feeding from solar and in sells, and unchanged across the July 2026 firmware fix and the October 2026 serial cutover. Higher credits every export with less: the settled export, and what the planner thinks the night feed and a sell earn. Lower credits more. Applies at once: to the live meter-equivalent fields, the next settlement and the next plan. ${describeMeterCalibrationBounds("export_draw_watts")}`,
+        meterCalibrationInput("export_draw_watts")
+      ),
+      f(
+        ["meter_calibration", "export_watts_per_kw_squared"],
+        "Export loss growing with power",
+        `On top of the draw above, the gap grows with the square of the export: at 1.2, a 14.5 kW sell loses another 250 W (the meter counted 0.969 × the reading in sells) and 5 kW another 30 W. Higher makes big sells worth less in the settlement and to the planner; 0 leaves only the fixed draw. Applies at once. ${describeMeterCalibrationBounds("export_watts_per_kw_squared")}`,
+        meterCalibrationInput("export_watts_per_kw_squared")
+      ),
+      f(
+        ["meter_calibration", "import_draw_converting_watts"],
+        "Inverter draw while importing and converting",
+        `While importing with the inverter's converter running (charging from the grid, or the battery covering part of the house), the meter counts this much more than the reading. Measured 203–216 W in holds and small charges, ~220 W where the buy-window curve starts. Higher makes grid charging cost more in the settlement and to the planner (fewer marginal buys); lower, less. Applies at once. ${describeMeterCalibrationBounds("import_draw_converting_watts")}`,
+        meterCalibrationInput("import_draw_converting_watts")
+      ),
+      f(
+        ["meter_calibration", "import_draw_pass_through_watts"],
+        "Inverter draw while passing the grid through",
+        `While importing with the converter idle (the battery idle and the house straight on the grid, e.g. with the battery empty), the meter counts this much more than the reading. Measured 96–112 W. Higher makes those hours cost more in the settlement, and an emptied battery more costly to the planner. Applies at once. ${describeMeterCalibrationBounds("import_draw_pass_through_watts")}`,
+        meterCalibrationInput("import_draw_pass_through_watts")
+      ),
+      f(
+        ["meter_calibration", "import_watts_per_kw_squared"],
+        "Import loss growing with power",
+        `On top of either draw, the import gap grows with the square of the power: at 2.5, a 14.5 kW buy window adds another ~525 W (the meter counted ~747 W more than the reading in all, ×1.051) and 5 kW another 60 W. Higher makes big buy windows dearer in the settlement and to the planner. Applies at once. ${describeMeterCalibrationBounds("import_watts_per_kw_squared")}`,
+        meterCalibrationInput("import_watts_per_kw_squared")
+      ),
+      f(
+        ["meter_calibration", "feed_in_setpoint_shortfall_watts"],
+        "Feed-in limit vs reading (planner)",
+        `Planner only. The planner works with the feed-in limit it sets, but the inverter's reading sits about this far below it: the 350 W night feed reads ~250 W and a 10 kW sell ~9.88 kW. Not subtracted where the inverter's 15 kW rating less the house is what caps a sell, since the reading matches there. Together with the export draw it's why the planner credits a 300 W night feed with about nothing. Higher credits feeding at a limit with less. Applies from the next plan. ${describeMeterCalibrationBounds("feed_in_setpoint_shortfall_watts")}`,
+        meterCalibrationInput("feed_in_setpoint_shortfall_watts")
       ),
     ],
   },

@@ -10,6 +10,7 @@ import { buildElpatronLoadModel, MANUAL_ON_MODEL_HORIZON_MS } from "./elpatronFo
 import { estimateElpatronWattsByHour } from "./consumptionForecast.ts";
 import { baseKnobs, check, finishSelftest, HOUR_MS, mkPrices, testDayStartMs } from "./plannerSelftestFixtures.ts";
 import type { PlannerInput } from "./planner.types.ts";
+import { DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 
 // ---------- Scenario 1: winter deficit → pre-buy at cheap night hours ----------
 {
@@ -348,28 +349,31 @@ import type { PlannerInput } from "./planner.types.ts";
 // ---------- Scenario 9: realized-revenue accounting (settlement) ----------
 {
   const fees = { sell_bonus_sek_per_kwh: 0.092, buy_surcharges_sek_per_kwh: 1.186, vat_multiplier: 1.25 };
-  // Four 15-min slots exporting 15 kW (gridW negative) at spot 1.00 → 15 kWh sold
-  const exportSlots = Array.from({ length: 4 }, () => ({ gridW: -15000, spot: 1.0 }));
+  // Four 15-min slots exporting 15 kW at spot 1.00 → 15 kWh sold
+  const exportSlots = Array.from({ length: 4 }, () => ({ importW: 0, exportW: 15000, spot: 1.0 }));
   const sold = computeRealizedRevenue(exportSlots, 0.25, fees);
-  check("settle: export kWh from negative grid power", Math.abs(sold.export_kwh - 15) < 0.01, `(${sold.export_kwh})`);
+  check("settle: export kWh from the export power", Math.abs(sold.export_kwh - 15) < 0.01, `(${sold.export_kwh})`);
   check("settle: no import counted when exporting", sold.import_kwh === 0);
   check(
     "settle: export revenue = kWh × (spot + bonus)",
     Math.abs(sold.revenue_sek - 15 * (1.0 + 0.092)) < 0.05,
     `(${sold.revenue_sek})`
   );
-  // Two slots importing 8 kW (gridW positive) at spot 0.5 → 4 kWh bought at the full fee+VAT
-  const importSlots = Array.from({ length: 2 }, () => ({ gridW: 8000, spot: 0.5 }));
+  // Two slots importing 8 kW at spot 0.5 → 4 kWh bought at the full fee+VAT
+  const importSlots = Array.from({ length: 2 }, () => ({ importW: 8000, exportW: 0, spot: 0.5 }));
   const bought = computeRealizedRevenue(importSlots, 0.25, fees);
-  check(
-    "settle: import kWh from positive grid power",
-    Math.abs(bought.import_kwh - 4) < 0.01,
-    `(${bought.import_kwh})`
-  );
+  check("settle: import kWh from the import power", Math.abs(bought.import_kwh - 4) < 0.01, `(${bought.import_kwh})`);
   check(
     "settle: import cost = kWh × (spot + surcharge) × VAT, negative revenue",
     Math.abs(bought.revenue_sek - -(4 * (0.5 + 1.186) * 1.25)) < 0.05,
     `(${bought.revenue_sek})`
+  );
+  // The meter counts both registers within a quarter: a slot that both imported and exported counts both
+  const mixed = computeRealizedRevenue([{ importW: 400, exportW: 400, spot: 1.0 }], 0.25, fees);
+  check(
+    "settle: a slot with import and export counts both, never their net",
+    mixed.import_kwh === 0.1 && mixed.export_kwh === 0.1 && mixed.revenue_sek < 0,
+    `(${JSON.stringify(mixed)})`
   );
 }
 
@@ -697,6 +701,68 @@ import type { PlannerInput } from "./planner.types.ts";
     "soc text: it starts from the input SOC",
     !!currentSlotWindow?.reason.includes("SOC 90%→"),
     `(${currentSlotWindow?.reason})`
+  );
+}
+
+// ---------- Scenario: the meter calibration (simulatedMeterCredit.ts) at its calibrated defaults ----------
+// The plan's revenue is what the meter will count: the evening sell ~3 % lower, the night's 300 W baseline
+// feed at about nothing. The same windows sell, the replay still matches the projection, and the identity
+// calibration (the base knobs) is the uncalibrated planner.
+{
+  const eveningPeak = (hour: number) => (hour % 24 >= 17 && hour % 24 <= 20 ? 3.0 : 0.9);
+  const input: PlannerInput = {
+    nowMs: testDayStartMs + 12 * HOUR_MS,
+    prices: mkPrices(36, eveningPeak),
+    solarWattsAt: () => 0,
+    houseLoadWattsAt: () => 400,
+    parasiticWatts: 150,
+    socPercent: 95,
+    capacityWh: 65000,
+    constraintTailHours: 12,
+    fixedSells: [],
+    fixedBuys: [],
+    sellVetoWindows: [],
+    buyVetoWindows: [],
+    knobs: { ...baseKnobs, baseline_feed_watts: 300 },
+  };
+  const calibratedInput = { ...input, knobs: { ...input.knobs, meter_calibration: DEFAULT_METER_CALIBRATION } };
+  const uncalibrated = generatePlan(input);
+  const calibrated = generatePlan(calibratedInput);
+  check(
+    "meter calibration: the same evening sell is planned",
+    calibrated.sells.length > 0 &&
+      JSON.stringify(calibrated.sells.map(window => [window.startMs, window.endMs, window.watts])) ===
+        JSON.stringify(uncalibrated.sells.map(window => [window.startMs, window.endMs, window.watts]))
+  );
+  check(
+    "meter calibration: the planned sell energy stays what the inverter feeds",
+    calibrated.projection.plannedSellKwh === uncalibrated.projection.plannedSellKwh
+  );
+  // The no-trade baseline is the baseline feed alone: 300 W for the dark horizon, credited at nothing now
+  const feedHours = 36 - 12 + 12;
+  check(
+    "meter calibration: the no-trade baseline loses the baseline feed's credit",
+    uncalibrated.projection.baselineRevenueSek - calibrated.projection.baselineRevenueSek > 0.3 * feedHours * 0.9 * 0.8,
+    `(${uncalibrated.projection.baselineRevenueSek} → ${calibrated.projection.baselineRevenueSek} SEK)`
+  );
+  const sellGainUncalibrated = uncalibrated.projection.estimatedRevenueSek - uncalibrated.projection.baselineRevenueSek;
+  const sellGainCalibrated = calibrated.projection.estimatedRevenueSek - calibrated.projection.baselineRevenueSek;
+  // Selling replaces the baseline feed in those slots, so its gain over the baseline barely moves: the ~3 % the
+  // meter doesn't count of the sell against the feed's credit that the sell slots no longer lose
+  check(
+    "meter calibration: the sell's gain over the no-trade baseline stays within a few percent",
+    Math.abs(sellGainCalibrated / sellGainUncalibrated - 1) < 0.04,
+    `(${sellGainUncalibrated.toFixed(1)} → ${sellGainCalibrated.toFixed(1)} SEK)`
+  );
+  const replayed = projectWithFixedWindows({
+    ...calibratedInput,
+    fixedSells: calibrated.sells.map(window => ({ startMs: window.startMs, endMs: window.endMs, watts: window.watts })),
+    fixedBuys: calibrated.buys.map(window => ({ startMs: window.startMs, endMs: window.endMs, watts: window.watts })),
+  });
+  check(
+    "meter calibration: the replay of the written windows matches the projection",
+    Math.abs(replayed.revenueSek - calibrated.projection.estimatedRevenueSek) < 0.5,
+    `(${replayed.revenueSek} vs ${calibrated.projection.estimatedRevenueSek} SEK)`
   );
 }
 

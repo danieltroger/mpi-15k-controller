@@ -7,6 +7,7 @@
 import process from "process";
 import { SLOT_MS } from "./planner.ts";
 import { stockholmMonth } from "./terminalValue.ts";
+import { IDENTITY_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 import type { PlannerInput, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 
 export const HOUR_MS = 3600_000;
@@ -56,6 +57,9 @@ export const baseKnobs: PlannerKnobs = {
   hold_margin_sek_per_kwh: 0.2,
   hold_min_window_minutes: 30,
   hold_bridge_minutes: 30,
+  // The scenarios predate the meter calibration and credit what the inverter reads; its own scenarios
+  // (planner.selftest.ts, simulate.selftest.ts) switch the calibrated defaults on
+  meter_calibration: IDENTITY_METER_CALIBRATION,
 };
 
 /** Every month: a terminal-value scenario is in season whatever day the selftest runs on */

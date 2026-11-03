@@ -333,5 +333,32 @@ for (const [retiredKey, staleValue] of [
   );
 }
 
+// ---------- meter_calibration: the live config.json predates it ----------
+check(
+  "merge: a config without meter_calibration gets the calibrated defaults",
+  JSON.stringify(merged.meter_calibration) === JSON.stringify(default_config.meter_calibration) &&
+    merged.meter_calibration.export_draw_watts === 200
+);
+const partialMeterCalibration = mergeWithDefaults({
+  meter_calibration: { export_draw_watts: 0 },
+} as unknown as Partial<Config>);
+check(
+  "merge: a partial meter_calibration keeps its other defaults, key by key",
+  partialMeterCalibration.meter_calibration.export_draw_watts === 0 &&
+    partialMeterCalibration.meter_calibration.import_draw_converting_watts === 210 &&
+    partialMeterCalibration.meter_calibration.feed_in_setpoint_shortfall_watts === 100
+);
+const meterCalibrationPatch = applyConfigPatch(merged, {
+  path: ["meter_calibration", "import_watts_per_kw_squared"],
+  op: "set",
+  value: 0,
+});
+check(
+  "patch: the config page can set a meter_calibration setting",
+  "patched" in meterCalibrationPatch &&
+    mergeWithDefaults(meterCalibrationPatch.patched).meter_calibration.import_watts_per_kw_squared === 0,
+  "error" in meterCalibrationPatch ? meterCalibrationPatch.error : ""
+);
+
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);

@@ -1,11 +1,13 @@
 /**
  * The planner's knobs from a (merged) config, shared by the live trader and the dry-run preview: the
  * automatic_trading section verbatim, the knobs with backend-enforced bounds corrected to them
- * (plannerKnobBounds.ts, terminalValue.ts), and the two values that live elsewhere in the config. The
+ * (plannerKnobBounds.ts, terminalValue.ts), and the values that live elsewhere in the config (the meter
+ * calibration corrected to its bounds, grid/correctedMeterCalibration.ts). The
  * runtime hold guard (buying/holdWindowGuard.ts) corrects its knobs through boundedTradingKnob too.
  */
 import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
+import { correctedMeterCalibration } from "../grid/correctedMeterCalibration.ts";
 import { type BoundedPlannerKnobName, effectivePlannerKnob } from "./plannerKnobBounds.ts";
 import { effectiveTerminalValueMode, effectiveTerminalValueMonths } from "./terminalValue.ts";
 import type { PlannerKnobs } from "./planner.types.ts";
@@ -61,6 +63,7 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     hold_bridge_minutes: boundedTradingKnob("hold_bridge_minutes", tradingConfig.hold_bridge_minutes),
     runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
+    meter_calibration: correctedMeterCalibration(cfg.meter_calibration),
   };
 }
 

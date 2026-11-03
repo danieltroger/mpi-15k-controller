@@ -22,6 +22,8 @@ export function PowerFlowCard() {
   const [solar_input_power_2] = getBackendSyncedSignal("solar_input_power_2");
   const [ac_output_total_active_power] = getBackendSyncedSignal("ac_output_total_active_power");
   const [ac_input_total_active_power] = getBackendSyncedSignal("ac_input_total_active_power");
+  const [meter_equivalent_grid_import_watts] = getBackendSyncedSignal("meter_equivalent_grid_import_watts");
+  const [meter_equivalent_grid_export_watts] = getBackendSyncedSignal("meter_equivalent_grid_export_watts");
   const [currentBatteryPower] = getBackendSyncedSignal("currentBatteryPower");
 
   const solarWatts = createMemo(() => {
@@ -31,8 +33,19 @@ export function PowerFlowCard() {
     return (array1 ?? 0) + (array2 ?? 0);
   });
   const houseWatts = () => ac_output_total_active_power()?.value;
-  /** Inverter convention: positive = importing from grid, negative = exporting. */
+  /**
+   * Inverter convention: positive = importing from grid, negative = exporting. The inverter's own reading, so
+   * it balances against the other three; what the meter counts (the inverter's draw included) is the tooltip.
+   */
   const gridWatts = () => ac_input_total_active_power()?.value;
+  const meterGridTooltip = createMemo(() => {
+    const importWatts = meter_equivalent_grid_import_watts()?.value;
+    const exportWatts = meter_equivalent_grid_export_watts()?.value;
+    if (importWatts === undefined || exportWatts === undefined) return "At the meter: not known yet";
+    if (importWatts > 0) return `At the meter (estimated): importing ${formatWatts(importWatts)}`;
+    if (exportWatts > 0) return `At the meter (estimated): exporting ${formatWatts(exportWatts)}`;
+    return "At the meter (estimated): nothing either way";
+  });
   /** Positive = charging the battery. */
   const batteryWatts = () => currentBatteryPower()?.value;
 
@@ -138,6 +151,7 @@ export function PowerFlowCard() {
         </g>
         {/* Grid */}
         <g>
+          <title>{meterGridTooltip()}</title>
           <circle cx="58" cy="144" r="24" fill="none" stroke="var(--grid)" stroke-width="1.8" />
           <g stroke="var(--grid)" stroke-width="1.6" stroke-linecap="round" fill="none">
             <path d="M52 154V136l6-4 6 4v18M52 141h12M52 147h12" />

@@ -318,9 +318,31 @@ export type TemperatureSavingConfig = {
   thermometer_bulk_retry_interval_seconds: number;
 };
 
+/**
+ * How the inverter's grid reading maps onto the utility meter's import and export registers
+ * (grid/meterEquivalentGrid.ts), calibrated against the meter's 15-min data in 2026-11. The reading
+ * leaves out the inverter's own draw, and the gap grows with the square of the power. All zero = the
+ * meter is assumed to see exactly the reading. Bounds in grid/meterCalibrationBounds.ts, clamped. Live.
+ */
+export type MeterCalibrationConfig = {
+  /** While exporting, the meter counts this much less than the reading */
+  export_draw_watts: number;
+  /** …and a further this × (reading in kW)² less */
+  export_watts_per_kw_squared: number;
+  /** While importing with the converter running (charging, or the battery covering part of the house), the meter counts this much more */
+  import_draw_converting_watts: number;
+  /** While importing with the converter idle (the house straight on the grid), the meter counts this much more */
+  import_draw_pass_through_watts: number;
+  /** …either way plus this × (reading in kW)² */
+  import_watts_per_kw_squared: number;
+  /** Planner only: the grid reading sits this far below a feed-in limit (GPMP) that is what caps the feed */
+  feed_in_setpoint_shortfall_watts: number;
+};
+
 export type Config = {
   automatic_trading: AutomaticTradingConfig;
   alerting: AlertingConfig;
+  meter_calibration: MeterCalibrationConfig;
   usb_parameter_setting: {
     /**
      * Minimum time between two changes of the same analog setter target: the AC charging current
