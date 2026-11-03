@@ -70,6 +70,7 @@ type SnapshotValues = {
   commandedAmps?: number;
   holdWindowInForce?: boolean;
   acChargingEnabled?: boolean;
+  gridRelayOpenOnPurpose?: boolean;
   inverterAgeMs?: number;
   hallAgeMs?: number;
 };
@@ -97,6 +98,7 @@ function snapshotAt(nowMs: number, values: SnapshotValues = {}): InverterStuckSn
     commandedChargingAmps: values.commandedAmps ?? 0,
     holdWindowInForce: values.holdWindowInForce ?? false,
     acChargingEnabledOnInverter: values.acChargingEnabled ?? false,
+    gridRelayOpenOnPurpose: values.gridRelayOpenOnPurpose ?? false,
   };
 }
 
@@ -317,6 +319,38 @@ const deadWindow = { commandedAmps: 281, acChargingEnabled: true, batteryVolts: 
 check(
   "2026-10-21 05:00 window (281 A confirmed, 0 A taken) → failing",
   evaluateBuyWindowNotCharging(snapshotAt(nowMs, deadWindow)).observation,
+  "failing"
+);
+
+// ——— Off-Grid III (grid relay open on purpose, gridOff/) ———
+check(
+  "grid relay open on purpose: the grid taking the house with the battery idle is the takeover, not a latch → indeterminate",
+  evaluateDcSideIdle(snapshotAt(nowMs, { gridRelayOpenOnPurpose: true })).observation,
+  "indeterminate"
+);
+check(
+  "grid relay open on purpose: a battery carrying the house is still healthy",
+  evaluateDcSideIdle(
+    snapshotAt(nowMs, {
+      gridRelayOpenOnPurpose: true,
+      batteryCurrent: -8,
+      batteryDirection: "Discharging",
+      dcAcDirection: "DC to AC",
+      hallWatts: -420,
+      gridWatts: 0,
+    })
+  ).observation,
+  "healthy"
+);
+check(
+  "grid relay open on purpose: no buy window can charge → indeterminate",
+  evaluateBuyWindowNotCharging(snapshotAt(nowMs, { ...deadWindow, gridRelayOpenOnPurpose: true })).observation,
+  "indeterminate"
+);
+check(
+  "grid relay open on purpose: the daylight PV stall still alerts (the MPPTs don't need the grid)",
+  evaluatePvStalledInDaylight(snapshotAt(nowMs, { sunElevation: 6, pvVolts: 560, gridRelayOpenOnPurpose: true }))
+    .observation,
   "failing"
 );
 check(

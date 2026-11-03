@@ -349,10 +349,28 @@ export type MeterCalibration = {
   feed_in_setpoint_shortfall_watts: number;
 };
 
+/**
+ * The grid-off switch (gridOff/): on request from the page the inverter goes to machine model 151,
+ * Off-Grid III (grid relay open on battery), and back to 050 by request or by these guards. Never
+ * switched automatically on, never kept across a controller restart. Bounds in gridOff/gridOffSettings.ts,
+ * clamped with a warning.
+ */
+export type GridOffConfig = {
+  /** Back to the grid (050) when the SOC falls below this */
+  min_soc_percent: number;
+  /** Switching off the grid needs the SOC at least this far above min_soc_percent */
+  switch_on_soc_margin_percent: number;
+  /** Back to the grid this long before a buy or sell window starts; switching off is refused this close to one */
+  reconnect_before_window_minutes: number;
+  /** On a clean stop while off the grid, wait at most this long for the inverter to ACK DM050 */
+  shutdown_wait_seconds: number;
+};
+
 export type Config = {
   automatic_trading: AutomaticTradingConfig;
   alerting: AlertingConfig;
   meter_calibration: MeterCalibrationConfig;
+  grid_off: GridOffConfig;
   usb_parameter_setting: {
     /**
      * Minimum time between two changes of the same analog setter target: the AC charging current
@@ -370,7 +388,7 @@ export type Config = {
      */
     ac_charging_current_immediate_decrease_amps: number;
     /**
-     * Cadence of the slow settings poll (GPMP/HECS/BATS). GS+PS poll continuously at the serial
+     * Cadence of the slow settings poll (GPMP/HECS/BATS/DM). GS+PS poll continuously at the serial
      * engine's own natural rate; targeted confirms after writes happen regardless of this value.
      */
     poll_values_interval_seconds: number;

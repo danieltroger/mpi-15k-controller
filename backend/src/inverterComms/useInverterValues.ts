@@ -3,9 +3,9 @@
  * field under its historical mpp-solar name (value + timestamp — the exact shape the old
  * MQTT-subscription store had, so every consumer including the staleness alerting is untouched),
  * plus the meter-equivalent grid import/export derived from each PS round (grid/meterEquivalentGrid.ts),
- * one store with the settings readbacks (GPMP/HECS/BATS) under the legacy CLI keys, the inverter's
- * operating status (MOD/CFS/WS/HFS, useInverterStatus.ts), and a per-decoded-response signal the
- * one-way MQTT/Influx publisher hangs off.
+ * one store with the settings readbacks (GPMP/HECS/BATS, and DM's machine model) under the legacy CLI
+ * keys, the inverter's operating status (MOD/CFS/WS/HFS, useInverterStatus.ts), and a per-decoded-response
+ * signal the one-way MQTT/Influx publisher hangs off.
  */
 import { type Accessor, batch, createMemo, createSignal, untrack } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
@@ -70,7 +70,7 @@ export function useInverterValues(config: Accessor<Config>) {
   };
 }
 
-/** The settings-readback keys consumers read — everything else in GPMP/HECS/BATS stays session-internal */
+/** The settings-readback keys consumers read — everything else in GPMP/HECS/BATS/DM stays session-internal */
 export const USB_VALUE_KEYS = new Set<keyof UsbValues>([
   "solar_energy_distribution_priority",
   "solar_charge_battery",
@@ -83,6 +83,7 @@ export const USB_VALUE_KEYS = new Set<keyof UsbValues>([
   "maximum_feeding_grid_power",
   "battery_constant_charge_voltage(c.v.)",
   "battery_floating_charge_voltage",
+  "machine_model",
 ]);
 
 function applyRoundToStores(

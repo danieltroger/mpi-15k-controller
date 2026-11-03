@@ -60,6 +60,7 @@ import {
   type SetterCommitTracker,
 } from "./setterCommitTiming.ts";
 import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
+import { machineModelSetterRefusal } from "./machineModel.ts";
 import type { InverterStatusQuery } from "./inverterStatus.types.ts";
 import {
   afterLinkRecovered,
@@ -85,7 +86,9 @@ const FAILURE_ERRORLOG_INTERVAL_MS = 60_000;
  * the status queries (MOD/CFS/WS/HFS) as statusPollPlan.ts hands them out
  */
 const BACKGROUND_POLL_COMMANDS = ["GS", "PS"] as const;
-const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS"];
+// DM last: a confirm or settings round that sees a machine-model change has the other settings
+// re-read just before it (did the change reset any of them?)
+const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS", "DM"];
 
 export function createInverterSession({
   poll_values_interval_seconds,
@@ -154,7 +157,7 @@ export function createInverterSession({
       state.statusPollPlan = withStatusQueriesRequested(state.statusPollPlan, queries);
     },
     /**
-     * Read GPMP + HECS + BATS on the next poll rounds until `query` has
+     * Read GPMP + HECS + BATS + DM on the next poll rounds until `query` has
      * decoded, ahead of poll_values_interval_seconds, for at most SETTINGS_READBACK_REQUEST_LIFETIME_MS —
      * for a consumer whose proof waits on a readback nothing else will take. Nothing here bounds how often
      * it is called: each call slows GS/PS by a settings round or more, so callers must bound their asking.
@@ -235,6 +238,13 @@ async function runPump(state: SessionState): Promise<void> {
 }
 
 function queueSetter(state: SessionState, item: SetterQueueItem): void {
+  // The last gate before the wire: a grid-code change slipping through a cast must be impossible
+  const refusal = machineModelSetterRefusal(item.command);
+  if (refusal) {
+    errorLog("Inverter session:", refusal, "— nothing queued");
+    item.onResult?.({ acknowledged: false });
+    return;
+  }
   for (const [pendingCommand] of state.queuedSetterItems) {
     if (pendingCommand.startsWith(item.replacesPrefix)) state.queuedSetterItems.delete(pendingCommand);
   }

@@ -34,6 +34,7 @@ import { alertOnMainCrash, createAlertManager } from "./alerting/alertManager.ts
 import { startAlertRules } from "./alerting/alertRules.ts";
 import { startSolarModelRefits } from "./solar/solarRefitScheduler.ts";
 import { startSolarForecastAccuracy } from "./solar/solarForecastAccuracy.ts";
+import { useGridOffSwitch } from "./gridOff/useGridOffSwitch.ts";
 
 while (true) {
   await new Promise<void>(r => {
@@ -152,6 +153,13 @@ function main() {
                       config,
                       temperatures,
                     });
+                    // Off-Grid III (machine model 151) from the System page; inert until asked for
+                    const gridOff = useGridOffSwitch({ config });
+                    // While the grid relay may be open no buy window starts: guard (b) switches back to 050
+                    // before one, and buying waits until the inverter reads 050 again
+                    const chargingAmperageForBuyingOnGrid = createMemo(() =>
+                      gridOff.gridOffInForce() ? 0 : chargingAmperageForBuying()
+                    );
 
                     const { mqttValues } = useFromMqttProvider();
                     const { $usbValues, inverterStatus } = useInverterComms();
@@ -171,6 +179,7 @@ function main() {
                           holdWindowInForce,
                           acChargingEnabledOnInverter: () => $usbValues.ac_charge_battery === "enabled",
                           inverterStatus,
+                          gridRelayOpenOnPurpose: gridOff.gridOffInForce,
                         }),
                       // Alerting going down must never take the controller with it — and this failure
                       // is itself worth a push, which the errorLog hook provides.
@@ -216,7 +225,8 @@ function main() {
                             setLastChangingReason: setLastChangingFeedWhenNoSolarReason,
                             setLastReason: setLastFeedWhenNoSolarReason,
                             exportAmountForSelling,
-                            chargingAmperageForBuying,
+                            chargingAmperageForBuying: chargingAmperageForBuyingOnGrid,
+                            gridOffInForce: gridOff.gridOffInForce,
                           });
                         },
                         e => {
@@ -266,12 +276,15 @@ function main() {
                             });
                             return `delivery: ${record.delivery}${record.detail ? ` (${record.detail})` : ""}`;
                           },
+                          grid_off_open_relay: gridOff.requestOffGrid,
+                          grid_off_normal: gridOff.requestNormal,
                         },
                         exposedAccessors: {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
                           spotPrices: latestSpotPrices,
                           recentAlerts: alertManager.recentAlerts,
                           inverterStatus,
+                          gridOff: gridOff.status,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,
                           currentBatteryPower: currentPower,

@@ -12,6 +12,8 @@ import { ACK_FRAME, NAK_FRAME, classifyFrame, concatenateBuffers, createFrameAcc
 import {
   CFS_FAULT_14_PAYLOAD,
   dataFrameAsTheInverterSendsIt,
+  DM_HYBRID_VDE_PAYLOAD,
+  DM_OFF_GRID_III_PAYLOAD,
   HFS_BOOT_RECORDS,
   HFS_DATALOGGER_PAYLOAD,
   MOD_FAULT_PAYLOAD,
@@ -77,6 +79,9 @@ const WS_DAY_DATALOGGER = dataFrameAsTheInverterSendsIt(WS_DAY_PAYLOAD);
 const WS_MPPSOLAR_REFERENCE = latin1("^D0471,1,0,0,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,\x14\x9c\r");
 // All nine slots as the controller read them on 2026-10-26: every record has the same shape
 const HFS_BOOT_RECORD_FRAMES = HFS_BOOT_RECORDS.map(dataFrameAsTheInverterSendsIt);
+// The spec's ^D006AAA for the two machine models the backend may write (no live capture yet)
+const DM_HYBRID_VDE = dataFrameAsTheInverterSendsIt(DM_HYBRID_VDE_PAYLOAD);
+const DM_OFF_GRID_III = dataFrameAsTheInverterSendsIt(DM_OFF_GRID_III_PAYLOAD);
 
 const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer[]>> = {
   GS: [GS_LIVE_1, GS_LIVE_2, GS_LIVE_3, GS_REFERENCE],
@@ -84,12 +89,24 @@ const FIXTURES_BY_COMMAND: Readonly<Record<Pi17QueryCommandName, readonly Buffer
   BATS: [BATS_LIVE],
   HECS: [HECS_REFERENCE],
   GPMP: [GPMP_REFERENCE],
+  DM: [DM_HYBRID_VDE, DM_OFF_GRID_III],
   MOD: [MOD_REFERENCE, MOD_FAULT_DATALOGGER],
   CFS: [CFS_DATALOGGER],
   WS: [WS_NIGHT_DATALOGGER, WS_DAY_DATALOGGER, WS_MPPSOLAR_REFERENCE],
   HFS: HFS_BOOT_RECORD_FRAMES,
 };
-const ALL_COMMANDS: readonly Pi17QueryCommandName[] = ["GS", "PS", "BATS", "HECS", "GPMP", "MOD", "CFS", "WS", "HFS"];
+const ALL_COMMANDS: readonly Pi17QueryCommandName[] = [
+  "GS",
+  "PS",
+  "BATS",
+  "HECS",
+  "GPMP",
+  "DM",
+  "MOD",
+  "CFS",
+  "WS",
+  "HFS",
+];
 
 function payloadOf(fixture: Buffer): string {
   const classified = classifyFrame(fixture);

@@ -12,7 +12,7 @@
  * So every frame is checked against what the in-flight command can possibly answer: setters only
  * ACK/NAK, queries only data frames of that query's shape. The shapes below are disjoint for every
  * pair of commands (token counts where they differ; payload length for GS/HFS, PS/WS and the
- * single-token GPMP/MOD) — pi17ResponseSafety.selftest.ts asserts that pairwise, so a frame that
+ * single-token GPMP/DM/MOD) — pi17ResponseSafety.selftest.ts asserts that pairwise, so a frame that
  * matches its in-flight command's shape cannot be another command's response.
  */
 import type { ClassifiedFrame } from "./pi17Frames.ts";
@@ -45,9 +45,12 @@ export const PI17_RESPONSE_SHAPES: Readonly<Record<Pi17QueryCommandName, Respons
   // 8 option tokens + the reserved one ("00,0,0,0,0,0,0,0,0"); widened in case the reserved field
   // is longer on this firmware — still disjoint from everything else.
   HECS: { tokenCount: { min: 8, max: 11 }, payloadLength: { min: 15, max: 40 } },
-  // Single tokens told apart by width: GPMP is a 5-digit wattage ("15000"), MOD a 2-digit code ("05").
+  // Single tokens told apart by width: GPMP is a 5-digit wattage ("15000"), DM a 3-digit machine
+  // model ("050", the spec's ^D006AAA), MOD a 2-digit code ("05", the spec's ^D005AA). MOD's cap was
+  // 3 bytes before DM existed; it is 2 now so a late DM answer can't pass as MOD, nor MOD as DM.
   GPMP: { tokenCount: { min: 1, max: 1 }, payloadLength: { min: 4, max: 6 } },
-  MOD: { tokenCount: { min: 1, max: 1 }, payloadLength: { min: 1, max: 3 } },
+  DM: { tokenCount: { min: 1, max: 1 }, payloadLength: { min: 3, max: 3 } },
+  MOD: { tokenCount: { min: 1, max: 1 }, payloadLength: { min: 1, max: 2 } },
   // The status queries, as this inverter answered the WiFi datalogger (raw uploads, 2026-10-23..25):
   // CFS "14,00" (^D008), the only 2-token answer of all.
   CFS: { tokenCount: { min: 2, max: 2 }, payloadLength: { min: 3, max: 7 } },

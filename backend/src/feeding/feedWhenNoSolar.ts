@@ -30,6 +30,7 @@ export function feedWhenNoSolar({
   setLastChangingReason,
   exportAmountForSelling,
   chargingAmperageForBuying,
+  gridOffInForce,
 }: {
   configSignal: Awaited<ReturnType<typeof get_config_object>>;
   isCharging: Accessor<boolean | undefined>;
@@ -37,6 +38,11 @@ export function feedWhenNoSolar({
   setLastChangingReason: Setter<{ what: string; when: number }>;
   exportAmountForSelling: Accessor<number | undefined>;
   chargingAmperageForBuying: Accessor<number | undefined>;
+  /**
+   * Off-Grid III may have the grid relay open (gridOff/): nothing can feed the grid, so the EDF/EDG and
+   * GPMP writes hold until the inverter is back on 050, and then go out as the current wish
+   */
+  gridOffInForce: Accessor<boolean>;
 }) {
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
   let lastChange = 0;
@@ -264,6 +270,7 @@ export function feedWhenNoSolar({
     }
 
     if (wantFeedIntoGrid == undefined) return;
+    if (gridOffInForce()) return;
     // Desired state, queued even when the readback already matches: that replaces any queued
     // opposite command (which would otherwise still land once its identical-setter gate opened),
     // and the session drops a setter the inverter already holds without sending anything.
@@ -301,6 +308,7 @@ export function feedWhenNoSolar({
     const shouldFeed = debouncedShouldEnableFeeding();
     const target = feedInLimitWatts();
     if (shouldFeed == undefined || target == undefined) return;
+    if (gridOffInForce()) return;
     if (!shouldFeed) {
       // Avoid feeding in a 15kw spike when disabling feeding from the battery - wait for the full power feed in to have been disabled so we only allow to feed in whatever comes from the panels
       if (stillFeedingIn()) {

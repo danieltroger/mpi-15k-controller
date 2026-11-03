@@ -1,5 +1,5 @@
 /**
- * Real status answers of this MPI 15K (MOD / CFS / WS / HFS) for the selftests: the payloads the
+ * Real status answers of this MPI 15K (MOD / CFS / WS / HFS), plus the spec's DM answers, for the selftests: the payloads the
  * WiFi datalogger uploaded to the vendor cloud on 2026-10-23..25 (fault_forensics.md §3.2), during
  * and after the fault 14 latch. The cloud kept the payloads but not the CRC bytes, so frames are
  * rebuilt around them the way the firmware frames its answers (bumped CRC bytes included).
@@ -11,6 +11,10 @@ export function dataFrameAsTheInverterSendsIt(payload: string): Buffer {
   const crc = crcAsTheInverterSendsIt(crc16XModem(body));
   return concatenateBuffers([body, Buffer.from([crc >> 8, crc & 0xff, 0x0d])]);
 }
+
+/** DM as the spec frames it (^D006AAA): the model the cloud log shows (Hybrid VDE) and Off-Grid III */
+export const DM_HYBRID_VDE_PAYLOAD = "050";
+export const DM_OFF_GRID_III_PAYLOAD = "151";
 
 /** Every upload from 2026-10-21 04:17 to 2026-10-23 15:26 UTC */
 export const MOD_FAULT_PAYLOAD = "04";

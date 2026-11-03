@@ -808,6 +808,7 @@ for (const cooldownMinutes of [0, 1]) {
       commandedChargingAmps: 0,
       holdWindowInForce: false,
       acChargingEnabledOnInverter: false,
+      gridRelayOpenOnPurpose: false,
     }),
     nowMs,
     "P2",
