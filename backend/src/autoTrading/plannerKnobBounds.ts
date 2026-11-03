@@ -102,13 +102,17 @@ export const PLANNER_KNOB_BOUNDS = {
   // What the inverter draws from the grid while holding beyond the house, its idle draw and the trickle.
   // Measured against the utility meter over four 2025-26 holds (65 quarters, 2025-11-01 to 2026-03-15):
   // median 166–177 W per hold, ~170 W pooled, net of the grid-side shed. With the charger on, the inverter
-  // draws ~40 W more than passing the grid through (~130 W). In the 2022-11 → 2026-11 backtest on top of the terminal value
-  // (margin 0.2, the planner set to the plant's draw) holding saved ~200 SEK per winter at 0 W, ~80 at 50 W,
-  // ~60 at 100 W and ~20 at 150 W: at the measured draw a hold is worth about nothing, so holds stay off.
-  // Set too low it loses money; this is the meter-level overhead, which the meter calibration doesn't add to.
+  // draws ~40 W more than passing the grid through (~130 W). It was measured as meter − house − the hall's net
+  // DC-in, with the Ah ledger's idle draw (parasiticWatts, which a hold's import adds too) at ~0: the inverter's
+  // own draw is inside the 170 W, so a ledger drain fitted well above 0 would count it twice. In the 2022-11 →
+  // 2026-11 backtest on top of the terminal value (margin 0.2), with a plant that reproduces the measured holds
+  // (house + ~40 W net trickle + 170 W at the meter), holding saved ~180 SEK per winter against the ~300 W night
+  // drain of a 300 W feed (80–220 for a 250–340 W drain), ~230 with battery wear at 0.17 SEK per discharged kWh.
+  // The #84 harness charged the inverter's ~140 W idle draw on top of the 170 W and found about nothing. This is
+  // the meter-level overhead, which the meter calibration doesn't add to.
   hold_overhead_watts: { defaultValue: 170, min: 0, max: 1000, unit: "W", step: 10 },
   // A held quarter must gain this much per kWh the house imports in it, so a hold the overhead or a forecast
-  // miss turns into a loss stays out. In the backtest 0.2 was positive in every winter at every overhead from
+  // miss turns into a loss stays out. In the #84 backtest 0.2 was positive in every winter at every overhead from
   // 0 to 150 W; 0.1 lost in some winter from 50 W up, and 0 up to ~140 SEK.
   hold_margin_sek_per_kwh: { defaultValue: 0.2, min: 0, max: 1, unit: "SEK/kWh", step: 0.05 },
   // Hold runs shorter than this are dropped: each window is an EDB1/EDB0 pair and two charge-current writes.

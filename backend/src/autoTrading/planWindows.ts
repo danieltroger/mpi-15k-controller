@@ -6,6 +6,7 @@
  */
 
 import { holdHouseKwh } from "./holdAllocation.ts";
+import { isRunningHoldSlot } from "./runningHold.ts";
 import type { PlannedWindow, PlannerInput, SimResult, Slot } from "./planner.types.ts";
 
 export type MergedWindow = {
@@ -122,7 +123,10 @@ export function toPlanned(mergedWindow: MergedWindow, packaging: PackagingContex
             ? `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), stocking up ~${approximateKwh} kWh for after the horizon`
             : `cheap spot avg ${avgSpot.toFixed(2)} SEK/kWh (P${percentileOf(avgSpot, spotsAll)}), pre-buying ~${approximateKwh} kWh to avoid pricier unavoidable import`;
   return {
-    startMs: mergedWindow.kind === "sell" ? sellWindowStartMs(mergedWindow, slots, input.nowMs) : mergedWindow.startMs,
+    startMs:
+      mergedWindow.kind === "sell"
+        ? sellWindowStartMs(mergedWindow, slots, input.nowMs)
+        : buyWindowStartMs(mergedWindow, input, isHold),
     endMs: mergedWindow.endMs,
     watts: mergedWindow.watts,
     kind: mergedWindow.kind,
@@ -174,6 +178,17 @@ function sellWindowStartMs(window: MergedWindow, slots: Slot[], nowMs: number): 
   const nextWholeMinuteMs = Math.ceil(nowMs / 60_000) * 60_000;
   // In its last minute, a window keeps a minute to run instead of ending as it starts
   return Math.max(window.startMs, Math.min(nextWholeMinuteMs, window.endMs - 60_000));
+}
+
+/**
+ * Where a planned buy window's schedule entry starts: its first slot's start, except for the hold through the
+ * current quarter of a running hold the plan re-plans (runningHold.ts). That one carries on the running
+ * window, so it keeps its key: the schedule entry then only gets a new end, and the Trading page and the
+ * runtime see the same window rather than one ending as another starts.
+ */
+function buyWindowStartMs(window: MergedWindow, input: PlannerInput, isHold: boolean): number {
+  if (isHold && input.runningHold && isRunningHoldSlot(input, window.slotIndexes[0])) return input.runningHold.startMs;
+  return window.startMs;
 }
 
 /** "~N kWh" in a window's reason: a decimal below 10 kWh, where a whole number would round 0.7 to 1 */

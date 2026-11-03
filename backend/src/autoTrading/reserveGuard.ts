@@ -20,7 +20,8 @@ import { ensureStateLoaded, refreshStatus, type TraderCtx, withScheduleLock } fr
  * trimming: a fresh plan sheds exactly as much selling as needed AND re-adds windows that became
  * feasible again (the old trim-only guard stranded those until someone clicked regenerate — see
  * the 2026-07-06 incident). User windows are never touched; an active window keeps running unless
- * it alone breaches the reserve, in which case it is stubbed to end now.
+ * it alone breaches the reserve, in which case it is stubbed to end now. A running hold keeps only its
+ * current quarter and is re-planned after it, like in the opportunistic re-plan (runningHold.ts).
  *
  * Unlike the old in-lock trim, the shedding lands only when the re-plan's applyPlan finishes (a
  * few seconds later, solar/consumption fetches included). That gap is acceptable because a

@@ -14,6 +14,7 @@ import {
 import type { Config } from "../../../../backend/src/config/config.types";
 import type { AutoTraderStatus, StateWindow } from "../../../../backend/src/autoTrading/autoTraderState.types";
 import { addDays, stockholmDateOf } from "../../../../backend/src/utilities/stockholmDate";
+import { HOLD_CLASS_MAX_WATTS } from "../../../../backend/src/autoTrading/plannerKnobBounds";
 
 type UpcomingWindow = ScheduleWindow & { planned?: StateWindow };
 
@@ -39,6 +40,8 @@ export function NextUpCard() {
       ),
     }))
   );
+  // Only a boolean true counts, as the backend's holdEnabledKnob
+  const holdEnabled = createMemo(() => config()?.automatic_trading?.hold_enabled === true);
   const current = createMemo(() => windows().find(window => window.startMs <= now()));
   const upcoming = createMemo(() => windows().filter(window => window.startMs > now()));
   const headline = createMemo(() => current() ?? upcoming()[0]);
@@ -88,7 +91,8 @@ export function NextUpCard() {
         {nextWindow => (
           <>
             <div class="next-card__main">
-              {windowLabel(nextWindow(), nextWindow().startMs <= now())} {formatWatts(nextWindow().watts)}
+              {windowLabel(nextWindow(), nextWindow().startMs <= now(), holdEnabled())}{" "}
+              {formatWatts(nextWindow().watts)}
             </div>
             <div class="next-card__when">
               {nextWindow().startMs <= now()
@@ -122,7 +126,7 @@ export function NextUpCard() {
                 <span class={`next-card__kind next-card__kind--${window.kind}`} aria-hidden="true"></span>
                 <span>
                   <b>
-                    {windowLabel(window, false)} {formatWatts(window.watts)}
+                    {windowLabel(window, false, holdEnabled())} {formatWatts(window.watts)}
                   </b>{" "}
                   · {windowTimeRange(window)}
                   <Show when={window.planned}>{planned => <> · {formatSpotOre(planned().avg_spot)}</>}</Show>
@@ -165,9 +169,13 @@ export function NextUpCard() {
   );
 }
 
-/** Sell / Buy / Hold (a buy window the planner wrote as a hold), as a verb while it runs */
-function windowLabel(window: UpcomingWindow, running: boolean): string {
+/**
+ * Sell / Buy / Hold, as a verb while it runs. A buy window is a hold the way the runtime tells one
+ * (scheduledBuyDecision.ts): hold_enabled on and at most HOLD_CLASS_MAX_WATTS, the planner's and a
+ * hand-written one (the car charged from the grid) alike.
+ */
+function windowLabel(window: UpcomingWindow, running: boolean, holdEnabled: boolean): string {
   if (window.kind === "sell") return running ? "Selling" : "Sell";
-  if (window.planned?.hold) return running ? "Holding" : "Hold";
+  if (holdEnabled && window.watts > 0 && window.watts <= HOLD_CLASS_MAX_WATTS) return running ? "Holding" : "Hold";
   return running ? "Buying" : "Buy";
 }

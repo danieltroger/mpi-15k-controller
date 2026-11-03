@@ -89,7 +89,7 @@ export const default_config: Config = {
       PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_deviation_sek.defaultValue,
     terminal_value_forecast_max_age_hours: PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_age_hours.defaultValue,
     terminal_value_forecast_wait_seconds: PLANNER_KNOB_BOUNDS.terminal_value_forecast_wait_seconds.defaultValue,
-    // Ships off: the planner part is backtested, the runtime overhead (hold_overhead_watts) isn't measured yet
+    // Ships off: switched on by hand on the live system, with hold_overhead_watts at the measured 170 W
     hold_enabled: false,
     hold_power_watts: PLANNER_KNOB_BOUNDS.hold_power_watts.defaultValue,
     hold_overhead_watts: PLANNER_KNOB_BOUNDS.hold_overhead_watts.defaultValue,

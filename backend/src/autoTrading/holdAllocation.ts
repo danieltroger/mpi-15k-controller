@@ -13,6 +13,7 @@
  */
 
 import { holdsModelled, holdsUnplannableReason, overlapsVeto, simulate } from "./simulate.ts";
+import { isRunningHoldSlot } from "./runningHold.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type { AllocationContext, SimResult } from "./planner.types.ts";
 
@@ -37,7 +38,9 @@ export type HoldPassResult = {
  * a later shortfall import averted), the lost baseline feed, the trickle and hold_overhead_watts. Then gaps of
  * up to hold_bridge_minutes between holds are held through when that costs at most
  * fragmentation_tolerance_sek_per_window, and runs shorter than hold_min_window_minutes are dropped. Leaves
- * each hold's power in slot.holdW; a no-op unless the plan models holds.
+ * each hold's power in slot.holdW; a no-op unless the plan models holds. A running hold the plan re-plans
+ * (runningHold.ts) holds the current quarter as a fixed window: a gap after it is bridged like one after any
+ * hold, and the run that continues it is never dropped as short (it has started already).
  */
 export function allocateHolds(context: AllocationContext, resultSoFar: SimResult): HoldPassResult {
   const { input, valuation } = context;
@@ -50,14 +53,26 @@ export function allocateHolds(context: AllocationContext, resultSoFar: SimResult
   return { result: dropShortHoldRuns(context, pass.current), budgetCut: pass.budgetCut };
 }
 
-/** The slots a hold is written for: held, with no sell or buy in the slot (one would win over the hold) */
-export function plannedHoldSlots(context: Pick<AllocationContext, "slots" | "sellW" | "buyW">): number[] {
-  const { slots, sellW, buyW } = context;
+/**
+ * The slots a hold is written for: held, with no sell or buy in the slot (one would win over the hold), and
+ * the current quarter of a running hold the plan re-plans, as written whatever else the slot got
+ */
+export function plannedHoldSlots(context: Pick<AllocationContext, "input" | "slots" | "sellW" | "buyW">): number[] {
+  const { input, slots, sellW, buyW } = context;
   const holdSlots: number[] = [];
   for (let slotIndex = 0; slotIndex < slots.length; slotIndex++) {
-    if (slots[slotIndex].holdW > 0 && sellW[slotIndex] === 0 && buyW[slotIndex] === 0) holdSlots.push(slotIndex);
+    const plannedHold = slots[slotIndex].holdW > 0 && sellW[slotIndex] === 0 && buyW[slotIndex] === 0;
+    if (plannedHold || isRunningHoldSlot(input, slotIndex)) holdSlots.push(slotIndex);
   }
   return holdSlots;
+}
+
+/** The power each slot's hold is written at: the hold pass's, and a running hold's own in its current quarter */
+export function holdWattsBySlot(context: Pick<AllocationContext, "input" | "slots">): number[] {
+  const { input, slots } = context;
+  return slots.map((slot, slotIndex) =>
+    input.runningHold && isRunningHoldSlot(input, slotIndex) ? input.runningHold.watts : slot.holdW
+  );
 }
 
 /**
@@ -134,7 +149,7 @@ function bridgeHoldGaps(pass: HoldPass) {
   const bridgeSlots = Math.floor((knobs.hold_bridge_minutes * 60_000) / SLOT_MS);
   if (bridgeSlots <= 0) return;
   for (let gapStart = 1; gapStart < slots.length; gapStart++) {
-    if (!(slots[gapStart - 1].holdW > 0) || slots[gapStart].holdW > 0) continue;
+    if (!slotHeld(pass.context, gapStart - 1) || slots[gapStart].holdW > 0) continue;
     let gapEnd = gapStart;
     while (gapEnd < slots.length && !(slots[gapEnd].holdW > 0) && gapEnd - gapStart < bridgeSlots) gapEnd++;
     if (gapEnd >= slots.length || !(slots[gapEnd].holdW > 0)) continue;
@@ -162,12 +177,14 @@ function bridgeHoldGaps(pass: HoldPass) {
 
 /**
  * Drops hold runs shorter than hold_min_window_minutes, a run being time-contiguous holds, and re-simulates
- * when it dropped any
+ * when it dropped any. Not the run continuing a running hold: that window has started already, so ending it
+ * sooner saves no EDB1/EDB0 pair.
  */
 function dropShortHoldRuns(context: AllocationContext, resultSoFar: SimResult): SimResult {
   const { input, slots, sellW, buyW, valuation } = context;
   let dropped = false;
   for (const run of holdRuns(context)) {
+    if (isRunningHoldSlot(input, run[0])) continue;
     const runMinutes = (slots[run[run.length - 1]].endMs - slots[run[0]].startMs) / 60_000;
     if (runMinutes >= input.knobs.hold_min_window_minutes) continue;
     for (const slotIndex of run) slots[slotIndex].holdW = 0;
@@ -194,6 +211,11 @@ function slotHoldable(context: AllocationContext, slotIndex: number): boolean {
     slot.pvW < slot.houseW + input.parasiticWatts &&
     !overlapsVeto(slot, input.buyVetoWindows)
   );
+}
+
+/** Whether the slot holds: the hold pass's hold, or the current quarter of a running hold the plan re-plans */
+function slotHeld(context: AllocationContext, slotIndex: number): boolean {
+  return context.slots[slotIndex].holdW > 0 || isRunningHoldSlot(context.input, slotIndex);
 }
 
 /** Time-contiguous runs of the slots a hold is written for (plannedHoldSlots) */
