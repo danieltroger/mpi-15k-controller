@@ -364,6 +364,15 @@ export type GridOffConfig = {
   reconnect_before_window_minutes: number;
   /** On a clean stop while off the grid, wait at most this long for the inverter to ACK DM050 */
   shutdown_wait_seconds: number;
+  /** Switching to 151 is refused this soon after the previous switch (either way, page or guard) */
+  min_seconds_between_switches: number;
+  /** P1 when the inverter still reads 151 this long after 050 was wanted; the held alerts and buying resume then */
+  stuck_p1_after_minutes: number;
+  /**
+   * Read the machine model (DM) in the settings rotation. Off silences a DM query this firmware doesn't
+   * answer; switching to 151 is then refused (the confirms after a DM write still read it)
+   */
+  poll_machine_model: boolean;
 };
 
 export type Config = {

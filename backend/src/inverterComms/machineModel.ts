@@ -41,14 +41,21 @@ export function machineModelSetterCommand(code: MachineModelCode): `DM${MachineM
   return `DM${code}`;
 }
 
+/** The only two DM commands that may ever reach the wire, compared as exact strings */
+const WRITABLE_MACHINE_MODEL_COMMANDS: ReadonlySet<string> = new Set([
+  machineModelSetterCommand(NORMAL_HYBRID_MODEL),
+  machineModelSetterCommand(OFF_GRID_III_MODEL),
+]);
+
 /**
- * Why a setter must not go on the wire, or undefined when it may: every DM command except DM050 and
- * DM151 is refused, whatever its caller's types said (a cast or a future caller must not slip a
- * grid-code change through). Non-DM setters aren't this function's business.
+ * Why a setter must not go on the wire, or undefined when it may: every command that mentions DM in any
+ * case or position ("dm151", " DM151", "XDM061") is refused unless it is exactly DM050 or DM151, whatever
+ * its caller's types said (a cast or a future caller must not slip a grid-code change through), and so is
+ * a command that isn't a string at all. No other setter the backend sends contains "dm".
  */
-export function machineModelSetterRefusal(command: string): string | undefined {
-  if (!command.startsWith("DM")) return undefined;
-  const code = command.slice(2);
-  if (isWhitelistedMachineModel(code)) return undefined;
+export function machineModelSetterRefusal(command: unknown): string | undefined {
+  if (typeof command !== "string") return `setter ${String(command)} refused: not a string`;
+  if (!/dm/i.test(command)) return undefined;
+  if (WRITABLE_MACHINE_MODEL_COMMANDS.has(command)) return undefined;
   return `machine model setter ${JSON.stringify(command)} refused: only DM${NORMAL_HYBRID_MODEL} and DM${OFF_GRID_III_MODEL} may be written`;
 }

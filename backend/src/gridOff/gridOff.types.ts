@@ -15,8 +15,13 @@ export type GridOffStatus = {
   readback_model: string | undefined;
   /** Wall-clock ms the readback was decoded */
   readback_at: number | undefined;
-  /** 151 is requested or read back: the grid relay may be open, so feeding/buying writes hold and grid alerts stand down */
+  /**
+   * 151 is requested, or read back and not stuck: the grid relay may be open, so feeding/buying writes hold
+   * and the grid alerts stand down
+   */
   grid_off_in_force: boolean;
+  /** The inverter reads 151 past grid_off.stuck_p1_after_minutes after 050 was wanted (P1 sent; all runs normally) */
+  stuck_off_grid: boolean;
   /** The latest thing the switch did or refused, and why */
   last_event: GridOffEvent | undefined;
 };

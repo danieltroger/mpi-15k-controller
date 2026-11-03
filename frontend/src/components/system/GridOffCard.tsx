@@ -121,6 +121,12 @@ function GridOffRows(props: { status: GridOffStatus; nowMs: number }) {
         }`}
         title="Never kept across a controller restart: every start wants 050"
       />
+      <Show when={props.status.stuck_off_grid}>
+        <p class="diag__reason">
+          <b>Stuck on 151:</b> the inverter doesn't take 050 back. A P1 went out; DM050 is resent with back-off, and
+          feeding, buying and the grid alerts run as if the relay were closed.
+        </p>
+      </Show>
       <Show when={props.status.grid_off_in_force}>
         <p class="diag__reason">
           <b>Grid-off in force:</b> the night feed and buy windows hold their inverter writes, the grid alerts stand
@@ -145,5 +151,5 @@ function confirmationQuestion(model: MachineModelCode): string {
 }
 
 function describeGuards(settings: GridOffConfig): string {
-  return `Switches back to 050 by itself below ${settings.min_soc_percent} % SOC, ${settings.reconnect_before_window_minutes} min before a buy or sell window, on stale inverter readings and on a controller stop. Switching off needs ${settings.min_soc_percent + settings.switch_on_soc_margin_percent} % SOC and no window within ${settings.reconnect_before_window_minutes} min.`;
+  return `Switches back to 050 by itself below ${settings.min_soc_percent} % SOC, ${settings.reconnect_before_window_minutes} min before a buy or sell window, on stale inverter readings and on a controller stop. Switching off needs ${settings.min_soc_percent + settings.switch_on_soc_margin_percent} % SOC, no window within ${settings.reconnect_before_window_minutes} min and ${settings.min_seconds_between_switches} s since the last switch.`;
 }

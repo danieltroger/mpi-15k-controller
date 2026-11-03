@@ -27,11 +27,22 @@ import { DEFAULT_GRID_OFF_SETTINGS, effectiveGridOffSettings } from "./gridOffSe
 import {
   FRESH_INVERTER_READING_MAX_AGE_MS,
   type GridOffSituation,
+  machineModelReadbackMaxAgeMs,
+  NO_SWITCH_BACK_SENDS,
+  NOT_STUCK_OFF_GRID,
   reconcileMachineModel,
   revertReason,
   SWITCH_CONFIRM_DEADLINE_MS,
+  switchBackResendDue,
   switchOffGridRefusal,
+  trackStuckOffGrid,
 } from "./gridOffDecisions.ts";
+import {
+  afterMachineModelQuery,
+  INITIAL_MACHINE_MODEL_POLL_STATE,
+  MACHINE_MODEL_POLL_BACKOFF_MS,
+  machineModelPollDue,
+} from "../inverterComms/machineModelPolling.ts";
 
 const fails: string[] = [];
 function check(name: string, condition: boolean, detail = "") {
@@ -53,9 +64,25 @@ check(
   "DM050 and DM151 pass the session's gate",
   !machineModelSetterRefusal("DM050") && !machineModelSetterRefusal("DM151")
 );
-for (const refused of ["DM150", "DM061", "DM100", "DM05", "DM0500", "DM", "DMabc", "DM 151"]) {
+for (const refused of [
+  "DM150",
+  "DM061",
+  "DM100",
+  "DM05",
+  "DM0500",
+  "DM",
+  "DMabc",
+  "DM 151",
+  "dm151",
+  "Dm050",
+  " DM151",
+  "DM151 ",
+  "XDM151",
+  "DM151\r",
+]) {
   check(`${JSON.stringify(refused)} is refused`, machineModelSetterRefusal(refused) !== undefined);
 }
+check("a non-string command is refused", machineModelSetterRefusal(151) !== undefined);
 check("non-DM setters are none of the whitelist's business", machineModelSetterRefusal("GPMP000350") === undefined);
 check(
   "only 050 and 151 are whitelisted",
@@ -129,6 +156,9 @@ const quietNight: GridOffSituation = {
   soc: 60,
   inverterReadingAgeMs: 1_200,
   readbackModel: "050",
+  readbackAgeMs: 30_000,
+  readbackMaxAgeMs: machineModelReadbackMaxAgeMs(300),
+  lastSwitchAtMs: undefined,
   sellSchedule: { "2026-11-03T16:00:00Z": { end_time: "2026-11-03T17:00:00Z" } },
   buySchedule: { "2026-11-04T03:00:00Z": { end_time: "2026-11-04T04:00:00Z" } },
 };
@@ -138,6 +168,25 @@ const windowAt = (startOffsetMinutes: number, lengthMinutes = 60) => ({
   },
 });
 check("a quiet night with 60 % may switch", switchOffGridRefusal(quietNight, settings) === undefined);
+check(
+  "refused with grid_off.poll_machine_model off",
+  switchOffGridRefusal(quietNight, { ...settings, poll_machine_model: false })?.includes("poll_machine_model") === true
+);
+check(
+  "refused on a DM readback older than two settings rounds and a minute (11 min at 300 s)",
+  switchOffGridRefusal({ ...quietNight, readbackAgeMs: 11 * 60_000 + 1 }, settings)?.includes("min old") === true &&
+    switchOffGridRefusal({ ...quietNight, readbackAgeMs: 11 * 60_000 }, settings) === undefined
+);
+check(
+  "refused 59 s after the last switch (min_seconds_between_switches 60)",
+  switchOffGridRefusal({ ...quietNight, lastSwitchAtMs: NOW_MS - 59_000 }, settings)?.includes(
+    "min_seconds_between_switches"
+  ) === true
+);
+check(
+  "allowed 60 s after the last switch",
+  switchOffGridRefusal({ ...quietNight, lastSwitchAtMs: NOW_MS - 60_000 }, settings) === undefined
+);
 check(
   "refused before the first DM readback",
   switchOffGridRefusal({ ...quietNight, readbackModel: undefined }, settings) !== undefined
@@ -278,21 +327,92 @@ check(
     "none"
 );
 
+// ---------- stuck on 151 while 050 is wanted ----------
+{
+  const stuckInputs = { requestedModel: "050" as const, readbackModel: "151", nowMs: NOW_MS };
+  const started = trackStuckOffGrid(NOT_STUCK_OFF_GRID, stuckInputs, settings);
+  check(
+    "050 wanted, 151 read: the condition starts, not stuck yet",
+    started.conditionSinceMs === NOW_MS && !started.stuck
+  );
+  const twoMinutes = trackStuckOffGrid(started, { ...stuckInputs, nowMs: NOW_MS + 2 * 60_000 }, settings);
+  check("…2 min in: not stuck", !twoMinutes.stuck && twoMinutes.conditionSinceMs === NOW_MS);
+  const threeMinutes = trackStuckOffGrid(twoMinutes, { ...stuckInputs, nowMs: NOW_MS + 3 * 60_000 }, settings);
+  check("…3 min in (stuck_p1_after_minutes): stuck", threeMinutes.stuck);
+  check(
+    "…reading 050 again ends it",
+    trackStuckOffGrid(threeMinutes, { ...stuckInputs, readbackModel: "050", nowMs: NOW_MS + 4 * 60_000 }, settings) ===
+      NOT_STUCK_OFF_GRID
+  );
+  check(
+    "151 requested and read is not stuck",
+    !trackStuckOffGrid(threeMinutes, { ...stuckInputs, requestedModel: "151" }, settings).stuck
+  );
+}
+
+// ---------- the switch-back resend back-off: at once, then 1, 2, 5 min, then every 10 min ----------
+{
+  check("the first DM050 is due at once", switchBackResendDue(NO_SWITCH_BACK_SENDS, NOW_MS));
+  const sendTimes: number[] = [];
+  let sends = NO_SWITCH_BACK_SENDS;
+  for (let secondsElapsed = 0; secondsElapsed <= 3600; secondsElapsed += 10) {
+    const nowMs = NOW_MS + secondsElapsed * 1000;
+    if (!switchBackResendDue(sends, nowMs)) continue;
+    sendTimes.push(secondsElapsed);
+    sends = { count: sends.count + 1, lastAtMs: nowMs };
+  }
+  check(
+    "an hour of a refused DM050 sends 9 of them, at 0, 1, 3, 8, 18, 28 … min",
+    sendTimes.join(",") === "0,60,180,480,1080,1680,2280,2880,3480",
+    sendTimes.join(",")
+  );
+}
+
+// ---------- DM polling backs off when it goes unanswered ----------
+{
+  check("DM is polled by default", machineModelPollDue(INITIAL_MACHINE_MODEL_POLL_STATE, NOW_MS, true));
+  check(
+    "grid_off.poll_machine_model off: DM sits every round out",
+    !machineModelPollDue(INITIAL_MACHINE_MODEL_POLL_STATE, NOW_MS, false)
+  );
+  const firstFailure = afterMachineModelQuery(INITIAL_MACHINE_MODEL_POLL_STATE, false, NOW_MS);
+  check(
+    "one unanswered DM: still polled",
+    !firstFailure.startedBackoff && machineModelPollDue(firstFailure.state, NOW_MS, true)
+  );
+  const secondFailure = afterMachineModelQuery(firstFailure.state, false, NOW_MS + 1000);
+  check(
+    "two in a row: backed off for 30 min",
+    secondFailure.startedBackoff &&
+      !machineModelPollDue(secondFailure.state, NOW_MS + 1000 + MACHINE_MODEL_POLL_BACKOFF_MS - 1, true) &&
+      machineModelPollDue(secondFailure.state, NOW_MS + 1000 + MACHINE_MODEL_POLL_BACKOFF_MS, true)
+  );
+  const retryFailure = afterMachineModelQuery(secondFailure.state, false, NOW_MS + 2 * MACHINE_MODEL_POLL_BACKOFF_MS);
+  check("the retry after the back-off failing backs off again", retryFailure.startedBackoff);
+  check(
+    "an answer clears it",
+    afterMachineModelQuery(retryFailure.state, true, NOW_MS).state === INITIAL_MACHINE_MODEL_POLL_STATE
+  );
+}
+
 // ---------- the knobs ----------
 {
   const { settings: defaults, corrections } = effectiveGridOffSettings(DEFAULT_GRID_OFF_SETTINGS);
   check(
-    "the defaults (10 %, 5 %, 10 min, 5 s) pass uncorrected",
+    "the defaults (10 %, 5 %, 10 min, 5 s, 60 s, 3 min, polling on) pass uncorrected",
     defaults.min_soc_percent === 10 &&
       defaults.switch_on_soc_margin_percent === 5 &&
       defaults.reconnect_before_window_minutes === 10 &&
       defaults.shutdown_wait_seconds === 5 &&
+      defaults.min_seconds_between_switches === 60 &&
+      defaults.stuck_p1_after_minutes === 3 &&
+      defaults.poll_machine_model &&
       corrections.length === 0
   );
   check(
     "a missing section takes the defaults, with a correction each",
     effectiveGridOffSettings(undefined).settings.min_soc_percent === 10 &&
-      effectiveGridOffSettings(undefined).corrections.length === 4
+      effectiveGridOffSettings(undefined).corrections.length === 7
   );
   const clamped = effectiveGridOffSettings({
     ...DEFAULT_GRID_OFF_SETTINGS,

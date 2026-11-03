@@ -71,6 +71,7 @@ type SnapshotValues = {
   holdWindowInForce?: boolean;
   acChargingEnabled?: boolean;
   gridRelayOpenOnPurpose?: boolean;
+  inverterInBypassMode?: boolean;
   inverterAgeMs?: number;
   hallAgeMs?: number;
 };
@@ -99,6 +100,7 @@ function snapshotAt(nowMs: number, values: SnapshotValues = {}): InverterStuckSn
     holdWindowInForce: values.holdWindowInForce ?? false,
     acChargingEnabledOnInverter: values.acChargingEnabled ?? false,
     gridRelayOpenOnPurpose: values.gridRelayOpenOnPurpose ?? false,
+    inverterInBypassMode: values.inverterInBypassMode ?? false,
   };
 }
 
@@ -324,8 +326,18 @@ check(
 
 // ——— Off-Grid III (grid relay open on purpose, gridOff/) ———
 check(
-  "grid relay open on purpose: the grid taking the house with the battery idle is the takeover, not a latch → indeterminate",
+  "grid relay open on purpose, MOD Bypass: the grid's takeover (its own P2 reports it) → indeterminate",
+  evaluateDcSideIdle(snapshotAt(nowMs, { gridRelayOpenOnPurpose: true, inverterInBypassMode: true })).observation,
+  "indeterminate"
+);
+check(
+  "grid relay open on purpose, not in Bypass: the grid carrying the house with the battery idle is still a latch → failing",
   evaluateDcSideIdle(snapshotAt(nowMs, { gridRelayOpenOnPurpose: true })).observation,
+  "failing"
+);
+check(
+  "grid relay open on purpose, nothing imported: indeterminate as without it",
+  evaluateDcSideIdle(snapshotAt(nowMs, { gridRelayOpenOnPurpose: true, gridWatts: 0 })).observation,
   "indeterminate"
 );
 check(

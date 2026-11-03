@@ -36,6 +36,8 @@ export function useInverterValues(config: Accessor<Config>) {
   // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts)
   const session = createInverterSession({
     poll_values_interval_seconds: createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds),
+    // Anything but an explicit false polls (the grid-off switch warns about a value that isn't a boolean)
+    poll_machine_model: createMemo(() => config().grid_off.poll_machine_model !== false),
     onDecodedRound: decodedRound => {
       // The meter-equivalent grid fields ride along in the PS round (raw fields untouched), so the
       // store, the ws and the MQTT → InfluxDB feed all get them from the same reading

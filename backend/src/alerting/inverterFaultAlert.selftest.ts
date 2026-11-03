@@ -809,6 +809,7 @@ for (const cooldownMinutes of [0, 1]) {
       holdWindowInForce: false,
       acChargingEnabledOnInverter: false,
       gridRelayOpenOnPurpose: false,
+      inverterInBypassMode: false,
     }),
     nowMs,
     "P2",

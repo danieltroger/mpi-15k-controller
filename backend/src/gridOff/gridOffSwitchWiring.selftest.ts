@@ -10,6 +10,7 @@ import { default_config } from "../config/config.ts";
 import type { Config } from "../config/config.types.ts";
 import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem } from "../inverterComms/inverterComms.types.ts";
+import type { AlertManager } from "../alerting/alertManager.ts";
 import { createGridOffSwitch } from "./useGridOffSwitch.ts";
 import { SWITCH_CONFIRM_DEADLINE_MS } from "./gridOffDecisions.ts";
 
@@ -30,6 +31,11 @@ function startHarness() {
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
   const [soc, setSoc] = createSignal<number | undefined>(60);
   const queued: SetterQueueItem[] = [];
+  const raised: Parameters<AlertManager["raise"]>[0][] = [];
+  const raise: AlertManager["raise"] = async alert => {
+    raised.push(alert);
+    return { ...alert, at: new Date(clock.nowMs).toISOString(), delivery: "dry_run" };
+  };
   const mqttValues = {
     get battery_voltage() {
       return { value: 52.1, time: clock.readingsAtMs };
@@ -42,11 +48,11 @@ function startHarness() {
   const dispose = createRoot(disposeRoot => {
     gridOffSwitch = createGridOffSwitch({
       config,
-      usbValues: { maximum_feeding_grid_power: "350" },
       queueSetter: item => queued.push(item),
       lastDecodedRound,
       mqttValues,
       soc,
+      raise,
       wallClockNowMs: () => clock.nowMs,
     });
     return disposeRoot;
@@ -54,7 +60,23 @@ function startHarness() {
   if (!gridOffSwitch) throw new Error("createGridOffSwitch returned nothing");
   const readBack = (model: string) =>
     setLastDecodedRound({ command: "DM", wireCommand: "DM", fields: { machine_model: model }, decodedAt: clock.nowMs });
-  return { clock, setConfig, setSoc, queued, readBack, gridOffSwitch, dispose };
+  return { clock, setConfig, setSoc, queued, raised, readBack, gridOffSwitch, dispose };
+}
+
+/** Time passes with the inverter still talking; past grid_off.min_seconds_between_switches by default */
+function advance(harness: Harness, milliseconds = 61_000): void {
+  harness.clock.nowMs += milliseconds;
+  harness.clock.readingsAtMs = harness.clock.nowMs;
+}
+
+/** A guard run: the 10 s tick is wall-clock, so the harness nudges a tracked input instead */
+let nudge = 0;
+function evaluateNow(harness: Harness): void {
+  harness.setSoc(60 + ++nudge * 1e-9);
+}
+
+function sentCount(harness: Harness, command: string): number {
+  return harness.queued.filter(item => item.command === command).length;
 }
 
 function lastCommand(harness: Harness): string | undefined {
@@ -132,7 +154,14 @@ function windowStartingIn(harness: Harness, minutes: number) {
   check("not in force once it reads 050", !harness.gridOffSwitch.gridOffInForce());
   check("the shutdown handler is gone again", process.listenerCount("SIGTERM") === signalListenersBefore);
 
+  // ---------- the rate limit ----------
+  check(
+    "a switch-off right after the guard's switch-back is refused (min_seconds_between_switches)",
+    (await refusalOf(harness))?.includes("min_seconds_between_switches") === true
+  );
+
   // ---------- preconditions ----------
+  advance(harness);
   harness.setSoc(14);
   check("refused at 14 % (floor 10 + margin 5)", (await refusalOf(harness))?.includes("15 %") === true);
   harness.setSoc(60);
@@ -166,6 +195,7 @@ function windowStartingIn(harness: Harness, minutes: number) {
   harness.setConfig(default_config);
 
   // ---------- a NAK puts the request back ----------
+  advance(harness);
   await harness.gridOffSwitch.requestOffGrid();
   harness.queued.at(-1)?.onResult?.({ acknowledged: false });
   check(
@@ -175,6 +205,7 @@ function windowStartingIn(harness: Harness, minutes: number) {
   check("…and grid-off is no longer in force", !harness.gridOffSwitch.gridOffInForce());
 
   // ---------- the confirm deadline ----------
+  advance(harness);
   await harness.gridOffSwitch.requestOffGrid();
   harness.clock.nowMs += SWITCH_CONFIRM_DEADLINE_MS + 1_000;
   harness.clock.readingsAtMs = harness.clock.nowMs;
@@ -187,7 +218,24 @@ function windowStartingIn(harness: Harness, minutes: number) {
     harness.gridOffSwitch.status().last_event?.what
   );
 
+  // ---------- a late DM151 ACK after a guard's switch-back ----------
+  advance(harness);
+  harness.readBack("050");
+  await harness.gridOffSwitch.requestOffGrid();
+  const lateAck = harness.queued.at(-1);
+  harness.setSoc(9);
+  const guardEvent = harness.gridOffSwitch.status().last_event?.what;
+  lateAck?.onResult?.({ acknowledged: true });
+  check(
+    "a DM151 ACK landing after the guard switched back leaves the guard's event",
+    guardEvent?.startsWith("Guard switched back") === true &&
+      harness.gridOffSwitch.status().last_event?.what === guardEvent,
+    harness.gridOffSwitch.status().last_event?.what
+  );
+  harness.setSoc(60);
+
   // ---------- back to normal from the page ----------
+  advance(harness);
   await harness.gridOffSwitch.requestOffGrid();
   harness.readBack("151");
   const normal = await harness.gridOffSwitch.requestNormal();
@@ -214,6 +262,52 @@ function windowStartingIn(harness: Harness, minutes: number) {
   check("…refusing a switch-off meanwhile", (await refusalOf(harness))?.includes("already reads 151") === true);
   harness.readBack("050");
   check("…and over once it does", !harness.gridOffSwitch.gridOffInForce());
+  harness.dispose();
+}
+
+// ---------- stuck on 151: every DM050 refused ----------
+{
+  const harness = startHarness();
+  harness.readBack("151");
+  check("startup 151: grid-off in force at first", harness.gridOffSwitch.gridOffInForce());
+  const firstSwitchBack = harness.queued.at(-1);
+  firstSwitchBack?.onResult?.({ acknowledged: false });
+  // 30 min of 10 s guard runs, every DM050 NAKed, the inverter reading 151 throughout
+  let pagedAtSeconds: number | undefined;
+  let inForceAfterPage = true;
+  for (let secondsElapsed = 10; secondsElapsed <= 30 * 60; secondsElapsed += 10) {
+    advance(harness, 10_000);
+    const queuedBefore = harness.queued.length;
+    evaluateNow(harness);
+    for (const item of harness.queued.slice(queuedBefore)) item.onResult?.({ acknowledged: false });
+    if (pagedAtSeconds === undefined && harness.raised.some(alert => alert.severity === "P1")) {
+      pagedAtSeconds = secondsElapsed;
+      inForceAfterPage = harness.gridOffSwitch.gridOffInForce();
+    }
+  }
+  const stuckPages = harness.raised.filter(alert => alert.key === "grid-off-stuck");
+  check(
+    "a P1 after stuck_p1_after_minutes (3 min), once",
+    stuckPages.length === 1 && stuckPages[0]!.severity === "P1" && pagedAtSeconds === 180,
+    `paged at ${pagedAtSeconds} s, ${stuckPages.length} page(s)`
+  );
+  check("once stuck, grid-off is no longer in force: buying and the held alerts resume", !inForceAfterPage);
+  check("…and the status says stuck", harness.gridOffSwitch.status().stuck_off_grid);
+  check(
+    "DM050 backs off: 6 sends in 30 min (0, 1, 3, 8, 18, 28 min), not 30",
+    sentCount(harness, "DM050") === 6,
+    `${sentCount(harness, "DM050")} sends`
+  );
+  check(
+    "the shutdown switch-back still stands while stuck",
+    process.listenerCount("SIGTERM") === signalListenersBefore + 1
+  );
+  harness.readBack("050");
+  check(
+    "reading 050 again resolves it with a P3",
+    harness.raised.some(alert => alert.key === "grid-off-stuck:resolved" && alert.severity === "P3") &&
+      !harness.gridOffSwitch.status().stuck_off_grid
+  );
   harness.dispose();
 }
 

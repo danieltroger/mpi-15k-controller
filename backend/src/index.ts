@@ -153,17 +153,18 @@ function main() {
                       config,
                       temperatures,
                     });
-                    // Off-Grid III (machine model 151) from the System page; inert until asked for
-                    const gridOff = useGridOffSwitch({ config });
-                    // While the grid relay may be open no buy window starts: guard (b) switches back to 050
-                    // before one, and buying waits until the inverter reads 050 again
-                    const chargingAmperageForBuyingOnGrid = createMemo(() =>
-                      gridOff.gridOffInForce() ? 0 : chargingAmperageForBuying()
-                    );
 
                     const { mqttValues } = useFromMqttProvider();
                     const { $usbValues, inverterStatus } = useInverterComms();
                     const alertManager = createAlertManager(config);
+                    // Off-Grid III (machine model 151) from the System page; inert until asked for
+                    const gridOff = useGridOffSwitch({ config, raise: alertManager.raise });
+                    // While the grid relay may be open no buy window starts: guard (b) switches back to 050
+                    // before one, and buying waits until the inverter reads 050 again (or is stuck on 151:
+                    // then it tries anyway, and the buy-window alert can see it)
+                    const chargingAmperageForBuyingOnGrid = createMemo(() =>
+                      gridOff.gridOffInForce() ? 0 : chargingAmperageForBuying()
+                    );
                     catchError(
                       () =>
                         startAlertRules({

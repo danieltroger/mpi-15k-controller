@@ -191,6 +191,7 @@ function takeSnapshot(
     holdWindowInForce: ctx.holdWindowInForce(),
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter(),
     gridRelayOpenOnPurpose: ctx.gridRelayOpenOnPurpose(),
+    inverterInBypassMode: ctx.inverterStatus().working_mode?.code === "02",
   };
 }
 

@@ -61,6 +61,13 @@ import {
 } from "./setterCommitTiming.ts";
 import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
 import { machineModelSetterRefusal } from "./machineModel.ts";
+import {
+  afterMachineModelQuery,
+  INITIAL_MACHINE_MODEL_POLL_STATE,
+  MACHINE_MODEL_POLL_BACKOFF_MS,
+  machineModelPollDue,
+  type MachineModelPollState,
+} from "./machineModelPolling.ts";
 import type { InverterStatusQuery } from "./inverterStatus.types.ts";
 import {
   afterLinkRecovered,
@@ -87,17 +94,20 @@ const FAILURE_ERRORLOG_INTERVAL_MS = 60_000;
  */
 const BACKGROUND_POLL_COMMANDS = ["GS", "PS"] as const;
 // DM last: a confirm or settings round that sees a machine-model change has the other settings
-// re-read just before it (did the change reset any of them?)
+// re-read just before it (did the change reset any of them?). DM may sit a round out (machineModelPolling.ts).
 const SETTINGS_POLL_COMMANDS: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS", "DM"];
 
 export function createInverterSession({
   poll_values_interval_seconds,
+  poll_machine_model = () => true,
   onDecodedRound,
   devicePath = INVERTER_SERIAL_DEVICE,
   schedulerTimingOverrides = {},
 }: {
   /** Cadence of the slow settings poll — config().usb_parameter_setting.poll_values_interval_seconds */
   poll_values_interval_seconds: Accessor<number>;
+  /** Whether the settings rounds read DM — config().grid_off.poll_machine_model; harnesses leave it on */
+  poll_machine_model?: Accessor<boolean>;
   /** Only ever called with rounds that passed the plausibility gate, and never after disposal */
   onDecodedRound: (round: DecodedRound) => void;
   /** Overridable only so harnesses can point the whole engine at a pty instead of the inverter */
@@ -109,6 +119,8 @@ export function createInverterSession({
   const [serialIsOpen, setSerialIsOpen] = createSignal(false);
   const state: SessionState = {
     poll_values_interval_seconds,
+    poll_machine_model,
+    machineModelPoll: INITIAL_MACHINE_MODEL_POLL_STATE,
     onDecodedRound,
     setLastWriteAt,
     setSerialIsOpen,
@@ -187,6 +199,8 @@ type RateLimitedWarn = ReturnType<typeof createRateLimitedWarnLog>;
 
 type SessionState = {
   poll_values_interval_seconds: Accessor<number>;
+  poll_machine_model: Accessor<boolean>;
+  machineModelPoll: MachineModelPollState;
   onDecodedRound: (round: DecodedRound) => void;
   setLastWriteAt: Setter<number | undefined>;
   setSerialIsOpen: Setter<boolean>;
@@ -267,6 +281,27 @@ async function runQuery(state: SessionState, command: Pi17QueryCommandName): Pro
 
 /** The wire command differs from the decode table's only for arguments: HFS03 decodes as HFS */
 async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Promise<QueryOutcome> {
+  const outcome = await exchangeQuery(state, query);
+  if (query.command === "DM" && !state.disposed) recordMachineModelOutcome(state, outcome.kind === "decoded");
+  return outcome;
+}
+
+function recordMachineModelOutcome(state: SessionState, answered: boolean): void {
+  const previous = state.machineModelPoll;
+  const { state: machineModelPoll, startedBackoff } = afterMachineModelQuery(previous, answered, performance.now());
+  state.machineModelPoll = machineModelPoll;
+  if (startedBackoff) {
+    errorLog(
+      `Inverter query DM went unanswered ${machineModelPoll.consecutiveFailures} times in a row — the settings rounds`,
+      `skip it for ${MACHINE_MODEL_POLL_BACKOFF_MS / 60_000} min (grid_off.poll_machine_model turns it off for good);`,
+      "the grid-off switch refuses 151 without a fresh readback"
+    );
+  } else if (answered && previous.consecutiveFailures > 0) {
+    logLog("Inverter query DM answers again after", previous.consecutiveFailures, "unanswered");
+  }
+}
+
+async function exchangeQuery(state: SessionState, query: RoundQuery): Promise<QueryOutcome> {
   const { command, wireCommand } = query;
   const description = `query ${wireCommand}`;
   const result = await state.serialExchange.exchange(
@@ -277,8 +312,8 @@ async function runQueryWithOutcome(state: SessionState, query: RoundQuery): Prom
   if ("closed" in result || state.disposed) return { kind: "unanswered" };
   if ("failed" in result) {
     // A dead link shows in GS/PS failing too, so a status query's own failure is only a log line;
-    // one that keeps failing is backed off and reported once (statusPollRound.ts)
-    if (query.statusQuery) warnLog("Inverter", description, "failed:", result.failed);
+    // one that keeps failing is backed off and reported once (statusPollRound.ts, and DM: machineModelPolling.ts)
+    if (query.statusQuery || command === "DM") warnLog("Inverter", description, "failed:", result.failed);
     else reportTransactFailure(state, description, result.failed);
     return { kind: "unanswered" };
   }
@@ -386,8 +421,16 @@ async function runConfirms(state: SessionState, queries: readonly SettingsQueryC
 
 async function runPollRound(state: SessionState, includeSettingsPoll: boolean): Promise<void> {
   const roundStartedAt = performance.now();
+  const readMachineModel = machineModelPollDue(
+    state.machineModelPoll,
+    roundStartedAt,
+    untrack(state.poll_machine_model)
+  );
   const commands: readonly Pi17QueryCommandName[] = includeSettingsPoll
-    ? [...BACKGROUND_POLL_COMMANDS, ...SETTINGS_POLL_COMMANDS]
+    ? [
+        ...BACKGROUND_POLL_COMMANDS,
+        ...SETTINGS_POLL_COMMANDS.filter(settingsCommand => settingsCommand !== "DM" || readMachineModel),
+      ]
     : BACKGROUND_POLL_COMMANDS;
   const statusRound = takeStatusQueriesForRound(state.statusPollPlan, roundStartedAt);
   state.statusPollPlan = statusRound.plan;
