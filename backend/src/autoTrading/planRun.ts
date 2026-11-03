@@ -70,6 +70,9 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
       { ...configBeforeLock.automatic_trading, ...plannerKnobsFromConfig(configBeforeLock) },
       { nowMs: Date.now(), publishedSlots: prices.slots }
     );
+    // The estimate can take the trailing fetch plus the forecast's wait budget (30–120 s): trading switched off
+    // meanwhile must not still get this plan's windows written
+    if (ctx.flags.aborted) return "aborted";
     const summary = await withScheduleLock(ctx, async () => {
       // Re-read inside the lock: another plan/guard may have written config while we awaited above
       const freshCfg = untrack(ctx.config);

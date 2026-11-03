@@ -40,8 +40,8 @@ type ExpectedSpotEstimator = (
 
 const ESTIMATORS: Record<ExpectedSpotSource, ExpectedSpotEstimator> = {
   trailing: (settings, request) => trailingMeanSpot(settings, request.nowMs),
-  forecast: async (settings, request) =>
-    forecastMeanSpot(settings, request, await trailingMeanSpot(settings, request.nowMs)),
+  // The trailing estimate as a promise: the forecast starts its weather lookup alongside it
+  forecast: (settings, request) => forecastMeanSpot(settings, request, trailingMeanSpot(settings, request.nowMs)),
 };
 
 /** Main: p̂ for a plan made at request.nowMs; undefined when the terminal value is off or out of season */

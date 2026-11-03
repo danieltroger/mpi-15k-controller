@@ -2,12 +2,13 @@
  * Self-test of terminal_value_mode "forecast" (expectedSpotForecast.ts, expectedSpotForecastEstimate.ts): the
  * outlook's mean of D+2…D+4 becomes p̂ (and reads right in the plan note), the issue day follows tomorrow's
  * prices, the value is held within the deviation limit of the trailing mean, and each way the outlook can be
- * missing falls back to the trailing estimate with the reason (warned about once per switch). No network: the
- * price history and the weather fetch are faked. Run from backend/ with:
+ * missing (an unexpected error included) falls back to the trailing estimate with the reason, warned about once
+ * per switch. The weather lookup overlaps the trailing fetch. No network: the price history and the weather
+ * fetch are faked. Run from backend/ with:
  *   yarn node src/autoTrading/expectedSpotForecast.selftest.ts
  */
 import { stockholmDateOf } from "../utilities/stockholmDate.ts";
-import { type ForecastSources, forecastMeanSpot } from "./expectedSpotForecast.ts";
+import { type ForecastSources, forecastMeanSpot, missingHistoryReason } from "./expectedSpotForecast.ts";
 import { heldNear } from "./expectedSpotForecastEstimate.ts";
 import { predictDailyMeanSpots } from "./priceOutlook.ts";
 import { OUTLOOK_TEMPERATURE_POINTS, OUTLOOK_WIND_POINTS } from "./priceOutlookCoefficients.ts";
@@ -68,7 +69,7 @@ function sourcesWith(fetchWeather: ForecastSources["fetchWeather"]): ForecastSou
     fetchDaySlots: fakeDaySlots,
     fetchWeather,
     weatherCache: emptyOutlookWeatherCache(),
-    transitions: { lastFallbackKind: undefined },
+    transitions: { lastFallbackGroup: undefined },
   };
 }
 
@@ -84,7 +85,7 @@ const steadyWind = () => 8;
   const estimate = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   // The reference: the pure outlook on the same inputs (28 past days at 1.0, today 1.2, tomorrow 0.8)
@@ -132,7 +133,7 @@ const steadyWind = () => 8;
   const again = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs + 10 * MINUTE_MS, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   check(
@@ -147,7 +148,7 @@ const steadyWind = () => 8;
   const estimate = await forecastMeanSpot(
     SETTINGS,
     { nowMs: morningMs, publishedSlots: stockholmDaySlots("2026-11-10", 1.2) },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(fakeWeatherSource(steadyWind).fetchWeather)
   );
   const forecast = estimate.forecast;
@@ -165,7 +166,7 @@ const steadyWind = () => 8;
       nowMs: morningMs,
       publishedSlots: [...stockholmDaySlots("2026-11-09", 1), ...stockholmDaySlots("2026-11-10", 1.2)],
     },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(fakeWeatherSource(steadyWind).fetchWeather)
   );
   check(
@@ -181,7 +182,7 @@ const steadyWind = () => 8;
   const estimate = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(fakeWeatherSource(calmAfterTomorrow).fetchWeather)
   );
   const forecast = estimate.forecast;
@@ -197,7 +198,7 @@ const steadyWind = () => 8;
   const unlimited = await forecastMeanSpot(
     { ...SETTINGS, terminal_value_forecast_max_deviation_sek: 3 },
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(fakeWeatherSource(calmAfterTomorrow).fetchWeather)
   );
   check(
@@ -220,7 +221,7 @@ const steadyWind = () => 8;
   const area = await forecastMeanSpot(
     { ...SETTINGS, price_area: "SE4" },
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(weatherSource.fetchWeather)
   );
   check(
@@ -240,13 +241,13 @@ const steadyWind = () => 8;
       nowMs: Date.parse("2027-04-15T11:00:00Z"),
       publishedSlots: [...stockholmDaySlots("2027-04-15", 1), ...stockholmDaySlots("2027-04-16", 1)],
     },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(weatherSource.fetchWeather)
   );
   const octoberFirstMorning = await forecastMeanSpot(
     SETTINGS,
     { nowMs: Date.parse("2026-10-01T06:00:00Z"), publishedSlots: stockholmDaySlots("2026-10-01", 1) },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(weatherSource.fetchWeather)
   );
   check(
@@ -261,11 +262,11 @@ const steadyWind = () => 8;
   const noAnchor = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    {
+    Promise.resolve({
       expectedSpot: undefined,
       source: "trailing",
       detail: "the 7-day mean spot is unavailable, 2 of 7 days at hand: …",
-    },
+    }),
     sourcesWith(weatherSource.fetchWeather)
   );
   check(
@@ -278,7 +279,7 @@ const steadyWind = () => 8;
   const noPrices = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs, publishedSlots: [] },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(weatherSource.fetchWeather)
   );
   check(
@@ -290,7 +291,7 @@ const steadyWind = () => 8;
   const noWeather = await forecastMeanSpot(
     SETTINGS,
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sourcesWith(weatherSource.fetchWeather)
   );
   check(
@@ -311,7 +312,7 @@ const steadyWind = () => 8;
   const late = await forecastMeanSpot(
     quickSettings,
     { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   const waitedMs = Date.now() - startedMs;
@@ -319,7 +320,7 @@ const steadyWind = () => 8;
   const next = await forecastMeanSpot(
     quickSettings,
     { nowMs: afternoonMs + 15 * MINUTE_MS, publishedSlots: todayAndTomorrow },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   check(
@@ -330,6 +331,96 @@ const steadyWind = () => 8;
       next.forecast?.used === true &&
       weatherSource.fetches === 1,
     `(waited ${waitedMs} ms; ${late.detail})`
+  );
+}
+
+// ---------- The weather lookup doesn't wait for the trailing estimate ----------
+{
+  let trailingResolved = false;
+  let weatherStartedBeforeTrailing: boolean | undefined;
+  const sources = sourcesWith(async nowMs => {
+    weatherStartedBeforeTrailing ??= !trailingResolved;
+    return uniformWeather(nowMs, "2026-11-01", 120, steadyWind);
+  });
+  const slowTrailing = new Promise<ExpectedSpotEstimate>(resolve =>
+    setTimeout(() => {
+      trailingResolved = true;
+      resolve(TRAILING);
+    }, 40)
+  );
+  const estimate = await forecastMeanSpot(
+    SETTINGS,
+    { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
+    slowTrailing,
+    sources
+  );
+  check(
+    "overlap: the weather lookup starts while the trailing estimate is still fetching",
+    weatherStartedBeforeTrailing === true && estimate.forecast?.used === true
+  );
+}
+
+// ---------- A bug after the inputs arrive: the trailing mean, warned once with the error ----------
+{
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  // A forecast without its points, as a parser or a points/coefficients regression would hand over
+  const brokenWeather = async (nowMs: number) => ({ fetchedAtMs: nowMs }) as unknown as OutlookWeather;
+  const sources = sourcesWith(brokenWeather);
+  const first = await forecastMeanSpot(
+    SETTINGS,
+    { nowMs: afternoonMs, publishedSlots: todayAndTomorrow },
+    Promise.resolve(TRAILING),
+    sources
+  );
+  const second = await forecastMeanSpot(
+    SETTINGS,
+    { nowMs: afternoonMs + HOUR_MS, publishedSlots: todayAndTomorrow },
+    Promise.resolve(TRAILING),
+    sources
+  );
+  console.warn = originalWarn;
+  const fallbackWarnings = warnings.filter(line => line.includes("Expected spot: the price outlook is unavailable"));
+  check(
+    "error: a throw computing the outlook keeps the trailing value, warned once (with the error) over two plans",
+    first.expectedSpot === 1 &&
+      first.source === "trailing" &&
+      first.detail.startsWith("price outlook unavailable (computing it failed: Cannot read properties of undefined") &&
+      second.expectedSpot === 1 &&
+      fallbackWarnings.length === 1 &&
+      fallbackWarnings[0].includes("TypeError"),
+    `(${first.detail}; ${fallbackWarnings.length} warnings)`
+  );
+}
+
+// ---------- A slow open-meteo that then fails is one problem: warned once, not on every plan ----------
+{
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  const weatherSource = fakeWeatherSource(steadyWind);
+  weatherSource.delayMs = 60;
+  weatherSource.failing = true;
+  const sources = sourcesWith(weatherSource.fetchWeather);
+  const quickSettings = { ...SETTINGS, terminal_value_forecast_wait_seconds: 0.02 };
+  const plan = (nowMs: number) =>
+    forecastMeanSpot(quickSettings, { nowMs, publishedSlots: todayAndTomorrow }, Promise.resolve(TRAILING), sources);
+  const late = await plan(afternoonMs);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const failed = await plan(afternoonMs + MINUTE_MS);
+  const lateAgain = await plan(afternoonMs + 20 * MINUTE_MS);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  console.warn = originalWarn;
+  const fallbackWarnings = warnings.filter(line => line.includes("Expected spot: the price outlook is unavailable"));
+  check(
+    "transitions: late → failed → late again warns once",
+    late.detail.includes("within 0.02 s") &&
+      failed.detail.includes("connect timeout") &&
+      lateAgain.detail.includes("within 0.02 s") &&
+      weatherSource.fetches === 2 &&
+      fallbackWarnings.length === 1,
+    `(${fallbackWarnings.length} fallback warnings, ${weatherSource.fetches} fetches)`
   );
 }
 
@@ -347,7 +438,12 @@ const steadyWind = () => 8;
   const weatherSource = fakeWeatherSource(steadyWind);
   const sources = sourcesWith(weatherSource.fetchWeather);
   const plan = (nowMs: number, area = "SE3") =>
-    forecastMeanSpot({ ...SETTINGS, price_area: area }, { nowMs, publishedSlots: todayAndTomorrow }, TRAILING, sources);
+    forecastMeanSpot(
+      { ...SETTINGS, price_area: area },
+      { nowMs, publishedSlots: todayAndTomorrow },
+      Promise.resolve(TRAILING),
+      sources
+    );
   await plan(afternoonMs);
   const warningsWhileFine = warnings.length;
   await plan(afternoonMs + HOUR_MS, "SE4");
@@ -381,31 +477,63 @@ const steadyWind = () => 8;
   const slots = [...stockholmDaySlots("2027-02-10", 1.5), ...stockholmDaySlots("2027-02-11", 1.5)];
   const sources = sourcesWith(fakeWeatherSource(steadyWind).fetchWeather);
   history.failingDates.add("2027-01-20");
-  const missing = await forecastMeanSpot(SETTINGS, { nowMs: februaryMs, publishedSlots: slots }, TRAILING, sources);
+  const missing = await forecastMeanSpot(
+    SETTINGS,
+    { nowMs: februaryMs, publishedSlots: slots },
+    Promise.resolve(TRAILING),
+    sources
+  );
   history.failingDates.clear();
   history.fetchedDates.length = 0;
   const backingOff = await forecastMeanSpot(
     SETTINGS,
     { nowMs: februaryMs + 5 * MINUTE_MS, publishedSlots: slots },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   const retried = await forecastMeanSpot(
     SETTINGS,
     { nowMs: februaryMs + 20 * MINUTE_MS, publishedSlots: slots },
-    TRAILING,
+    Promise.resolve(TRAILING),
     sources
   );
   check(
     "history: a missing day → the trailing mean and which day; retried after the interval, then the outlook",
     missing.expectedSpot === 1 &&
       missing.detail.includes(
-        "the 30-day price history lacks 1 day(s): no SE3 prices for 2027-01-20: Error: connect timeout"
+        "the 30-day price history has 1 day missing: no SE3 prices for 2027-01-20: Error: connect timeout"
       ) &&
       backingOff.forecast?.used === false &&
       retried.forecast?.used === true &&
       JSON.stringify(history.fetchedDates) === JSON.stringify(["2027-01-20"]),
     `(${missing.detail}; refetched ${history.fetchedDates.join(", ")})`
+  );
+}
+
+// ---------- Many missing days: the count and the span, not every date ----------
+{
+  const marchMs = Date.parse("2027-03-10T12:30:00Z");
+  const slots = [...stockholmDaySlots("2027-03-10", 1.5), ...stockholmDaySlots("2027-03-11", 1.5)];
+  for (const date of ["2027-02-20", "2027-02-21", "2027-02-22", "2027-02-23", "2027-02-24"]) {
+    history.failingDates.add(date);
+  }
+  const many = await forecastMeanSpot(
+    SETTINGS,
+    { nowMs: marchMs, publishedSlots: slots },
+    Promise.resolve(TRAILING),
+    sourcesWith(fakeWeatherSource(steadyWind).fetchWeather)
+  );
+  history.failingDates.clear();
+  check(
+    "history: five missing days read as the count and the span",
+    many.detail ===
+      "price outlook unavailable (the 30-day price history has 5 days missing (2027-02-20 … 2027-02-24), retried by later plans), so the 7-day mean spot",
+    `(${many.detail})`
+  );
+  check(
+    "history: up to three are named, with why",
+    missingHistoryReason(["2027-02-20", "2027-02-21"], "no SE3 prices for 2027-02-20: x; 2027-02-21: y") ===
+      "the 30-day price history has 2 days missing: no SE3 prices for 2027-02-20: x; 2027-02-21: y"
   );
 }
 
