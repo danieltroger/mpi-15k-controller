@@ -4,15 +4,21 @@
  * derivation reads it on every PS round (~50 a minute), the planner on every plan run and the settlement
  * once a day.
  */
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration, MeterCalibrationConfig } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
-import { effectiveMeterCalibration, type MeterCalibrationSettingName } from "./meterCalibrationBounds.ts";
+import {
+  effectiveApplyToPlanner,
+  effectiveMeterCalibration,
+  IDENTITY_METER_CALIBRATION,
+} from "./meterCalibrationBounds.ts";
+
+type ConfiguredMeterCalibration = Partial<Record<keyof MeterCalibrationConfig, unknown>> | undefined;
 
 let lastWarnedCorrections = "";
+let lastWarnedApplyToPlannerCorrection: string | undefined;
 
-export function correctedMeterCalibration(
-  configured: Partial<Record<MeterCalibrationSettingName, unknown>> | undefined
-): MeterCalibrationConfig {
+/** The numbers the live fields and the settlement map readings with */
+export function correctedMeterCalibration(configured: ConfiguredMeterCalibration): MeterCalibration {
   const { calibration, corrections } = effectiveMeterCalibration(configured ?? {});
   const summary = corrections.join("; ");
   if (summary !== lastWarnedCorrections) {
@@ -24,4 +30,15 @@ export function correctedMeterCalibration(
     lastWarnedCorrections = summary;
   }
   return calibration;
+}
+
+/** What the planner credits its revenue with: the calibration, or the identity while apply_to_planner is off */
+export function plannerMeterCalibration(configured: ConfiguredMeterCalibration): MeterCalibration {
+  const { value: applyToPlanner, correction } = effectiveApplyToPlanner(configured?.apply_to_planner);
+  if (correction !== lastWarnedApplyToPlannerCorrection) {
+    if (correction) warnLog(`${correction} (the planner uses that until it's fixed)`);
+    lastWarnedApplyToPlannerCorrection = correction;
+  }
+  const calibration = correctedMeterCalibration(configured);
+  return applyToPlanner ? calibration : IDENTITY_METER_CALIBRATION;
 }

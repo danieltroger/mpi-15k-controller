@@ -1,8 +1,13 @@
 /**
- * Read-only replay of the settlement over past days: what settling each day now gives (at the meter, through
- * settlementGridPower.ts with the configured calibration), next to what the inverter's reading gives (the
- * settlement before the meter calibration) and, with the utility's 15-min meter exports, what the meter
- * counted. For checking the calibration against a fresh meter export, or redoing it. Writes nothing.
+ * Read-only replay of the settlement over past days: what settling each day gives at the meter with the
+ * configured calibration, next to what the inverter's reading gives (the settlement before the meter
+ * calibration) and, with the utility's 15-min meter exports, what the meter counted. For checking the
+ * calibration against a fresh meter export, or redoing it. Writes nothing.
+ *
+ * Every quarter is rebuilt from the raw stored readings at the calibration given ("reconstruct-all",
+ * settlementGridPower.ts), the published meter-equivalent fields set aside: those carry whatever calibration
+ * was live when they were recorded, so mixing them in would make a recalibration (or METER_CALIBRATION=identity)
+ * come out wrong without a sign. The live settlement uses the published fields where it has them.
  *
  * Usage (from backend/):
  *   yarn node src/autoTrading/settlementReplay.ts 2026-07-04 2026-11-02
@@ -45,6 +50,9 @@ const calibration =
 const meter = await loadMeterQuarters(process.env.METER_IMPORT_CSV, process.env.METER_EXPORT_CSV);
 console.log("Calibration:", JSON.stringify(calibration));
 console.log(
+  "Every quarter is rebuilt from the raw readings at this calibration (published meter-equivalent fields set aside)"
+);
+console.log(
   "date        | at the meter now: import export SEK (rebuilt quarters) | inverter reading: import export SEK" +
     (meter ? " | meter: import export SEK | error now / reading SEK" : "")
 );
@@ -52,17 +60,19 @@ console.log(
 const totals = { now: emptyTotals(), reading: emptyTotals(), meter: emptyTotals() };
 const dailyErrorsNow: number[] = [];
 const dailyErrorsReading: number[] = [];
+let publishedQuartersRecomputed = 0;
 for (let date = firstDate; date <= lastDate; date = addDays(date, 1)) {
   const priceSlots = await fetchPriceSlotsForDate(config.automatic_trading.price_area, date);
   if (!priceSlots.length) {
     console.log(`${date}  no prices`);
     continue;
   }
-  const measured = await measureTradingDay(influxClient, date, priceSlots, fees, calibration);
+  const measured = await measureTradingDay(influxClient, date, priceSlots, fees, calibration, "reconstruct-all");
   if (!measured) {
     console.log(`${date}  no inverter data`);
     continue;
   }
+  publishedQuartersRecomputed += measured.publishedQuartersRecomputed;
   const now = {
     import_kwh: measured.realized.import_kwh,
     export_kwh: measured.realized.export_kwh,
@@ -97,6 +107,11 @@ for (let date = firstDate; date <= lastDate; date = addDays(date, 1)) {
   console.log(line);
 }
 
+if (publishedQuartersRecomputed) {
+  console.log(
+    `\n${publishedQuartersRecomputed} quarter(s) had published meter-equivalent fields; rebuilt at this calibration instead`
+  );
+}
 console.log(`\nTotals over ${dailyErrorsNow.length || "the"} days:`);
 for (const [name, total] of Object.entries(totals)) {
   if (name === "meter" && !meter) continue;

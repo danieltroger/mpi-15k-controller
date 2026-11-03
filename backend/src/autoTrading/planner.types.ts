@@ -1,4 +1,4 @@
-import type { AutomaticTradingConfig, ExpectedSpotSource, MeterCalibrationConfig } from "../config/config.types.ts";
+import type { AutomaticTradingConfig, ExpectedSpotSource, MeterCalibration } from "../config/config.types.ts";
 import type { ForecastSpotSummary } from "./expectedSpotForecast.types.ts";
 
 export type PriceSlot15 = { startMs: number; spot: number };
@@ -50,7 +50,7 @@ export type PlannerKnobs = Pick<
   /** feed_from_battery_when_no_solar.feed_amount_watts */
   baseline_feed_watts: number;
   /** The meter_calibration section, corrected to its bounds: revenue is credited at what the meter counts (simulate.ts) */
-  meter_calibration: MeterCalibrationConfig;
+  meter_calibration: MeterCalibration;
 };
 export type PlannerInput = {
   nowMs: number;

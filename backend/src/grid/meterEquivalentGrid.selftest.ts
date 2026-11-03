@@ -2,19 +2,22 @@
  * Self-test of the meter-equivalent grid mapping (meterEquivalentGrid.ts): each calibrated regime against
  * the 2026-11-03 calibration's measurements, the exact identity at every setting 0, the grid switched off,
  * the sign handling (a small export that comes out as a net import), the PS-round plumbing
- * (meterEquivalentGridRound.ts) and the bounds correction (meterCalibrationBounds.ts). Run from backend/ with:
+ * (meterEquivalentGridRound.ts), the bounds correction (meterCalibrationBounds.ts) and the planner's switch
+ * (correctedMeterCalibration.ts). Run from backend/ with:
  *   yarn node src/grid/meterEquivalentGrid.selftest.ts
  */
 import process from "process";
 import { default_config } from "../config/config.ts";
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
 import {
   DEFAULT_METER_CALIBRATION,
+  effectiveApplyToPlanner,
   effectiveMeterCalibration,
   IDENTITY_METER_CALIBRATION,
   METER_CALIBRATION_BOUNDS,
 } from "./meterCalibrationBounds.ts";
+import { correctedMeterCalibration, plannerMeterCalibration } from "./correctedMeterCalibration.ts";
 import { meterEquivalentGrid } from "./meterEquivalentGrid.ts";
 import type { ConverterDirection } from "./meterEquivalentGrid.types.ts";
 import { METER_EQUIVALENT_GRID_FIELD_NAMES, withMeterEquivalentGridFields } from "./meterEquivalentGridRound.ts";
@@ -139,6 +142,9 @@ function within(actual: number, expected: number, tolerance: number): boolean {
     wireCommand: "PS",
     decodedAt: 1_793_700_000_000,
     fields: {
+      ac_input_active_power_r: -4883,
+      ac_input_active_power_s: -4885,
+      ac_input_active_power_t: -4886,
       ac_input_total_active_power: -14654,
       "dc/ac_power_direction": "DC to AC",
       line_power_direction: "Output",
@@ -164,7 +170,7 @@ function within(actual: number, expected: number, tolerance: number): boolean {
   check("round: a GS round passes through unchanged", gsResult.round === gsRound && !gsResult.unmappable);
   const brokenRound: DecodedRound = {
     ...psRound,
-    fields: { ac_input_total_active_power: 500, "dc/ac_power_direction": "Invalid option: 7" },
+    fields: { ...psRound.fields, ac_input_total_active_power: 500, "dc/ac_power_direction": "Invalid option: 7" },
   };
   const brokenResult = withMeterEquivalentGridFields(brokenRound, DEFAULT_METER_CALIBRATION);
   check(
@@ -172,18 +178,61 @@ function within(actual: number, expected: number, tolerance: number): boolean {
     brokenResult.round === brokenRound && !!brokenResult.unmappable?.includes("dc/ac_power_direction"),
     brokenResult.unmappable
   );
+  // Selling at 14.6 kW with phase S missing: fixMpiAcInputFields left the firmware's frozen +7937 total
+  const { ac_input_active_power_s: droppedPhase, ...withoutPhaseS } = psRound.fields;
+  const frozenTotalRound: DecodedRound = {
+    ...psRound,
+    fields: { ...withoutPhaseS, ac_input_total_active_power: 7937 },
+  };
+  const frozenTotalResult = withMeterEquivalentGridFields(frozenTotalRound, DEFAULT_METER_CALIBRATION);
+  check(
+    "round: without all three phases the total can't be trusted, so the round isn't mapped (and says why)",
+    frozenTotalResult.round === frozenTotalRound &&
+      !!frozenTotalResult.unmappable?.includes("ac_input_active_power_s") &&
+      typeof droppedPhase === "number",
+    frozenTotalResult.unmappable
+  );
+  const { line_power_direction: droppedDirection, ...withoutDirection } = psRound.fields;
+  check(
+    "round: nor without the line direction",
+    !!withMeterEquivalentGridFields({ ...psRound, fields: withoutDirection }, DEFAULT_METER_CALIBRATION).unmappable &&
+      droppedDirection === "Output"
+  );
+}
+
+// ---------- The planner's switch ----------
+{
+  check(
+    "planner switch: on by default, the planner gets the calibration",
+    default_config.meter_calibration.apply_to_planner === true &&
+      JSON.stringify(plannerMeterCalibration(default_config.meter_calibration)) ===
+        JSON.stringify(DEFAULT_METER_CALIBRATION)
+  );
+  check(
+    "planner switch: off, the planner gets the identity while the settlement keeps the calibration",
+    JSON.stringify(plannerMeterCalibration({ ...default_config.meter_calibration, apply_to_planner: false })) ===
+      JSON.stringify(IDENTITY_METER_CALIBRATION) &&
+      JSON.stringify(correctedMeterCalibration({ ...default_config.meter_calibration, apply_to_planner: false })) ===
+        JSON.stringify(DEFAULT_METER_CALIBRATION)
+  );
+  const notABoolean = effectiveApplyToPlanner("no");
+  check(
+    "planner switch: a non-boolean is the default (on), with a correction",
+    notABoolean.value === true && !!notABoolean.correction
+  );
 }
 
 // ---------- Bounds: the config default, clamping and non-numbers ----------
 {
   check(
     "bounds: the config default is the calibrated defaults",
-    JSON.stringify(default_config.meter_calibration) === JSON.stringify(DEFAULT_METER_CALIBRATION)
+    JSON.stringify(default_config.meter_calibration) ===
+      JSON.stringify({ ...DEFAULT_METER_CALIBRATION, apply_to_planner: true })
   );
   let defaultsInside = true;
   for (const [settingName, bounds] of Object.entries(METER_CALIBRATION_BOUNDS)) {
     if (bounds.defaultValue < bounds.min || bounds.defaultValue > bounds.max) defaultsInside = false;
-    if (IDENTITY_METER_CALIBRATION[settingName as keyof MeterCalibrationConfig] < bounds.min) defaultsInside = false;
+    if (IDENTITY_METER_CALIBRATION[settingName as keyof MeterCalibration] < bounds.min) defaultsInside = false;
   }
   check("bounds: every default lies inside its bounds, and the identity (all 0) is allowed", defaultsInside);
   const corrected = effectiveMeterCalibration({

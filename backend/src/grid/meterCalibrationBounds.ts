@@ -1,25 +1,20 @@
 /**
  * Bounds and defaults of the meter calibration (config meter_calibration, grid/meterEquivalentGrid.ts), and
  * the correction of a value outside them (config.json is hand-editable; the config page's min/max are only
- * input hints). Pure (type-only imports): the config page shares the bounds. The warn-once wrapper the
- * backend uses is correctedMeterCalibration.ts.
+ * input hints). Pure (no Node built-ins): the config page shares the bounds. The warn-once wrappers the
+ * backend uses are in correctedMeterCalibration.ts.
  *
  * The defaults come from the 2026-11-03 calibration: the inverter's 1-min grid readings (phase sum, R's
  * sign repaired) against the meter's 15-min import and export registers, 2025-10 → 2026-11, net of a small
  * grid-side shed load. Each held within ±10 W across the 2026-07-03 pi17 fix and the 2026-10-25
  * native-serial cutover.
  */
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
+import { effectiveBoundedNumber, type NumberSettingBounds } from "../config/boundedNumberSetting.ts";
 
-export type MeterCalibrationSettingName = keyof MeterCalibrationConfig;
+export type MeterCalibrationSettingName = keyof MeterCalibration;
 
-export type MeterCalibrationBounds = {
-  defaultValue: number;
-  min: number;
-  max: number;
-  unit: "W" | "W/kW²";
-  step: number;
-};
+export type MeterCalibrationBounds = NumberSettingBounds & { unit: "W" | "W/kW²"; step: number };
 
 export const METER_CALIBRATION_BOUNDS = {
   // Median meter − |reading| on steady exporting quarters: the night feed 197–206 W (reading ~250 W, the
@@ -44,7 +39,7 @@ export const METER_CALIBRATION_BOUNDS = {
   feed_in_setpoint_shortfall_watts: { defaultValue: 100, min: 0, max: 300, unit: "W", step: 10 },
 } as const satisfies Record<MeterCalibrationSettingName, MeterCalibrationBounds>;
 
-export const DEFAULT_METER_CALIBRATION: MeterCalibrationConfig = {
+export const DEFAULT_METER_CALIBRATION: MeterCalibration = {
   export_draw_watts: METER_CALIBRATION_BOUNDS.export_draw_watts.defaultValue,
   export_watts_per_kw_squared: METER_CALIBRATION_BOUNDS.export_watts_per_kw_squared.defaultValue,
   import_draw_converting_watts: METER_CALIBRATION_BOUNDS.import_draw_converting_watts.defaultValue,
@@ -54,7 +49,7 @@ export const DEFAULT_METER_CALIBRATION: MeterCalibrationConfig = {
 };
 
 /** Every setting 0: the meter is assumed to see exactly the reading, as before the calibration */
-export const IDENTITY_METER_CALIBRATION: MeterCalibrationConfig = {
+export const IDENTITY_METER_CALIBRATION: MeterCalibration = {
   export_draw_watts: 0,
   export_watts_per_kw_squared: 0,
   import_draw_converting_watts: 0,
@@ -69,10 +64,10 @@ export const IDENTITY_METER_CALIBRATION: MeterCalibrationConfig = {
  * and a section may be missing keys a hand edit removed.
  */
 export function effectiveMeterCalibration(configured: Partial<Record<MeterCalibrationSettingName, unknown>>): {
-  calibration: MeterCalibrationConfig;
+  calibration: MeterCalibration;
   corrections: string[];
 } {
-  const calibration: MeterCalibrationConfig = { ...DEFAULT_METER_CALIBRATION };
+  const calibration: MeterCalibration = { ...DEFAULT_METER_CALIBRATION };
   const corrections: string[] = [];
   for (const settingName of Object.keys(METER_CALIBRATION_BOUNDS) as MeterCalibrationSettingName[]) {
     const { value, correction } = effectiveMeterCalibrationSetting(settingName, configured[settingName]);
@@ -86,25 +81,21 @@ export function effectiveMeterCalibrationSetting(
   settingName: MeterCalibrationSettingName,
   configuredValue: unknown
 ): { value: number; correction: string | undefined } {
-  const { defaultValue, min, max, unit } = METER_CALIBRATION_BOUNDS[settingName];
-  if (typeof configuredValue !== "number" || !Number.isFinite(configuredValue) || configuredValue < 0) {
-    const shown = typeof configuredValue === "string" ? JSON.stringify(configuredValue) : String(configuredValue);
-    return {
-      value: defaultValue,
-      correction: `${shown} is not a non-negative number, using the default ${defaultValue} ${unit}`,
-    };
-  }
-  if (configuredValue < min) {
-    return {
-      value: min,
-      correction: `${configuredValue} ${unit} is below the ${min} ${unit} minimum, using the minimum`,
-    };
-  }
-  if (configuredValue > max) {
-    return {
-      value: max,
-      correction: `${configuredValue} ${unit} exceeds the ${max} ${unit} maximum, using the maximum`,
-    };
-  }
-  return { value: configuredValue, correction: undefined };
+  return effectiveBoundedNumber(METER_CALIBRATION_BOUNDS[settingName], configuredValue);
 }
+
+/** meter_calibration.apply_to_planner: only a boolean counts; anything else is the default (on), with a warning */
+export function effectiveApplyToPlanner(configured: unknown): { value: boolean; correction: string | undefined } {
+  if (typeof configured === "boolean") return { value: configured, correction: undefined };
+  return {
+    value: DEFAULT_APPLY_TO_PLANNER,
+    correction: `meter_calibration.apply_to_planner: ${JSON.stringify(configured)} is not true or false, using ${DEFAULT_APPLY_TO_PLANNER}`,
+  };
+}
+
+/**
+ * On: the planner credits its revenue at what the meter counts, like the settlement does. Measured on 300 random
+ * plans it changes about half of them and is about neutral at the meter (−0.09 SEK per plan): the buy margins
+ * were tuned on the old, optimistic credits, so trades that only cleared them there now drop out.
+ */
+export const DEFAULT_APPLY_TO_PLANNER = true;

@@ -153,7 +153,8 @@ function meterExportOf(phaseSumWatts: number) {
     fakeInflux,
     DAY_START_MS,
     DAY_START_MS + 3 * SLOT_MS,
-    DEFAULT_METER_CALIBRATION
+    DEFAULT_METER_CALIBRATION,
+    "prefer-published"
   );
   check(
     "day: the published quarter uses the published fields",
@@ -179,6 +180,11 @@ function meterExportOf(phaseSumWatts: number) {
   check(
     "day: one quarter query and one 10-s query",
     issuedQueries.length === 2 && issuedQueries[1].includes("time(10s)")
+  );
+  check(
+    "day: the 10-s query covers only the quarters that need the rebuild, not the published one",
+    issuedQueries[1].includes(`time >= ${quarterStarts[1]}ms AND time < ${quarterStarts[2] + SLOT_MS}ms`),
+    issuedQueries[1]
   );
 
   // The day's money at the meter against the reading: the sell is credited ~3 % lower
@@ -211,8 +217,62 @@ function meterExportOf(phaseSumWatts: number) {
       return [quarterRows[0]];
     },
   } as unknown as Influx.InfluxDB;
-  await querySettlementQuarters(publishedOnlyInflux, DAY_START_MS, DAY_START_MS + SLOT_MS, DEFAULT_METER_CALIBRATION);
+  await querySettlementQuarters(
+    publishedOnlyInflux,
+    DAY_START_MS,
+    DAY_START_MS + SLOT_MS,
+    DEFAULT_METER_CALIBRATION,
+    "prefer-published"
+  );
   check("day: a fully published day issues no 10-s query", publishedOnlyQueries.length === 1);
+}
+
+// ---------- The replay ("reconstruct-all"): published quarters never carry their recorded calibration in ----------
+{
+  // A published sell quarter, its fields recorded at the calibrated defaults; the raw reading under it
+  const sellQuarterRow = {
+    time: nanoTime(DAY_START_MS),
+    meter_import: 0,
+    meter_export: meterExportOf(-14654),
+    meter_samples: 720,
+    grid: -14654,
+    grid_samples: 720,
+    pv1: 0,
+    pv2: 0,
+    house: 315,
+  };
+  const replayInflux = {
+    query: async (queryText: string) =>
+      queryText.includes("GROUP BY time(15m)") ? [sellQuarterRow] : quarterBuckets(DAY_START_MS, () => -14654),
+  } as unknown as Influx.InfluxDB;
+  const atIdentity = await querySettlementQuarters(
+    replayInflux,
+    DAY_START_MS,
+    DAY_START_MS + SLOT_MS,
+    IDENTITY_METER_CALIBRATION,
+    "reconstruct-all"
+  );
+  check(
+    "replay: a published day replayed at the identity is the raw split, not the recorded calibration",
+    atIdentity.quarters[0].meterSource === "reconstructed" &&
+      atIdentity.quarters[0].meterExportW === 14654 &&
+      atIdentity.quarters[0].meterImportW === 0 &&
+      atIdentity.notes.publishedQuartersRecomputed === 1,
+    JSON.stringify(atIdentity)
+  );
+  const preferringPublished = await querySettlementQuarters(
+    replayInflux,
+    DAY_START_MS,
+    DAY_START_MS + SLOT_MS,
+    IDENTITY_METER_CALIBRATION,
+    "prefer-published"
+  );
+  check(
+    "replay: the live settlement keeps the published quarter as recorded",
+    preferringPublished.quarters[0].meterSource === "published" &&
+      preferringPublished.quarters[0].meterExportW === meterExportOf(-14654) &&
+      preferringPublished.notes.publishedQuartersRecomputed === 0
+  );
 }
 
 finishSelftest();

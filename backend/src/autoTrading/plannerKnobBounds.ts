@@ -1,10 +1,11 @@
 /**
  * Bounds of the automatic_trading knobs the backend enforces before using them (the planner's, and the
  * runtime hold guard's in buying/holdWindowGuard.ts), and the correction of a value outside them
- * (config.json is hand-editable; the config page's min/max are only input hints). Pure (type-only
- * imports): the config page shares the bounds.
+ * (config.json is hand-editable; the config page's min/max are only input hints). Pure (no Node
+ * built-ins): the config page shares the bounds.
  */
 import type { AutomaticTradingConfig } from "../config/config.types.ts";
+import { effectiveBoundedNumber } from "../config/boundedNumberSetting.ts";
 
 export type BoundedPlannerKnobName = keyof Pick<
   AutomaticTradingConfig,
@@ -98,13 +99,14 @@ export const PLANNER_KNOB_BOUNDS = {
   // take more than this at the low end. At most the hold class (HOLD_CLASS_MAX_WATTS): above it a window is a
   // charge, not a hold.
   hold_power_watts: { defaultValue: 100, min: 50, max: HOLD_CLASS_MAX_WATTS, unit: "W", step: 10 },
-  // What the inverter draws from the grid while holding beyond the house, its idle draw and the trickle: not
-  // measured yet, and what the hold is worth hangs on it. In the 2022-11 → 2026-11 backtest on top of the
-  // terminal value (margin 0.2, the planner set to the plant's draw) holding saved ~200 SEK per winter at 0 W,
-  // ~80 at 50 W, ~60 at 100 W and ~20 at 150 W. Set too low it loses: at 100 W against a plant drawing 150 W,
-  // and more so past that. So the default sits at the conservative end until a live test measures it; set to
-  // 100 W against a plant drawing nothing it still saves ~180.
-  hold_overhead_watts: { defaultValue: 100, min: 0, max: 1000, unit: "W", step: 10 },
+  // What the inverter draws from the grid while holding beyond the house, its idle draw and the trickle.
+  // Measured against the utility meter over four 2025-26 holds (65 quarters, 2025-11-01 to 2026-03-15):
+  // median 166–177 W per hold, ~170 W pooled, net of the grid-side shed. With the charger on, the inverter
+  // draws ~40 W more than passing the grid through (~130 W). In the 2022-11 → 2026-11 backtest on top of the terminal value
+  // (margin 0.2, the planner set to the plant's draw) holding saved ~200 SEK per winter at 0 W, ~80 at 50 W,
+  // ~60 at 100 W and ~20 at 150 W: at the measured draw a hold is worth about nothing, so holds stay off.
+  // Set too low it loses money; this is the meter-level overhead, which the meter calibration doesn't add to.
+  hold_overhead_watts: { defaultValue: 170, min: 0, max: 1000, unit: "W", step: 10 },
   // A held quarter must gain this much per kWh the house imports in it, so a hold the overhead or a forecast
   // miss turns into a loss stays out. In the backtest 0.2 was positive in every winter at every overhead from
   // 0 to 150 W; 0.1 lost in some winter from 50 W up, and 0 up to ~140 SEK.
@@ -141,25 +143,5 @@ export function effectivePlannerKnob(
   knobName: BoundedPlannerKnobName,
   configuredValue: unknown
 ): { value: number; correction: string | undefined } {
-  const { defaultValue, min, max, unit } = PLANNER_KNOB_BOUNDS[knobName];
-  if (typeof configuredValue !== "number" || !Number.isFinite(configuredValue) || configuredValue < 0) {
-    const shown = typeof configuredValue === "string" ? JSON.stringify(configuredValue) : String(configuredValue);
-    return {
-      value: defaultValue,
-      correction: `${shown} is not a non-negative number, using the default ${defaultValue} ${unit}`,
-    };
-  }
-  if (configuredValue < min) {
-    return {
-      value: min,
-      correction: `${configuredValue} ${unit} is below the ${min} ${unit} minimum, using the minimum`,
-    };
-  }
-  if (configuredValue > max) {
-    return {
-      value: max,
-      correction: `${configuredValue} ${unit} exceeds the ${max} ${unit} maximum, using the maximum`,
-    };
-  }
-  return { value: configuredValue, correction: undefined };
+  return effectiveBoundedNumber(PLANNER_KNOB_BOUNDS[knobName], configuredValue);
 }

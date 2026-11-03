@@ -43,7 +43,7 @@ export function useInverterValues(config: Accessor<Config>) {
         decodedRound,
         correctedMeterCalibration(untrack(config).meter_calibration)
       );
-      // Every PS answer the gate passes carries both inputs, so this means a decoding change broke them
+      // Every PS answer the gate passes carries all the inputs, so this means a decoding change broke them
       if (unmappable) warnUnmappableRound("PS round without meter-equivalent grid fields:", unmappable);
       // One batch per round: consumers must never observe half a round. A BATS parse used to
       // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.

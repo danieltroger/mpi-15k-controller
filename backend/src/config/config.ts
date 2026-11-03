@@ -8,7 +8,7 @@ import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/ther
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
 import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../autoTrading/terminalValue.ts";
-import { DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
+import { DEFAULT_APPLY_TO_PLANNER, DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -144,7 +144,7 @@ export const default_config: Config = {
   },
   // Ships on: an accuracy correction of the grid readings, calibrated against the meter (2026-11-03).
   // All zero = the meter is assumed to see exactly the reading, as before.
-  meter_calibration: { ...DEFAULT_METER_CALIBRATION },
+  meter_calibration: { ...DEFAULT_METER_CALIBRATION, apply_to_planner: DEFAULT_APPLY_TO_PLANNER },
   usb_parameter_setting: {
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     poll_values_interval_seconds: 60 * 5,

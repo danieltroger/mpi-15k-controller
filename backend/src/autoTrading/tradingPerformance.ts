@@ -1,12 +1,12 @@
 import type Influx from "influx";
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
 import { settleBacklog } from "./settlementBacklog.ts";
-import { querySettlementQuarters } from "./settlementGridPower.ts";
+import { querySettlementQuarters, type SettlementSource } from "./settlementGridPower.ts";
 import { type AutoTraderState, type DayForecast, type RealizedDay, saveAutoTraderState } from "./autoTraderState.ts";
 
 /**
@@ -107,7 +107,7 @@ export async function settleRecentDays(
   influxClient: Influx.InfluxDB | undefined,
   priceArea: string,
   fees: FeeKnobs,
-  meterCalibration: MeterCalibrationConfig,
+  meterCalibration: MeterCalibration,
   state: AutoTraderState
 ) {
   if (!influxClient || settlementInFlight) return;
@@ -138,7 +138,7 @@ export async function settleTradingDay(
   dateStr: string,
   priceArea: string,
   fees: FeeKnobs,
-  meterCalibration: MeterCalibrationConfig,
+  meterCalibration: MeterCalibration,
   forecast: DayForecast | undefined
 ): Promise<RealizedDay | null> {
   try {
@@ -147,7 +147,15 @@ export async function settleTradingDay(
       logLog(`Auto trader: no historical prices for ${dateStr}, skipping settlement`);
       return null;
     }
-    const measured = await measureTradingDay(influxClient, dateStr, priceSlots, fees, meterCalibration);
+    // Quarters already published keep the calibration they were recorded at; only the rest uses today's
+    const measured = await measureTradingDay(
+      influxClient,
+      dateStr,
+      priceSlots,
+      fees,
+      meterCalibration,
+      "prefer-published"
+    );
     if (!measured) return null;
     const { realized, inverterReading, reconstructedQuarters, dayStartMs } = measured;
     const { export_kwh, import_kwh } = realized;
@@ -159,7 +167,9 @@ export async function settleTradingDay(
       realized_revenue_sek: revenue_sek,
       pv_kwh: realized.pv_kwh,
       house_kwh: realized.house_kwh,
-      // The pre-calibration figures (the inverter's reading, netted per quarter) for continuity with older points
+      // The pre-calibration figures (the inverter's reading, netted per quarter) for continuity with older points.
+      // planned_sell_kwh below is the plan's sell at the inverter (simulate.ts keeps energies there), so compare it
+      // with inverter_reading_export_kwh; export_kwh is at the meter (~3 % less, and the night feed ≈ 0)
       inverter_reading_export_kwh: inverterReading.export_kwh,
       inverter_reading_import_kwh: inverterReading.import_kwh,
       inverter_reading_revenue_sek: inverterReading.revenue_sek,
@@ -194,20 +204,27 @@ export async function settleTradingDay(
 
 /**
  * One local day's realized figures from its 15-min prices (the whole day, non-empty), read from InfluxDB
- * without writing anything (settleTradingDay writes them; settlementReplay.ts prints them for past days).
- * Null when the day has no inverter data.
+ * without writing anything (settleTradingDay writes them with "prefer-published"; settlementReplay.ts prints
+ * them for past days with "reconstruct-all"). Null when the day has no inverter data.
  */
 export async function measureTradingDay(
   influxClient: Influx.InfluxDB,
   dateStr: string,
   priceSlots: PriceSlot15[],
   fees: FeeKnobs,
-  meterCalibration: MeterCalibrationConfig
+  meterCalibration: MeterCalibration,
+  source: SettlementSource
 ): Promise<MeasuredTradingDay | null> {
   const spotByStartMs = new Map(priceSlots.map(slot => [slot.startMs, slot.spot]));
   const dayStartMs = priceSlots[0].startMs;
   const dayEndMs = priceSlots[priceSlots.length - 1].startMs + SLOT_MS;
-  const { quarters, notes } = await querySettlementQuarters(influxClient, dayStartMs, dayEndMs, meterCalibration);
+  const { quarters, notes } = await querySettlementQuarters(
+    influxClient,
+    dayStartMs,
+    dayEndMs,
+    meterCalibration,
+    source
+  );
   if (notes.bucketsWithoutConverterDirection) {
     warnLog(
       `Auto trader: settling ${dateStr}, ${notes.bucketsWithoutConverterDirection} stored 10-s grid reading(s) had no converter direction — counted as converting`
@@ -250,6 +267,7 @@ export async function measureTradingDay(
     },
     inverterReading: computeRealizedRevenue(readingSlots, 0.25, fees),
     reconstructedQuarters,
+    publishedQuartersRecomputed: notes.publishedQuartersRecomputed,
     dayStartMs,
   };
 }
@@ -261,6 +279,8 @@ export type MeasuredTradingDay = {
   inverterReading: ReturnType<typeof computeRealizedRevenue>;
   /** Quarters whose meter figures were rebuilt from stored 10-s means, not the published fields */
   reconstructedQuarters: number;
+  /** "reconstruct-all": of those, the quarters that had published fields (recorded at the calibration live then) */
+  publishedQuartersRecomputed: number;
   dayStartMs: number;
 };
 

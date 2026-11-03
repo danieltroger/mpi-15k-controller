@@ -58,7 +58,7 @@ export const baseKnobs: PlannerKnobs = {
   hold_min_window_minutes: 30,
   hold_bridge_minutes: 30,
   // The scenarios predate the meter calibration and credit what the inverter reads; its own scenarios
-  // (planner.selftest.ts, simulate.selftest.ts) switch the calibrated defaults on
+  // (planner.selftest.ts, simulatedMeterCredit.selftest.ts) switch the calibrated defaults on
   meter_calibration: IDENTITY_METER_CALIBRATION,
 };
 

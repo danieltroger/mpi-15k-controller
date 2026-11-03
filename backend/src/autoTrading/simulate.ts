@@ -85,13 +85,11 @@ export function simulate(
         autoExportWh += overflowInBatteryWh / knobs.charge_efficiency;
         autoExportWPerSlot[i] = Math.round(overflowInBatteryWh / knobs.charge_efficiency / slot.durationH);
         revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
-        const holdOverflowW = overflowInBatteryWh / knobs.charge_efficiency / slot.durationH;
-        const uncountedOverflowWh = uncountedExportWatts(holdOverflowW, 0, calibration) * slot.durationH;
-        revenueSek -= (uncountedOverflowWh / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
         socWh = cap;
       }
-      // hold_overhead_watts already stands for the inverter's draw beyond the house, idle draw and trickle
-      // (measured against the meter), so the hold's import gets no meter correction on top
+      // A hold gets no meter correction: hold_overhead_watts is the meter-level draw (~170 W measured on
+      // 2025-26 holds), and the inverter's draw is already in it, so neither the import nor a PV overflow
+      // (which nets against that import at the meter) pays it again
       importWh += holdImportWh;
       revenueSek -= (holdImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
       // A sell right after a hold ramps from nothing: the baseline feed is off during buy windows

@@ -8,13 +8,13 @@
  * meter_equivalent_grid_* fields (grid/meterEquivalentGridRound.ts) are exactly that. A quarter without them
  * (any day before they existed, and the quarter of a restart onto them) is reconstructed from what is
  * stored: 10-s means of the raw reading with the most frequent converter direction, through the same mapping
- * at today's calibration. That is the finest grouping a day's query stays small at (~8,600 rows); a bucket
+ * at the calibration passed in ("reconstruct-all" rebuilds every quarter that way). That is the finest grouping a day's query stays small at (~8,600 rows); a bucket
  * that mixes import with export or the grid dropping out loses a little: against the per-reading mapping,
  * −0.005…−0.06 kWh per day on ordinary days and −0.6 of 54 kWh imported on 2026-10-27 (the island-trip
  * evening), where 1-min means lose −1.8.
  */
 import type Influx from "influx";
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import { meterEquivalentGrid } from "../grid/meterEquivalentGrid.ts";
 import { isConverterDirection } from "../grid/meterEquivalentGridRound.ts";
 import { SLOT_MS } from "./planner.ts";
@@ -32,14 +32,28 @@ export type SettlementQuarter = {
   houseW: number | undefined;
 };
 
-/** What the reconstruction met that it had to guess at, for the settlement's log */
-export type ReconstructionNotes = { bucketsWithoutConverterDirection: number };
+/**
+ * "prefer-published" (the live settlement): a quarter with the published fields uses them, at the calibration
+ * that was live when they were recorded, the rest is rebuilt. "reconstruct-all" (settlementReplay.ts, checking
+ * or redoing the calibration): every quarter is rebuilt from the raw readings at the calibration passed in, so
+ * the published fields can't mix an older calibration into the result.
+ */
+export type SettlementSource = "prefer-published" | "reconstruct-all";
+
+/** What the rebuild met, for the settlement's log */
+export type ReconstructionNotes = {
+  /** 10-s buckets without a converter direction, counted as converting */
+  bucketsWithoutConverterDirection: number;
+  /** "reconstruct-all": quarters whose published fields were set aside for the rebuild */
+  publishedQuartersRecomputed: number;
+};
 
 export async function querySettlementQuarters(
   influxClient: Influx.InfluxDB,
   dayStartMs: number,
   dayEndMs: number,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration,
+  source: SettlementSource
 ): Promise<{ quarters: SettlementQuarter[]; notes: ReconstructionNotes }> {
   const rows = await withQueryTimeout(
     influxClient.query<QuarterRow>(
@@ -51,16 +65,27 @@ export async function querySettlementQuarters(
     )
   );
   const quarters = rows.map(quarterFromRow);
-  const notes: ReconstructionNotes = { bucketsWithoutConverterDirection: 0 };
+  const notes: ReconstructionNotes = { bucketsWithoutConverterDirection: 0, publishedQuartersRecomputed: 0 };
+  if (source === "reconstruct-all") {
+    for (const quarter of quarters) {
+      if (quarter.meterSource === "published") notes.publishedQuartersRecomputed++;
+      quarter.meterImportW = undefined;
+      quarter.meterExportW = undefined;
+      quarter.meterSource = undefined;
+    }
+  }
   const needingReconstruction = quarters.filter(
     quarter => quarter.meterSource === undefined && quarter.readingW !== undefined
   );
   if (!needingReconstruction.length) return { quarters, notes };
 
+  // Only the span of the quarters that need it: a restart quarter shouldn't pull the whole day (~8,600 rows)
+  const rebuildStartMs = Math.min(...needingReconstruction.map(quarter => quarter.startMs));
+  const rebuildEndMs = Math.max(...needingReconstruction.map(quarter => quarter.startMs)) + SLOT_MS;
   const bucketRows = await withQueryTimeout(
     influxClient.query<BucketRow>(
       `SELECT mean(ac_input_total_active_power) AS grid, mode("dc/ac_power_direction") AS converter FROM "mpp-solar" ` +
-        `WHERE time >= ${dayStartMs}ms AND time < ${dayEndMs}ms GROUP BY time(${RECONSTRUCTION_BUCKET_SECONDS}s) fill(none)`
+        `WHERE time >= ${rebuildStartMs}ms AND time < ${rebuildEndMs}ms GROUP BY time(${RECONSTRUCTION_BUCKET_SECONDS}s) fill(none)`
     )
   );
   const reconstruction = reconstructQuarterMeterPower(
@@ -90,7 +115,7 @@ export async function querySettlementQuarters(
  */
 export function reconstructQuarterMeterPower(
   buckets: { startMs: number; phaseSumW: number | null; converter: string | null }[],
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): {
   byQuarterStartMs: Map<number, { importW: number; exportW: number }>;
   bucketsWithoutConverterDirection: number;

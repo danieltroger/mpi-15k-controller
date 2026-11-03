@@ -322,9 +322,19 @@ export type TemperatureSavingConfig = {
  * How the inverter's grid reading maps onto the utility meter's import and export registers
  * (grid/meterEquivalentGrid.ts), calibrated against the meter's 15-min data in 2026-11. The reading
  * leaves out the inverter's own draw, and the gap grows with the square of the power. All zero = the
- * meter is assumed to see exactly the reading. Bounds in grid/meterCalibrationBounds.ts, clamped. Live.
+ * meter is assumed to see exactly the reading. Bounds in grid/meterCalibrationBounds.ts, clamped. A change
+ * applies to readings from then on: quarters already recorded keep the calibration they were recorded at.
  */
-export type MeterCalibrationConfig = {
+export type MeterCalibrationConfig = MeterCalibration & {
+  /**
+   * Whether the planner credits its revenue at the meter too (simulatedMeterCredit.ts). Off, it plans on the
+   * inverter's reading as before the calibration; the settlement and the live fields are calibrated either way.
+   */
+  apply_to_planner: boolean;
+};
+
+/** The calibration's numbers: what the mapping, the settlement and the planner's crediting use */
+export type MeterCalibration = {
   /** While exporting, the meter counts this much less than the reading */
   export_draw_watts: number;
   /** …and a further this × (reading in kW)² less */

@@ -9,7 +9,7 @@
  * there too (PV charging the battery). So an export smaller than the inverter's draw is credited as nothing,
  * never charged as an import: a battery that fills up must not look dearer than one that doesn't.
  */
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import { meterExportShortfallWatts, meterImportExcessWatts } from "../grid/meterEquivalentGrid.ts";
 import type { ConverterDirection } from "../grid/meterEquivalentGrid.types.ts";
 
@@ -21,7 +21,7 @@ import type { ConverterDirection } from "../grid/meterEquivalentGrid.types.ts";
 export function uncountedExportWatts(
   modelledExportW: number,
   readingShortfallW: number,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): number {
   if (modelledExportW <= 0) return 0;
   const readingW = Math.max(0, modelledExportW - readingShortfallW);
@@ -37,7 +37,7 @@ export function uncountedExportWatts(
 export function feedReadingShortfallWatts(
   feedLimitW: number,
   ratingHeadroomW: number,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): number {
   const modelledW = Math.max(0, Math.min(feedLimitW, ratingHeadroomW));
   const readingW = Math.max(0, Math.min(feedLimitW - calibration.feed_in_setpoint_shortfall_watts, ratingHeadroomW));
@@ -53,7 +53,7 @@ export function feedReadingShortfallWatts(
 export function passThroughExtraImportWatts(
   importedW: number,
   slotDemandW: number,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): number {
   const importingShare = slotDemandW > importedW ? importedW / slotDemandW : 1;
   return extraImportWatts(importedW / importingShare, importingShare, "Idle", calibration);
@@ -68,7 +68,7 @@ export function extraImportWatts(
   importingW: number,
   importingShare: number,
   converterDirection: ConverterDirection,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): number {
   if (importingW <= 0 || importingShare <= 0) return 0;
   return importingShare * meterImportExcessWatts(importingW, converterDirection, calibration);

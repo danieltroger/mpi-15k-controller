@@ -3,7 +3,7 @@
  * ones, so the live store, the ws and the MQTT → InfluxDB feed all carry them. Pure: the caller passes the
  * calibration. The raw fields are never touched.
  */
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import type { DecodedFields, DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
 import { meterEquivalentGrid } from "./meterEquivalentGrid.ts";
 import type {
@@ -23,7 +23,7 @@ export const METER_EQUIVALENT_GRID_FIELD_NAMES = [
  */
 export function withMeterEquivalentGridFields(
   round: DecodedRound,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): { round: DecodedRound; unmappable: string | undefined } {
   if (round.command !== "PS") return { round, unmappable: undefined };
   const reading = gridReadingOfFields(round.fields);
@@ -37,12 +37,23 @@ export function withMeterEquivalentGridFields(
   return { round: { ...round, fields: { ...round.fields, ...derivedFields } }, unmappable: undefined };
 }
 
-/** The grid reading in a PS round's fields, or why there is none */
+/**
+ * The grid reading in a PS round's fields, or why there is none. The total is only the phase sum once
+ * fixMpiAcInputFields has repaired it, which it does only with all three phases and the line direction in the
+ * round: without them a total ≥ 10 kW can be the firmware's frozen +7937 while selling, which would map to a
+ * ~8 kW import. So such a round isn't mapped at all.
+ */
 export function gridReadingOfFields(fields: DecodedFields): InverterGridReading | string {
   const phaseSumWatts = fields.ac_input_total_active_power;
   const converterDirection = fields["dc/ac_power_direction"];
   if (typeof phaseSumWatts !== "number") {
     return `ac_input_total_active_power is ${JSON.stringify(phaseSumWatts)}, not a number`;
+  }
+  for (const repairInput of REPAIR_INPUT_FIELDS) {
+    const value = fields[repairInput.name];
+    if (typeof value !== repairInput.type) {
+      return `${repairInput.name} is ${JSON.stringify(value)}, so the total can't have been repaired`;
+    }
   }
   if (!isConverterDirection(converterDirection)) {
     return `dc/ac_power_direction is ${JSON.stringify(converterDirection)}, not a known direction`;
@@ -53,6 +64,14 @@ export function gridReadingOfFields(fields: DecodedFields): InverterGridReading 
 export function isConverterDirection(value: unknown): value is ConverterDirection {
   return value === "DC to AC" || value === "AC to DC" || value === "Idle";
 }
+
+/** What fixMpiAcInputFields (pi17Decode.ts) needs to turn the firmware's total into the phase sum */
+const REPAIR_INPUT_FIELDS = [
+  { name: "ac_input_active_power_r", type: "number" },
+  { name: "ac_input_active_power_s", type: "number" },
+  { name: "ac_input_active_power_t", type: "number" },
+  { name: "line_power_direction", type: "string" },
+] as const;
 
 function roundToTenth(watts: number): number {
   return Math.round(watts * 10) / 10;

@@ -16,12 +16,12 @@
  * inverter's own measurement (the grid-amps guards, the buy-window step-down, the plausibility gate, stuck
  * detection, the hold breaker guard, the measured feed-in ramp seed) keep reading the raw fields.
  */
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import type { ConverterDirection, InverterGridReading, MeterEquivalentGrid } from "./meterEquivalentGrid.types.ts";
 
 export function meterEquivalentGrid(
   reading: InverterGridReading,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): MeterEquivalentGrid {
   const meterNetImportWatts = meterNetImportWattsOf(reading, calibration);
   return {
@@ -31,7 +31,7 @@ export function meterEquivalentGrid(
 }
 
 /** The meter's net import for a reading (W; negative = exporting) */
-export function meterNetImportWattsOf(reading: InverterGridReading, calibration: MeterCalibrationConfig): number {
+export function meterNetImportWattsOf(reading: InverterGridReading, calibration: MeterCalibration): number {
   const phaseSumWatts = reading.phase_sum_watts;
   if (phaseSumWatts === 0) return 0;
   if (phaseSumWatts > 0) {
@@ -45,7 +45,7 @@ export function meterNetImportWattsOf(reading: InverterGridReading, calibration:
 export function meterImportExcessWatts(
   importWatts: number,
   converterDirection: ConverterDirection,
-  calibration: MeterCalibrationConfig
+  calibration: MeterCalibration
 ): number {
   const drawWatts =
     converterDirection === "Idle"
@@ -55,6 +55,6 @@ export function meterImportExcessWatts(
 }
 
 /** How much less than an export of `exportWatts` (> 0, as the inverter reads it) the meter counts */
-export function meterExportShortfallWatts(exportWatts: number, calibration: MeterCalibrationConfig): number {
+export function meterExportShortfallWatts(exportWatts: number, calibration: MeterCalibration): number {
   return calibration.export_draw_watts + calibration.export_watts_per_kw_squared * (exportWatts / 1000) ** 2;
 }

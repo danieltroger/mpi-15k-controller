@@ -11,7 +11,7 @@ import { DEFAULT_METER_CALIBRATION, IDENTITY_METER_CALIBRATION } from "../grid/m
 import { meterExportShortfallWatts } from "../grid/meterEquivalentGrid.ts";
 import { SLOT_MS } from "./planner.ts";
 import { baseKnobs, check, finishSelftest, testDayStartMs } from "./plannerSelftestFixtures.ts";
-import type { MeterCalibrationConfig } from "../config/config.types.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
 import type { PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 import { simulate } from "./simulate.ts";
 import {
@@ -30,7 +30,7 @@ type SlotSetup = { pvW?: number; houseW?: number; sellW?: number; buyW?: number 
 /** One dark-ish 15-min slot at SPOT, the battery at `socPercent`, run at the given calibration */
 function simulateSlot(
   setup: SlotSetup,
-  calibration: MeterCalibrationConfig,
+  calibration: MeterCalibration,
   { socPercent = 60, knobs = {} }: { socPercent?: number; knobs?: Partial<PlannerKnobs> } = {}
 ): SimResult {
   const slot: Slot = {

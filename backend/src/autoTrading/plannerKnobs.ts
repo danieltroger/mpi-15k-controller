@@ -7,7 +7,7 @@
  */
 import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
-import { correctedMeterCalibration } from "../grid/correctedMeterCalibration.ts";
+import { plannerMeterCalibration } from "../grid/correctedMeterCalibration.ts";
 import { type BoundedPlannerKnobName, effectivePlannerKnob } from "./plannerKnobBounds.ts";
 import { effectiveTerminalValueMode, effectiveTerminalValueMonths } from "./terminalValue.ts";
 import type { PlannerKnobs } from "./planner.types.ts";
@@ -63,7 +63,7 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     hold_bridge_minutes: boundedTradingKnob("hold_bridge_minutes", tradingConfig.hold_bridge_minutes),
     runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
-    meter_calibration: correctedMeterCalibration(cfg.meter_calibration),
+    meter_calibration: plannerMeterCalibration(cfg.meter_calibration),
   };
 }
 
