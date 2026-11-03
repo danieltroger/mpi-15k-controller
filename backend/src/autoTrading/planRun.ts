@@ -62,14 +62,17 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
     if (ctx.flags.aborted) return "aborted";
 
     const plannedSoc = soc;
-    // Outside the schedule lock: a new day's price history may need fetching. Every trigger (daily,
-    // opportunistic, guard re-plan) estimates it the same way from the same cached days, so a re-plan
-    // values the stock the daily plan bought like the daily plan did
+    // Outside the schedule lock: a new day's price history (and for "forecast" the weather) may need
+    // fetching. Every trigger (daily, opportunistic, guard re-plan) estimates it the same way from the same
+    // cached inputs, so a re-plan values the stock the daily plan bought like the daily plan did
     const configBeforeLock = untrack(ctx.config);
     const expectedSpot = await expectedSpotForPlan(
       { ...configBeforeLock.automatic_trading, ...plannerKnobsFromConfig(configBeforeLock) },
-      Date.now()
+      { nowMs: Date.now(), publishedSlots: prices.slots }
     );
+    // The estimate can take the trailing fetch plus the forecast's wait budget (30–120 s): trading switched off
+    // meanwhile must not still get this plan's windows written
+    if (ctx.flags.aborted) return "aborted";
     const summary = await withScheduleLock(ctx, async () => {
       // Re-read inside the lock: another plan/guard may have written config while we awaited above
       const freshCfg = untrack(ctx.config);
@@ -113,6 +116,7 @@ export async function runPlan(ctx: TraderCtx, options: RunPlanOptions): Promise<
         projection: result.projection,
         notes: result.notes,
         soc_series: result.socSeries,
+        expected_spot: input.expectedSpot,
         windows: [...result.sells, ...result.buys].map(window => ({
           start: new Date(window.startMs).toISOString(),
           end: new Date(window.endMs).toISOString(),

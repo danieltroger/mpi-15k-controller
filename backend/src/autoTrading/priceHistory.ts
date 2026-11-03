@@ -2,8 +2,9 @@
  * Daily mean spot prices of past days, for the trailing expected spot (expectedSpot.ts). A published day
  * never changes, so each one is fetched once and kept in memory: a plan only fetches the days it hasn't
  * seen yet (one new day per day), and days older than the longest trailing window are dropped. A failed
- * fetch isn't cached; a later plan retries it, but not within the retry interval after a failure, and each
- * failing day is warned about once (and its recovery logged), not on every retry.
+ * fetch isn't cached; a later plan retries it, but not within the retry interval after a failure (per backoff
+ * group: the price outlook's 30-day window keeps its own), and each failing day is warned about once (and its
+ * recovery logged), not on every retry.
  */
 import { logLog, warnLog } from "../utilities/logging.ts";
 import { PLANNER_KNOB_BOUNDS } from "./plannerKnobBounds.ts";
@@ -20,6 +21,11 @@ export type DailyMeanSpotsRequest = {
   retryAfterFailureMs: number;
   /** One day's 15-min prices, [] when the API has none (priceService.fetchPriceSlotsForDate) */
   fetchDaySlots: (area: string, date: string) => Promise<PriceSlot15[]>;
+  /**
+   * Callers whose failures shouldn't hold each other's new days back keep separate backoffs (the cached days
+   * stay shared): the price outlook's 30-day window apart from the trailing estimate's. Default: one shared.
+   */
+  backoffGroup?: string;
 };
 
 /**
@@ -33,8 +39,11 @@ type AreaHistory = {
   meanByDate: Map<string, number>;
   /** Why each currently failing date failed, warned about once */
   failingDates: Map<string, string>;
-  lastFailureAtMs: number | undefined;
+  /** Per backoff group: when its last fetch had a failure */
+  lastFailureAtMsByGroup: Map<string, number>;
 };
+
+const DEFAULT_BACKOFF_GROUP = "shared";
 
 const historyByArea = new Map<string, AreaHistory>();
 
@@ -47,15 +56,19 @@ export async function dailyMeanSpots(request: DailyMeanSpotsRequest): Promise<{
   failure: string | undefined;
 }> {
   const { area, dates, nowMs, retryAfterFailureMs, fetchDaySlots } = request;
+  const backoffGroup = request.backoffGroup ?? DEFAULT_BACKOFF_GROUP;
   const history = areaHistory(area);
   const uncachedDates = dates.filter(date => !history.meanByDate.has(date));
-  const retryAtMs = history.lastFailureAtMs === undefined ? undefined : history.lastFailureAtMs + retryAfterFailureMs;
+  const lastFailureAtMs = history.lastFailureAtMsByGroup.get(backoffGroup);
+  const retryAtMs = lastFailureAtMs === undefined ? undefined : lastFailureAtMs + retryAfterFailureMs;
   const inBackoff = retryAtMs !== undefined && nowMs < retryAtMs;
   if (uncachedDates.length && !inBackoff) {
     const fetched = await mapWithConcurrency(uncachedDates, MAX_CONCURRENT_DAY_FETCHES, date =>
       fetchDailyMean(area, date, fetchDaySlots)
     );
-    recordFetchedDays(area, history, fetched, nowMs);
+    recordFetchedDays(area, history, fetched);
+    if (fetched.some(day => "error" in day)) history.lastFailureAtMsByGroup.set(backoffGroup, nowMs);
+    else history.lastFailureAtMsByGroup.delete(backoffGroup);
   }
   pruneDaysOutsideAnyWindow(history, nowMs);
   const means = dates.flatMap(date => {
@@ -72,8 +85,7 @@ export async function dailyMeanSpots(request: DailyMeanSpotsRequest): Promise<{
 function recordFetchedDays(
   area: string,
   history: AreaHistory,
-  fetched: (DailyMeanSpot | { date: string; error: string })[],
-  nowMs: number
+  fetched: (DailyMeanSpot | { date: string; error: string })[]
 ) {
   const newlyFailing: string[] = [];
   for (const day of fetched) {
@@ -85,7 +97,6 @@ function recordFetchedDays(
       history.failingDates.set(day.date, day.error);
     }
   }
-  history.lastFailureAtMs = fetched.some(day => "error" in day) ? nowMs : undefined;
   if (newlyFailing.length) {
     warnLog(`Price history: no ${area} prices for ${newlyFailing.join("; ")} — retried by later plans`);
   }
@@ -118,7 +129,7 @@ function pruneDaysOutsideAnyWindow(history: AreaHistory, nowMs: number) {
 function areaHistory(area: string): AreaHistory {
   let history = historyByArea.get(area);
   if (!history) {
-    history = { meanByDate: new Map(), failingDates: new Map(), lastFailureAtMs: undefined };
+    history = { meanByDate: new Map(), failingDates: new Map(), lastFailureAtMsByGroup: new Map() };
     historyByArea.set(area, history);
   }
   return history;

@@ -83,6 +83,10 @@ export const default_config: Config = {
     terminal_value_trailing_days: PLANNER_KNOB_BOUNDS.terminal_value_trailing_days.defaultValue,
     terminal_value_min_saving_sek_per_kwh: PLANNER_KNOB_BOUNDS.terminal_value_min_saving_sek_per_kwh.defaultValue,
     terminal_value_months: DEFAULT_TERMINAL_VALUE_MONTHS,
+    terminal_value_forecast_max_deviation_sek:
+      PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_deviation_sek.defaultValue,
+    terminal_value_forecast_max_age_hours: PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_age_hours.defaultValue,
+    terminal_value_forecast_wait_seconds: PLANNER_KNOB_BOUNDS.terminal_value_forecast_wait_seconds.defaultValue,
     sell_ramp_minutes: 10,
     min_window_minutes: 15,
     fragmentation_tolerance_sek_per_window: PLANNER_KNOB_BOUNDS.fragmentation_tolerance_sek_per_window.defaultValue,

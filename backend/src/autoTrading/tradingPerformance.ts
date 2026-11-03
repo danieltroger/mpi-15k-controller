@@ -1,5 +1,6 @@
 import type Influx from "influx";
 import { errorLog, logLog } from "../utilities/logging.ts";
+import { stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
 import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
@@ -24,11 +25,6 @@ type FeeKnobs = Pick<PlannerKnobs, "sell_bonus_sek_per_kwh" | "buy_surcharges_se
 
 /** Guards against the startup catch-up and a daily run settling the same day concurrently. */
 let settlementInFlight = false;
-
-/** A local day (Europe/Stockholm) as YYYY-MM-DD. */
-export function localDateStr(ms: number): string {
-  return new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
-}
 
 /**
  * Net grid revenue from per-slot realized grid power + that slot's spot price. Pure — same fee
@@ -67,12 +63,12 @@ export function computeRealizedRevenue(
  */
 export function captureForecastLog(state: AutoTraderState, input: PlannerInput, sells: PlannedWindow[]) {
   const log = state.forecast_log;
-  const todayStr = localDateStr(input.nowMs);
+  const todayStr = stockholmDateOf(input.nowMs);
   const horizonEndMs = input.prices.length ? input.prices[input.prices.length - 1].startMs + SLOT_MS : input.nowMs;
   const perDay = new Map<string, { pvKwh: number; houseKwh: number; sellKwh: number }>();
   for (let hourMs = Math.floor(input.nowMs / 3600_000) * 3600_000; hourMs < horizonEndMs; hourMs += 3600_000) {
     const midHourMs = hourMs + 1800_000;
-    const date = localDateStr(midHourMs);
+    const date = stockholmDateOf(midHourMs);
     if (date <= todayStr) continue; // today is partial from nowMs; its full forecast was captured yesterday
     const day = perDay.get(date) ?? { pvKwh: 0, houseKwh: 0, sellKwh: 0 };
     day.pvKwh +=
@@ -81,7 +77,7 @@ export function captureForecastLog(state: AutoTraderState, input: PlannerInput, 
     perDay.set(date, day);
   }
   for (const window of sells) {
-    const day = perDay.get(localDateStr((window.startMs + window.endMs) / 2));
+    const day = perDay.get(stockholmDateOf((window.startMs + window.endMs) / 2));
     if (day) day.sellKwh += window.expectedKwh;
   }
   for (const [date, day] of perDay) {
@@ -91,7 +87,7 @@ export function captureForecastLog(state: AutoTraderState, input: PlannerInput, 
       planned_sell_kwh: round1(day.sellKwh),
     };
   }
-  const cutoff = localDateStr(input.nowMs - 7 * 24 * 3600_000);
+  const cutoff = stockholmDateOf(input.nowMs - 7 * 24 * 3600_000);
   state.forecast_log = Object.fromEntries(Object.entries(log).filter(([date]) => date >= cutoff));
 }
 
@@ -109,10 +105,10 @@ export async function settleRecentDays(
   if (!influxClient || settlementInFlight) return;
   settlementInFlight = true;
   try {
-    const today = localDateStr(Date.now());
+    const today = stockholmDateOf(Date.now());
     const candidates: string[] = [];
     for (let daysAgo = 3; daysAgo >= 1; daysAgo--) {
-      const date = localDateStr(Date.now() - daysAgo * 24 * 3600_000);
+      const date = stockholmDateOf(Date.now() - daysAgo * 24 * 3600_000);
       if (date >= today) continue; // only fully-completed days
       if (state.last_settled_date && date <= state.last_settled_date) continue;
       candidates.push(date);

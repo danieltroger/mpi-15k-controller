@@ -20,7 +20,7 @@ import type { PlannerInput, PlannerKnobs } from "./planner.types.ts";
 export const DEFAULT_TERMINAL_VALUE_MONTHS = "10,11,12,1,2,3";
 
 /** Every source terminal_value_mode may name; expectedSpot.ts has an estimator for each */
-const EXPECTED_SPOT_SOURCES: Record<ExpectedSpotSource, true> = { trailing: true };
+const EXPECTED_SPOT_SOURCES: Record<ExpectedSpotSource, true> = { trailing: true, forecast: true };
 
 export type TerminalValuation = {
   /** p̂, SEK/kWh spot: the unpriced tail is priced at it too */

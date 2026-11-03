@@ -103,6 +103,38 @@ const MINUTE_MS = 60_000;
   );
 }
 
+// ---------- Backoff groups: the outlook's failing days don't hold back the trailing estimate's new day ----------
+{
+  const fetchedDates: string[] = [];
+  const fetchFailingOn28th = async (area: string, date: string): Promise<PriceSlot15[]> => {
+    fetchedDates.push(date);
+    if (date === "2026-10-28") throw new Error("connect timeout");
+    return [{ startMs: 0, spot: 1 }];
+  };
+  const request = (dates: string[], nowMs: number, backoffGroup?: string): DailyMeanSpotsRequest => ({
+    area: "NO1",
+    dates,
+    nowMs,
+    retryAfterFailureMs: 15 * MINUTE_MS,
+    fetchDaySlots: fetchFailingOn28th,
+    backoffGroup,
+  });
+  await dailyMeanSpots(request(["2026-10-28"], 0, "price outlook"));
+  fetchedDates.length = 0;
+  const trailingDay = await dailyMeanSpots(request(["2026-10-27"], MINUTE_MS));
+  const trailingFetched = [...fetchedDates];
+  fetchedDates.length = 0;
+  const outlookAgain = await dailyMeanSpots(request(["2026-10-26", "2026-10-28"], 2 * MINUTE_MS, "price outlook"));
+  check(
+    "history: a group's failure backs off only that group (the cached days stay shared)",
+    JSON.stringify(trailingFetched) === JSON.stringify(["2026-10-27"]) &&
+      !trailingDay.failure &&
+      fetchedDates.length === 0 &&
+      !!outlookAgain.failure?.includes("retrying after"),
+    `(the default group fetched ${trailingFetched.join(", ")}; the outlook group ${fetchedDates.length ? `fetched ${fetchedDates.join(", ")}` : "backed off"})`
+  );
+}
+
 // ---------- A failing day is warned about once, not on every retry ----------
 {
   const warnings: string[] = [];

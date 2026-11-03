@@ -1,4 +1,4 @@
-import { addDays, stockholmDateOf } from "./priceOutlookCalendar.ts";
+import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { OUTLOOK_TRAILING_DAYS } from "./priceOutlookCoefficients.ts";
 import type { PriceSlot15 } from "./planner.types.ts";
 

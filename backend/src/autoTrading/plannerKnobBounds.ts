@@ -12,13 +12,16 @@ export type BoundedPlannerKnobName = keyof Pick<
   | "terminal_value_scale"
   | "terminal_value_trailing_days"
   | "terminal_value_min_saving_sek_per_kwh"
+  | "terminal_value_forecast_max_deviation_sek"
+  | "terminal_value_forecast_max_age_hours"
+  | "terminal_value_forecast_wait_seconds"
 >;
 
 export type PlannerKnobBounds = {
   defaultValue: number;
   min: number;
   max: number;
-  unit: "W" | "SEK" | "×" | "days";
+  unit: "W" | "SEK" | "×" | "days" | "h" | "s";
   step: number;
 };
 
@@ -51,6 +54,21 @@ export const PLANNER_KNOB_BOUNDS = {
   // keeping energy and in the averting blocks. At 1 it only stocks up on an outsized gap (≈0 SEK spot against a
   // ~1.5 SEK week). Past 2 it never stocks up.
   terminal_value_min_saving_sek_per_kwh: { defaultValue: 1, min: 0, max: 2, unit: "SEK", step: 0.05 },
+  // terminal_value_mode "forecast" (expectedSpotForecast.ts). The outlook works in log(price + 0.3), so a
+  // dear D+1 and a big swing in wind or temperature can land far from any recent price. Out of sample
+  // (2025-10 → 2026-10) it strayed at most 1.01 SEK from the 7-day mean (99 % within 0.79). In the backtest
+  // a 0.75–1 SEK band moved no period's cost by more than 0.1 SEK, while 0.5 cost 13–15 SEK in winter 25/26
+  // and 0.25 lost most of the gain: 1 only stops an outlier. 0 = never leave the trailing mean (the outlook is
+  // then only reported).
+  terminal_value_forecast_max_deviation_sek: { defaultValue: 1, min: 0, max: 3, unit: "SEK", step: 0.05 },
+  // The weather forecast's age before a plan fetches a new one; past it, a plan whose refresh fails falls back to
+  // the trailing mean. open-meteo's models update every 1–6 h. The out-of-sample skill was measured on forecasts
+  // issued the day before, so a few hours cost nothing; 24 h is a forecast a full day old.
+  terminal_value_forecast_max_age_hours: { defaultValue: 6, min: 1, max: 24, unit: "h", step: 1 },
+  // How long a plan waits for the outlook's inputs before planning on the trailing mean (the fetch carries on
+  // for the next plan). One open-meteo call, plus up to ~22 price-history days after a restart; on a CPU-pegged
+  // Zero 2 W a TLS connect alone can take seconds. Each request has its own 60 s timeout.
+  terminal_value_forecast_wait_seconds: { defaultValue: 30, min: 5, max: 120, unit: "s", step: 5 },
 } as const satisfies Record<BoundedPlannerKnobName, PlannerKnobBounds>;
 
 /**

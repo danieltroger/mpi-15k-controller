@@ -40,6 +40,18 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
       "terminal_value_months",
       effectiveTerminalValueMonths(tradingConfig.terminal_value_months)
     ),
+    terminal_value_forecast_max_deviation_sek: boundedKnobValue(
+      "terminal_value_forecast_max_deviation_sek",
+      tradingConfig.terminal_value_forecast_max_deviation_sek
+    ),
+    terminal_value_forecast_max_age_hours: boundedKnobValue(
+      "terminal_value_forecast_max_age_hours",
+      tradingConfig.terminal_value_forecast_max_age_hours
+    ),
+    terminal_value_forecast_wait_seconds: boundedKnobValue(
+      "terminal_value_forecast_wait_seconds",
+      tradingConfig.terminal_value_forecast_wait_seconds
+    ),
     runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
   };

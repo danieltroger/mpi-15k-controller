@@ -360,7 +360,7 @@ const UNIT_TAIL_SPOT: HorizonValuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
     ...idleHoursInput(50),
     nowMs: novemberNoonMs,
     expectedSpot: trailingEstimate,
-    knobs: { ...baseKnobs, terminal_value_mode: "forecast" as PlannerKnobs["terminal_value_mode"] },
+    knobs: { ...baseKnobs, terminal_value_mode: "oracle" as PlannerKnobs["terminal_value_mode"] },
   });
   check("terminal season: an unknown mode counts as off", !unknownMode.valuation && !unknownMode.unavailable);
 }
@@ -392,9 +392,11 @@ const UNIT_TAIL_SPOT: HorizonValuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
     "terminal mode: a known mode passes, an unknown one is corrected to off",
     effectiveTerminalValueMode("trailing").value === "trailing" &&
       !effectiveTerminalValueMode("trailing").correction &&
-      effectiveTerminalValueMode("forecast").value === "off" &&
-      !!effectiveTerminalValueMode("forecast").correction,
-    `(${effectiveTerminalValueMode("forecast").correction})`
+      effectiveTerminalValueMode("forecast").value === "forecast" &&
+      !effectiveTerminalValueMode("forecast").correction &&
+      effectiveTerminalValueMode("oracle").value === "off" &&
+      !!effectiveTerminalValueMode("oracle").correction,
+    `(${effectiveTerminalValueMode("oracle").correction})`
   );
 }
 

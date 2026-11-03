@@ -14,6 +14,9 @@ const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: numbe
   { knobName: "terminal_value_scale", inBounds: 1.0, tooLow: -0.2, tooHigh: 2 },
   { knobName: "terminal_value_trailing_days", inBounds: 14, tooLow: 0, tooHigh: 90 },
   { knobName: "terminal_value_min_saving_sek_per_kwh", inBounds: 0.25, tooLow: -0.1, tooHigh: 3 },
+  { knobName: "terminal_value_forecast_max_deviation_sek", inBounds: 0.5, tooLow: -0.25, tooHigh: 10 },
+  { knobName: "terminal_value_forecast_max_age_hours", inBounds: 3, tooLow: 0, tooHigh: 48 },
+  { knobName: "terminal_value_forecast_wait_seconds", inBounds: 60, tooLow: 1, tooHigh: 600 },
 ];
 
 for (const { knobName, inBounds, tooLow, tooHigh } of CASES) {

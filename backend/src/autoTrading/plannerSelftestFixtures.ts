@@ -45,6 +45,10 @@ export const baseKnobs: PlannerKnobs = {
   terminal_value_trailing_days: 7,
   terminal_value_months: "10,11,12,1,2,3",
   terminal_value_min_saving_sek_per_kwh: 0.1,
+  // Read by the "forecast" expected spot only, never by the planner
+  terminal_value_forecast_max_deviation_sek: 1,
+  terminal_value_forecast_max_age_hours: 6,
+  terminal_value_forecast_wait_seconds: 30,
 };
 
 /** Every month: a terminal-value scenario is in season whatever day the selftest runs on */

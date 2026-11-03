@@ -1,4 +1,5 @@
 import type { AutomaticTradingConfig, ExpectedSpotSource } from "../config/config.types.ts";
+import type { ForecastSpotSummary } from "./expectedSpotForecast.types.ts";
 
 export type PriceSlot15 = { startMs: number; spot: number };
 export type FixedWindow = { startMs: number; endMs: number; watts: number };
@@ -34,6 +35,9 @@ export type PlannerKnobs = Pick<
   | "terminal_value_trailing_days"
   | "terminal_value_months"
   | "terminal_value_min_saving_sek_per_kwh"
+  | "terminal_value_forecast_max_deviation_sek"
+  | "terminal_value_forecast_max_age_hours"
+  | "terminal_value_forecast_wait_seconds"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
   runtime_soc_floor_percent: number;
@@ -91,9 +95,12 @@ export type PlannerInput = {
  */
 export type ExpectedSpotEstimate = {
   expectedSpot: number | undefined;
+  /** Where the value came from: "trailing" also when the "forecast" mode fell back to it */
   source: ExpectedSpotSource;
   /** What the value is ("7-day mean spot"), or why there is none — quoted in the plan notes */
   detail: string;
+  /** terminal_value_mode "forecast" only: the outlook the value came from, or why the trailing mean stood in */
+  forecast?: ForecastSpotSummary;
 };
 /**
  * How simulate prices what lies past the published prices. Every trial of one plan shares one, so

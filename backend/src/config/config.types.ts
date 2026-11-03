@@ -2,10 +2,12 @@ import type { ElpatronMode } from "../sharedTypes.ts";
 
 /**
  * Where the planner's expected spot price after the priced horizon comes from (autoTrading/expectedSpot.ts):
- * "trailing" = the mean daily-mean spot of the last terminal_value_trailing_days complete days. A
- * weather-based "forecast" source is meant to join it.
+ * "trailing" = the mean daily-mean spot of the last terminal_value_trailing_days complete days;
+ * "forecast" = the SE3 price outlook's predicted mean of D+2…D+4 from the weather forecast
+ * (autoTrading/expectedSpotForecast.ts), held near the trailing mean, which also stands in whenever
+ * the outlook is unavailable.
  */
-export type ExpectedSpotSource = "trailing";
+export type ExpectedSpotSource = "trailing" | "forecast";
 /** automatic_trading.terminal_value_mode: off, or the source of the expected spot the terminal value is priced at */
 export type TerminalValueMode = "off" | ExpectedSpotSource;
 
@@ -70,6 +72,18 @@ export type AutomaticTradingConfig = {
    * with a warning.
    */
   terminal_value_months: string;
+  /**
+   * terminal_value_mode "forecast": how far (SEK/kWh) the outlook's expected spot may stray from the
+   * trailing one; beyond it the value is held at the edge. Bounds in plannerKnobBounds.ts, clamped.
+   */
+  terminal_value_forecast_max_deviation_sek: number;
+  /** "forecast": the oldest weather forecast a plan uses before fetching a new one. Bounds in plannerKnobBounds.ts, clamped. */
+  terminal_value_forecast_max_age_hours: number;
+  /**
+   * "forecast": how long a plan waits for the outlook's inputs (the weather forecast and the missing days
+   * of the 30-day price history) before falling back to the trailing mean. Bounds in plannerKnobBounds.ts, clamped.
+   */
+  terminal_value_forecast_wait_seconds: number;
   /**
    * Minutes the inverter takes to ramp grid feed-in from 0 to the full inverter_max_ac_output_watts
    * (grid safety). It's a rate: a smaller target is reached proportionally sooner, and a mid-run
