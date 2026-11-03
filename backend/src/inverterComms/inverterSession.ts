@@ -312,7 +312,8 @@ async function exchangeQuery(state: SessionState, query: RoundQuery): Promise<Qu
   if ("closed" in result || state.disposed) return { kind: "unanswered" };
   if ("failed" in result) {
     // A dead link shows in GS/PS failing too, so a status query's own failure is only a log line;
-    // one that keeps failing is backed off and reported once (statusPollRound.ts, and DM: machineModelPolling.ts)
+    // one that keeps failing is backed off (statusPollRound.ts reports that once; DM, machineModelPolling.ts,
+    // errorLogs each back-off: a P2 about every 33 min until grid_off.poll_machine_model is turned off)
     if (query.statusQuery || command === "DM") warnLog("Inverter", description, "failed:", result.failed);
     else reportTransactFailure(state, description, result.failed);
     return { kind: "unanswered" };

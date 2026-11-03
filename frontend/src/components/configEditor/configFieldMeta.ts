@@ -1127,19 +1127,19 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["grid_off", "min_seconds_between_switches"],
         "Minimum time between switches",
-        `Switching off the grid is refused this soon after the previous switch either way (from the page or a guard), so neither a double click nor a script on the network can cycle the grid relay. Back to normal (050) is never refused. Shorter allows quicker retries while testing. ${describeGridOffSettingBounds("min_seconds_between_switches")}`,
+        `Switching off the grid is refused this soon after the previous switch either way (from the page or a guard), so neither a double click nor a script on the network can cycle the grid relay. Back to normal (050) is never refused. Shorter allows quicker retries while testing. Applies live, from the next request. ${describeGridOffSettingBounds("min_seconds_between_switches")}`,
         gridOffSettingInput("min_seconds_between_switches")
       ),
       f(
         ["grid_off", "stuck_p1_after_minutes"],
         "Page when stuck off the grid after",
-        `If the inverter still reads 151 this long after normal (050) was wanted (DM050 refused or never applied, or found at startup), a P1 pages through Do Not Disturb, and from then on buying, the night feed and the grid alerts run as if the relay were closed, so a missed buy window alerts too. DM050 is resent 1, 2 and 5 min after the previous one, then every 10 min. Shorter pages on a slow commit; longer can let a buy window go by. ${describeGridOffSettingBounds("stuck_p1_after_minutes")}`,
+        `If the inverter still reads 151 this long after normal (050) was wanted (DM050 refused or never applied, or found at startup), a P1 pages through Do Not Disturb, and from then on buying, the night feed and the grid alerts run as if the relay were closed, so a missed buy window alerts too. DM050 is resent 1, 2 and 5 min after the previous one, then every 10 min. Shorter pages on a slow commit; longer can let a buy window go by. Applies live (the guards re-check every 10 s). ${describeGridOffSettingBounds("stuck_p1_after_minutes")}`,
         gridOffSettingInput("stuck_p1_after_minutes")
       ),
       f(
         ["grid_off", "poll_machine_model"],
         "Read the machine model (DM)",
-        "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Applies from the next settings round."
+        "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Off also disables the startup fail-safe: it needs the DM readback, so a 151 left behind by a crash or a kill isn't switched back (check the inverter's display). Applies from the next settings round."
       ),
     ],
   },

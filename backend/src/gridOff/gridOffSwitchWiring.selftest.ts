@@ -285,7 +285,7 @@ function windowStartingIn(harness: Harness, minutes: number) {
       inForceAfterPage = harness.gridOffSwitch.gridOffInForce();
     }
   }
-  const stuckPages = harness.raised.filter(alert => alert.key === "grid-off-stuck");
+  const stuckPages = harness.raised.filter(alert => /^grid-off-stuck:\d+$/.test(alert.key));
   check(
     "a P1 after stuck_p1_after_minutes (3 min), once",
     stuckPages.length === 1 && stuckPages[0]!.severity === "P1" && pagedAtSeconds === 180,
@@ -299,13 +299,18 @@ function windowStartingIn(harness: Harness, minutes: number) {
     `${sentCount(harness, "DM050")} sends`
   );
   check(
+    "the P1 is keyed by its episode's onset (a second episode isn't swallowed by the cooldown)",
+    stuckPages[0]?.key === `grid-off-stuck:${START_MS}`,
+    stuckPages[0]?.key
+  );
+  check(
     "the shutdown switch-back still stands while stuck",
     process.listenerCount("SIGTERM") === signalListenersBefore + 1
   );
   harness.readBack("050");
   check(
     "reading 050 again resolves it with a P3",
-    harness.raised.some(alert => alert.key === "grid-off-stuck:resolved" && alert.severity === "P3") &&
+    harness.raised.some(alert => alert.key === `${stuckPages[0]?.key}:resolved` && alert.severity === "P3") &&
       !harness.gridOffSwitch.status().stuck_off_grid
   );
   harness.dispose();

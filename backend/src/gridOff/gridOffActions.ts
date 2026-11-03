@@ -202,6 +202,7 @@ function updateStuckTracking(
     );
     recordEvent(context, "Stuck on 151 while 050 is wanted: P1 sent, DM050 resent with back-off");
     raiseStuckOffGrid(context.raise, {
+      episodeOnsetMs: next.conditionSinceMs ?? situation.nowMs,
       stuckForMs,
       switchBackSends: context.switchBackSends.count,
       why: context.lastReconciliationReason ?? "a switch back to 050",
@@ -209,7 +210,10 @@ function updateStuckTracking(
   } else if (previous.stuck && !next.stuck && previous.conditionSinceMs !== undefined) {
     logLog("Grid off: no longer stuck — the inverter reads", describeMachineModel(situation.readbackModel));
     recordEvent(context, "No longer stuck on 151");
-    raiseStuckOffGridResolved(context.raise, situation.nowMs - previous.conditionSinceMs);
+    raiseStuckOffGridResolved(context.raise, {
+      episodeOnsetMs: previous.conditionSinceMs,
+      stuckForMs: situation.nowMs - previous.conditionSinceMs,
+    });
   }
 }
 

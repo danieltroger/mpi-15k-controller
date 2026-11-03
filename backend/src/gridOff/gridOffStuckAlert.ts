@@ -6,14 +6,25 @@
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { errorLog } from "../utilities/logging.ts";
 
-const STUCK_OFF_GRID_ALERT_KEY = "grid-off-stuck";
+/**
+ * One key per episode, by its onset: the manager's per-key cooldown (30 min, kept across restarts) must not
+ * swallow a second episode, e.g. still stuck after a controller restart
+ */
+function stuckOffGridAlertKey(episodeOnsetMs: number): string {
+  return `grid-off-stuck:${episodeOnsetMs}`;
+}
 
 export function raiseStuckOffGrid(
   raise: AlertManager["raise"],
-  { stuckForMs, switchBackSends, why }: { stuckForMs: number; switchBackSends: number; why: string }
+  {
+    episodeOnsetMs,
+    stuckForMs,
+    switchBackSends,
+    why,
+  }: { episodeOnsetMs: number; stuckForMs: number; switchBackSends: number; why: string }
 ): void {
   void raise({
-    key: STUCK_OFF_GRID_ALERT_KEY,
+    key: stuckOffGridAlertKey(episodeOnsetMs),
     severity: "P1",
     title: "Inverter stuck off the grid (Off-Grid III)",
     message:
@@ -24,9 +35,12 @@ export function raiseStuckOffGrid(
   }).catch(error => errorLog("Grid off: raising the stuck-off-grid P1 failed", error));
 }
 
-export function raiseStuckOffGridResolved(raise: AlertManager["raise"], stuckForMs: number): void {
+export function raiseStuckOffGridResolved(
+  raise: AlertManager["raise"],
+  { episodeOnsetMs, stuckForMs }: { episodeOnsetMs: number; stuckForMs: number }
+): void {
   void raise({
-    key: `${STUCK_OFF_GRID_ALERT_KEY}:resolved`,
+    key: `${stuckOffGridAlertKey(episodeOnsetMs)}:resolved`,
     severity: "P3",
     title: "Resolved: Inverter stuck off the grid",
     message: `The inverter reads 050 (normal hybrid) again, after ${Math.round(stuckForMs / 60_000)} min stuck on 151.`,
