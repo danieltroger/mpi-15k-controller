@@ -2,11 +2,19 @@
  * The planner's battery/revenue simulation core: replay a candidate schedule (per-slot sell/buy
  * setpoints, holds + fixed windows) over the forecast horizon and report revenue (with the terminal value
  * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts, holdAllocation.ts) and the
- * local search in sellConsolidation.ts, which is why it lives in its own module.
+ * local search in sellConsolidation.ts, which is why it lives in its own module. The revenue is what the utility
+ * meter will count (knobs.meter_calibration, simulatedMeterCredit.ts); the energies and the SOC stay as the
+ * inverter sees them.
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import { HOLD_CLASS_MAX_WATTS } from "./plannerKnobBounds.ts";
+import {
+  extraImportWatts,
+  feedReadingShortfallWatts,
+  passThroughExtraImportWatts,
+  uncountedExportWatts,
+} from "./simulatedMeterCredit.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
 /** A buy slot grid-charges only while the battery starts it below this share of its capacity */
@@ -20,6 +28,7 @@ export function simulate(
   valuation: HorizonValuation
 ): SimResult {
   const knobs = input.knobs;
+  const calibration = knobs.meter_calibration;
   const cap = input.capacityWh;
   const floorPlannerWh = (knobs.planner_soc_floor_percent / 100) * cap + knobs.extra_reserve_kwh * 1000;
   // While forecast PV covers the house, a forecast miss costs minutes of import instead of a
@@ -78,6 +87,9 @@ export function simulate(
         revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
         socWh = cap;
       }
+      // A hold gets no meter correction: hold_overhead_watts is the meter-level draw (~170 W measured on
+      // 2025-26 holds), and the inverter's draw is already in it, so neither the import nor a PV overflow
+      // (which nets against that import at the meter) pays it again
       importWh += holdImportWh;
       revenueSek -= (holdImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
       // A sell right after a hold ramps from nothing: the baseline feed is off during buy windows
@@ -95,27 +107,37 @@ export function simulate(
     let exportW = 0;
     let gridChargeW = 0;
     let slotImportWh = 0;
+    // The meter's view of the slot (simulatedMeterCredit.ts): how far the feed's reading sits below exportW,
+    // and what the meter counts on top of the slot's imports
+    let feedReadingShortfallW = 0;
+    let overflowW = 0;
+    let meterExtraImportW = 0;
+    const ratingHeadroomW = knobs.inverter_max_ac_output_watts - slot.houseW;
 
     if (buySetW > 0 && socWh < cap * GRID_CHARGE_UP_TO_SOC_FRACTION) {
       // AC charging: battery charges from grid, house is fed from grid too
       gridChargeW = buySetW;
-      slotImportWh +=
-        (buySetW + slot.houseW + parasiticW - Math.min(slot.pvW, buySetW + slot.houseW + parasiticW)) * slot.durationH;
+      const chargeImportW = buySetW + slot.houseW + parasiticW - Math.min(slot.pvW, buySetW + slot.houseW + parasiticW);
+      slotImportWh += chargeImportW * slot.durationH;
       boughtWh += buySetW * slot.durationH;
+      meterExtraImportW += extraImportWatts(chargeImportW, 1, "AC to DC", calibration);
     }
 
     const sellingThisSlot = sellSetW > 0 && socWh > floorRuntimeWh;
     if (sellingThisSlot) {
       // Export is limited by what battery + PV can physically supply beyond the house
       // House has first dibs on the inverter's AC output; export gets the rest of the 15 kW rating
-      const targetExportW = Math.max(0, Math.min(sellSetW, knobs.inverter_max_ac_output_watts - slot.houseW));
+      const targetExportW = Math.max(0, Math.min(sellSetW, ratingHeadroomW));
       const ramped = rampedSlotExport(reachedExportW, targetExportW, slot.durationH * 60, rampWattsPerMinute);
       exportW = ramped.averageW;
       reachedExportW = ramped.endW;
+      feedReadingShortfallW = feedReadingShortfallWatts(sellSetW, ratingHeadroomW, calibration);
     } else {
       if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + 380) {
-        // Baseline "feed when no solar" that nets out the inverter's constant grid draw
+        // Baseline "feed when no solar" that nets out the inverter's constant grid draw. It drains the battery by
+        // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts)
         exportW = knobs.baseline_feed_watts;
+        feedReadingShortfallW = feedReadingShortfallWatts(exportW, ratingHeadroomW, calibration);
       }
       // A sell that follows climbs from whatever is being fed now (the baseline feed, or nothing)
       reachedExportW = exportW;
@@ -139,6 +161,7 @@ export function simulate(
       autoExportWh += overflowInBatteryWh / knobs.charge_efficiency;
       autoExportWPerSlot[i] = Math.round(overflowInBatteryWh / knobs.charge_efficiency / slot.durationH);
       revenueSek += (overflowInBatteryWh / knobs.charge_efficiency / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
+      overflowW = overflowInBatteryWh / knobs.charge_efficiency / slot.durationH;
       socWh = cap;
     }
     if (socWh < floorEmergencyWh) {
@@ -148,6 +171,7 @@ export function simulate(
       slotImportWh += importedForHouseWh;
       shortfallImportWh += importedForHouseWh;
       socWh = floorEmergencyWh;
+      meterExtraImportW += passThroughExtraImportWatts(importedForHouseWh / slot.durationH, -netBattW, calibration);
     }
 
     const exportedWh = exportW * slot.durationH;
@@ -158,6 +182,13 @@ export function simulate(
     revenueSek += (exportedWh / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
     importWh += slotImportWh;
     revenueSek -= (slotImportWh / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
+    // Credited at what the meter counts: less of the feed and the PV let through, more on top of the imports
+    // (0 at the identity calibration). The energies above stay as the inverter sees them.
+    const uncountedExportWh =
+      uncountedExportWatts(exportW + overflowW, feedReadingShortfallW, calibration) * slot.durationH;
+    revenueSek -= (uncountedExportWh / 1000) * (spot + knobs.sell_bonus_sek_per_kwh);
+    revenueSek -=
+      ((meterExtraImportW * slot.durationH) / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
 
     const floorWh = slot.pvW > slot.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
     if (socWh < floorWh) violationWh += floorWh - socWh;

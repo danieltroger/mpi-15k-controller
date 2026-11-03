@@ -24,6 +24,7 @@ import { influxLineForField, INVERTER_MEASUREMENT_TOPIC } from "./publishInverte
 import { rawMQTTValuesSchema } from "../mqttValues/rawValuesSchema.ts";
 import { mqttValueKeys } from "../sharedTypes.ts";
 import { USB_VALUE_KEYS } from "./useInverterValues.ts";
+import { METER_EQUIVALENT_GRID_FIELD_NAMES } from "../grid/meterEquivalentGridRound.ts";
 
 const fails: string[] = [];
 function check(name: string, cond: boolean, detail = "") {
@@ -334,12 +335,15 @@ const liveDecodeNames = new Set(
 for (const name of liveDecodeNames) {
   check(`GS/PS decode name exists in rawValuesSchema: ${name}`, schemaKeys.has(name));
 }
+/** Added to each PS round after decoding (grid/meterEquivalentGridRound.ts), never decoded themselves */
+const derivedFieldNames: ReadonlySet<string> = new Set(METER_EQUIVALENT_GRID_FIELD_NAMES);
 // Schema keys that never come from GS/PS decoding, each with a reason:
 const schemaKeysNotFromDecoder = new Set([
   "currentBatteryPower", // legacy backend-published hall-sensor value (nothing consumes it from this store)
   "validity_check", // old mpp-solar CRC-error artifact — only produced by the retired daemon
   "error", // old mpp-solar error artifact
   "unknown_value_in_response_25", // surplus-token artifact; the native decoder names them the same way
+  ...derivedFieldNames,
 ]);
 for (const key of schemaKeys) {
   check(
@@ -348,7 +352,14 @@ for (const key of schemaKeys) {
   );
 }
 for (const key of mqttValueKeys) {
-  check(`ws-contract mqttValueKey decodes from GS/PS: ${key}`, liveDecodeNames.has(key));
+  check(
+    `ws-contract mqttValueKey decodes from GS/PS (or is derived from a PS round): ${key}`,
+    liveDecodeNames.has(key) || derivedFieldNames.has(key)
+  );
+}
+for (const key of derivedFieldNames) {
+  check(`derived field is in the store schema: ${key}`, schemaKeys.has(key));
+  check(`derived field never collides with a decoded name: ${key}`, !liveDecodeNames.has(key));
 }
 const settingsDecodeNames = new Set(
   [...PI17_QUERY_RESPONSE_FIELDS.GPMP, ...PI17_QUERY_RESPONSE_FIELDS.HECS, ...PI17_QUERY_RESPONSE_FIELDS.BATS]

@@ -119,7 +119,8 @@ export function AutoTraderPanel() {
               Realized {settlement().date}: exported {formatKwh(settlement().export_kwh)}, imported{" "}
               {formatKwh(settlement().import_kwh)} —{" "}
               <b class="buy-sell-config__earn">{formatSek(settlement().realized_revenue_sek, { signed: true })}</b> net
-              from the grid (inverter-meter estimate, settled {fmtTime(settlement().settled_at)}).
+              from the grid (estimated at the utility meter from the inverter's readings, settled{" "}
+              {fmtTime(settlement().settled_at)}).
             </p>
           )}
         </Show>

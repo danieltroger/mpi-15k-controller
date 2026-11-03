@@ -14,6 +14,7 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { useFromMqttProvider } from "../mqttValues/MQTTValuesProvider.ts";
 import { type AutoTraderStatus, EMPTY_STATE, loadAutoTraderState, saveAutoTraderState } from "./autoTraderState.ts";
 import { settleRecentDays } from "./tradingPerformance.ts";
+import { correctedMeterCalibration } from "../grid/correctedMeterCalibration.ts";
 import { refreshStatus, type TraderCtx, withScheduleLock } from "./traderContext.ts";
 import { reconcileOwnership } from "./scheduleOwnership.ts";
 import { runPlan, runPlanWithRecovery } from "./planRun.ts";
@@ -76,6 +77,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
           ctx.influxClient(),
           untrack(config).automatic_trading.price_area,
           untrack(config).automatic_trading,
+          correctedMeterCalibration(untrack(config).meter_calibration),
           ctx.state
         )
           .then(() => refreshStatus(ctx))
@@ -127,6 +129,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
         ctx.influxClient(),
         untrack(config).automatic_trading.price_area,
         untrack(config).automatic_trading,
+        correctedMeterCalibration(untrack(config).meter_calibration),
         ctx.state
       )
         .then(() => refreshStatus(ctx))

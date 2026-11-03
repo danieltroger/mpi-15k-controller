@@ -1,8 +1,10 @@
 /**
  * One-way MQTT feed for telegraf → InfluxDB — byte-for-byte what mpp-solar's influx2_mqtt output
  * published (topic `mpp-solar`, one Influx line-protocol message per field, tag `command=Inverter1`),
- * so telegraf config and Grafana dashboards need zero changes. The backend does NOT consume these
- * messages anymore — its own reactivity is fed directly from the serial decoder.
+ * so telegraf config and Grafana dashboards need zero changes. Each PS round also carries the two
+ * meter-equivalent grid fields (grid/meterEquivalentGridRound.ts), which land as new fields of the same
+ * measurement. The backend does NOT consume these messages anymore — its own reactivity is fed
+ * directly from the serial decoder.
  */
 import type MQTT from "async-mqtt";
 import { createEffect, type Accessor, type Resource } from "solid-js";

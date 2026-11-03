@@ -6,12 +6,17 @@ import type { ExpectedSpotEstimate, PlanProjection, SocSeriesPoint } from "./pla
  * the two sides can't drift. The runtime helpers live in autoTraderState.ts, which re-exports these.
  */
 
-/** What the forecasts predicted for one local day, captured at plan time for later settlement. */
+/**
+ * What the forecasts predicted for one local day, captured at plan time for later settlement. planned_sell_kwh
+ * is the plan's sell at the inverter, as simulate.ts reports energies: compare it with the settlement's
+ * inverter_reading_export_kwh, not with its meter-level export_kwh.
+ */
 export type DayForecast = { predicted_pv_kwh: number; predicted_house_kwh: number; planned_sell_kwh: number };
 
 /**
- * Realized figures for one settled local day, measured from the inverter's grid-side sensor
- * (see tradingPerformance.ts for the caveats vs the official billing meter).
+ * Realized figures for one settled local day. The grid figures (export_kwh, import_kwh, realized_revenue_sek)
+ * are at the utility meter, estimated from the inverter's readings through the meter calibration
+ * (tradingPerformance.ts, settlementGridPower.ts); PV and house are the inverter's own readings.
  */
 export type RealizedDay = {
   date: string;

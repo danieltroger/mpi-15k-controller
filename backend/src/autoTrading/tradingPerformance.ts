@@ -1,22 +1,28 @@
 import type Influx from "influx";
-import { errorLog, logLog } from "../utilities/logging.ts";
+import type { MeterCalibration } from "../config/config.types.ts";
+import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { SLOT_MS } from "./planner.ts";
-import type { PlannedWindow, PlannerInput, PlannerKnobs } from "./planner.types.ts";
+import type { PlannedWindow, PlannerInput, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 import { fetchPriceSlotsForDate } from "./priceService.ts";
 import { settleBacklog } from "./settlementBacklog.ts";
+import { querySettlementQuarters, type SettlementSource } from "./settlementGridPower.ts";
 import { type AutoTraderState, type DayForecast, type RealizedDay, saveAutoTraderState } from "./autoTraderState.ts";
 
 /**
  * Closes the feedback loop: after a day has fully settled, measure what actually happened at the
- * inverter's grid connection and write it next to what the planner had predicted, so forecast bias
- * and realized P&L become queryable in Grafana (InfluxDB measurement `trading_performance`) instead
- * of vanishing into projections nobody checks.
+ * grid connection and write it next to what the planner had predicted, so forecast bias and realized
+ * P&L become queryable in Grafana (InfluxDB measurement `trading_performance`) instead of vanishing
+ * into projections nobody checks.
  *
- * Caveats: figures come from the inverter's own grid-side power sensor, NOT E.ON's billing meter —
- * they'll track it closely but aren't the official settlement (E.ON's real per-15-min meter data
- * would need authenticating against their API; a possible future refinement). Only days after the
- * 2026-07-03 pi17 fix are meaningful, since earlier `ac_input_total_active_power` is
+ * The grid figures are what the utility meter would have counted (settlementGridPower.ts, calibrated
+ * against its 15-min data in 2026-11: grid/meterEquivalentGrid.ts), not the inverter's own reading,
+ * which leaves out the inverter's draw: over 2026-07-04 → 11-02 the reading understated import by 18.5 %,
+ * overstated export by 23 % and net revenue by +669 SEK (a mean daily error of 5.5 SEK); the meter
+ * equivalent is within −1.1 % / +0.7 % / +22 SEK (0.31 SEK a day), not counting 2026-10-25, when an
+ * ~11 kW grid-side load the inverter can't see ran for 4 h. The reading-based figures the settlement
+ * used before are still written alongside (inverter_reading_*). Still an estimate, not the bill. Only
+ * days after the 2026-07-03 pi17 fix are meaningful, since earlier `ac_input_total_active_power` is
  * firmware-corrupted (see the pi17 protocol patch).
  */
 
@@ -28,21 +34,21 @@ type FeeKnobs = Pick<PlannerKnobs, "sell_bonus_sek_per_kwh" | "buy_surcharges_se
 let settlementInFlight = false;
 
 /**
- * Net grid revenue from per-slot realized grid power + that slot's spot price. Pure — same fee
- * accounting as the planner's `simulate`, so realized and projected numbers are comparable.
- * `gridW` follows the inverter convention: negative = exporting to grid, positive = importing.
+ * Net grid revenue from per-slot realized import and export (mean W over the slot, each ≥ 0) + that
+ * slot's spot price. Pure — same fee accounting as the planner's `simulate`, so realized and projected
+ * numbers are comparable.
  */
 export function computeRealizedRevenue(
-  slots: { gridW: number; spot: number }[],
+  slots: { importW: number; exportW: number; spot: number }[],
   slotDurationHours: number,
   fees: FeeKnobs
 ): { export_kwh: number; import_kwh: number; revenue_sek: number } {
   let exportKwh = 0;
   let importKwh = 0;
   let revenueSek = 0;
-  for (const { gridW, spot } of slots) {
-    const slotExportKwh = (Math.max(0, -gridW) * slotDurationHours) / 1000;
-    const slotImportKwh = (Math.max(0, gridW) * slotDurationHours) / 1000;
+  for (const { importW, exportW, spot } of slots) {
+    const slotExportKwh = (exportW * slotDurationHours) / 1000;
+    const slotImportKwh = (importW * slotDurationHours) / 1000;
     exportKwh += slotExportKwh;
     importKwh += slotImportKwh;
     revenueSek +=
@@ -101,6 +107,7 @@ export async function settleRecentDays(
   influxClient: Influx.InfluxDB | undefined,
   priceArea: string,
   fees: FeeKnobs,
+  meterCalibration: MeterCalibration,
   state: AutoTraderState
 ) {
   if (!influxClient || settlementInFlight) return;
@@ -109,7 +116,8 @@ export async function settleRecentDays(
     await settleBacklog({
       today: stockholmDateOf(Date.now()),
       lastSettledDate: state.last_settled_date,
-      settleDay: date => settleTradingDay(influxClient, date, priceArea, fees, state.forecast_log[date]),
+      settleDay: date =>
+        settleTradingDay(influxClient, date, priceArea, fees, meterCalibration, state.forecast_log[date]),
       recordSettled: async (date, realized) => {
         state.last_settled_date = date;
         state.last_settlement = { ...realized, settled_at: new Date().toISOString() };
@@ -130,6 +138,7 @@ export async function settleTradingDay(
   dateStr: string,
   priceArea: string,
   fees: FeeKnobs,
+  meterCalibration: MeterCalibration,
   forecast: DayForecast | undefined
 ): Promise<RealizedDay | null> {
   try {
@@ -138,52 +147,19 @@ export async function settleTradingDay(
       logLog(`Auto trader: no historical prices for ${dateStr}, skipping settlement`);
       return null;
     }
-    const spotByStartMs = new Map(priceSlots.map(s => [s.startMs, s.spot]));
-    const dayStartMs = priceSlots[0].startMs;
-    const dayEndMs = priceSlots[priceSlots.length - 1].startMs + SLOT_MS;
-
-    // The influx client has no timeout of its own — don't let a hung query stall settlement silently
-    const rows = await Promise.race([
-      influxClient.query<{
-        time: { getNanoTime(): number };
-        grid: number | null;
-        pv1: number | null;
-        pv2: number | null;
-        house: number | null;
-      }>(
-        `SELECT mean(ac_input_total_active_power) as grid, mean(solar_input_power_1) as pv1, mean(solar_input_power_2) as pv2, mean(ac_output_total_active_power) as house FROM "mpp-solar" WHERE time >= ${dayStartMs}ms AND time < ${dayEndMs}ms GROUP BY time(15m) fill(none)`
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("InfluxDB settlement query timed out")), 60_000)
-      ),
-    ]);
-
-    const revenueSlots: { gridW: number; spot: number }[] = [];
-    let pvKwh = 0;
-    let houseKwh = 0;
-    for (const row of rows) {
-      const slotStartMs = Math.round(row.time.getNanoTime() / 1e6);
-      // PV/house are independent of grid — count them even in a slot where grid data is missing
-      pvKwh += (((row.pv1 ?? 0) + (row.pv2 ?? 0)) * 0.25) / 1000;
-      houseKwh += ((row.house ?? 0) * 0.25) / 1000;
-      const spot = spotByStartMs.get(slotStartMs);
-      if (spot === undefined || row.grid === null) continue;
-      revenueSlots.push({ gridW: row.grid, spot });
-    }
-    if (!revenueSlots.length) {
-      logLog(`Auto trader: no inverter data for ${dateStr}, skipping settlement`);
-      return null;
-    }
-
-    const { export_kwh, import_kwh, revenue_sek } = computeRealizedRevenue(revenueSlots, 0.25, fees);
-    const realized: RealizedDay = {
-      date: dateStr,
-      export_kwh,
-      import_kwh,
-      realized_revenue_sek: revenue_sek,
-      pv_kwh: round1(pvKwh),
-      house_kwh: round1(houseKwh),
-    };
+    // Quarters already published keep the calibration they were recorded at; only the rest uses today's
+    const measured = await measureTradingDay(
+      influxClient,
+      dateStr,
+      priceSlots,
+      fees,
+      meterCalibration,
+      "prefer-published"
+    );
+    if (!measured) return null;
+    const { realized, inverterReading, reconstructedQuarters, dayStartMs } = measured;
+    const { export_kwh, import_kwh } = realized;
+    const revenue_sek = realized.realized_revenue_sek;
 
     const fields: Record<string, number> = {
       export_kwh,
@@ -191,6 +167,13 @@ export async function settleTradingDay(
       realized_revenue_sek: revenue_sek,
       pv_kwh: realized.pv_kwh,
       house_kwh: realized.house_kwh,
+      // The pre-calibration figures (the inverter's reading, netted per quarter) for continuity with older points.
+      // planned_sell_kwh below is the plan's sell at the inverter (simulate.ts keeps energies there), so compare it
+      // with inverter_reading_export_kwh; export_kwh is at the meter (~3 % less, and the night feed ≈ 0)
+      inverter_reading_export_kwh: inverterReading.export_kwh,
+      inverter_reading_import_kwh: inverterReading.import_kwh,
+      inverter_reading_revenue_sek: inverterReading.revenue_sek,
+      reconstructed_quarters: reconstructedQuarters,
     };
     if (forecast) {
       fields.predicted_pv_kwh = forecast.predicted_pv_kwh;
@@ -206,7 +189,9 @@ export async function settleTradingDay(
     ]);
 
     logLog(
-      `Auto trader: settled ${dateStr} — grid revenue ${revenue_sek} SEK (export ${export_kwh} / import ${import_kwh} kWh), ` +
+      `Auto trader: settled ${dateStr} — grid revenue ${revenue_sek} SEK (export ${export_kwh} / import ${import_kwh} kWh at the meter; ` +
+        `inverter reading ${inverterReading.revenue_sek} SEK, ${inverterReading.export_kwh} / ${inverterReading.import_kwh} kWh` +
+        `${reconstructedQuarters ? `; ${reconstructedQuarters} quarter(s) rebuilt from stored 10-s means` : ""}), ` +
         `PV ${realized.pv_kwh} kWh${forecast ? ` (forecast ${forecast.predicted_pv_kwh}, err ${fields.pv_error_kwh})` : ""}, ` +
         `house ${realized.house_kwh} kWh${forecast ? ` (forecast ${forecast.predicted_house_kwh}, err ${fields.house_error_kwh})` : ""}`
     );
@@ -216,6 +201,88 @@ export async function settleTradingDay(
     return null;
   }
 }
+
+/**
+ * One local day's realized figures from its 15-min prices (the whole day, non-empty), read from InfluxDB
+ * without writing anything (settleTradingDay writes them with "prefer-published"; settlementReplay.ts prints
+ * them for past days with "reconstruct-all"). Null when the day has no inverter data.
+ */
+export async function measureTradingDay(
+  influxClient: Influx.InfluxDB,
+  dateStr: string,
+  priceSlots: PriceSlot15[],
+  fees: FeeKnobs,
+  meterCalibration: MeterCalibration,
+  source: SettlementSource
+): Promise<MeasuredTradingDay | null> {
+  const spotByStartMs = new Map(priceSlots.map(slot => [slot.startMs, slot.spot]));
+  const dayStartMs = priceSlots[0].startMs;
+  const dayEndMs = priceSlots[priceSlots.length - 1].startMs + SLOT_MS;
+  const { quarters, notes } = await querySettlementQuarters(
+    influxClient,
+    dayStartMs,
+    dayEndMs,
+    meterCalibration,
+    source
+  );
+  if (notes.bucketsWithoutConverterDirection) {
+    warnLog(
+      `Auto trader: settling ${dateStr}, ${notes.bucketsWithoutConverterDirection} stored 10-s grid reading(s) had no converter direction — counted as converting`
+    );
+  }
+
+  const meterSlots: { importW: number; exportW: number; spot: number }[] = [];
+  const readingSlots: { importW: number; exportW: number; spot: number }[] = [];
+  let pvKwh = 0;
+  let houseKwh = 0;
+  let reconstructedQuarters = 0;
+  for (const quarter of quarters) {
+    // PV/house are independent of grid — count them even in a slot where grid data is missing
+    pvKwh += ((quarter.pvW ?? 0) * 0.25) / 1000;
+    houseKwh += ((quarter.houseW ?? 0) * 0.25) / 1000;
+    const spot = spotByStartMs.get(quarter.startMs);
+    if (spot === undefined) continue;
+    if (quarter.meterImportW !== undefined && quarter.meterExportW !== undefined) {
+      meterSlots.push({ importW: quarter.meterImportW, exportW: quarter.meterExportW, spot });
+      if (quarter.meterSource === "reconstructed") reconstructedQuarters++;
+    }
+    if (quarter.readingW !== undefined) {
+      readingSlots.push({ importW: Math.max(0, quarter.readingW), exportW: Math.max(0, -quarter.readingW), spot });
+    }
+  }
+  if (!meterSlots.length) {
+    logLog(`Auto trader: no inverter data for ${dateStr}, skipping settlement`);
+    return null;
+  }
+
+  const meter = computeRealizedRevenue(meterSlots, 0.25, fees);
+  return {
+    realized: {
+      date: dateStr,
+      export_kwh: meter.export_kwh,
+      import_kwh: meter.import_kwh,
+      realized_revenue_sek: meter.revenue_sek,
+      pv_kwh: round1(pvKwh),
+      house_kwh: round1(houseKwh),
+    },
+    inverterReading: computeRealizedRevenue(readingSlots, 0.25, fees),
+    reconstructedQuarters,
+    publishedQuartersRecomputed: notes.publishedQuartersRecomputed,
+    dayStartMs,
+  };
+}
+
+export type MeasuredTradingDay = {
+  /** At the meter (meter-equivalent import and export) */
+  realized: RealizedDay;
+  /** The inverter's own reading netted per quarter: the settlement before the meter calibration */
+  inverterReading: ReturnType<typeof computeRealizedRevenue>;
+  /** Quarters whose meter figures were rebuilt from stored 10-s means, not the published fields */
+  reconstructedQuarters: number;
+  /** "reconstruct-all": of those, the quarters that had published fields (recorded at the calibration live then) */
+  publishedQuartersRecomputed: number;
+  dayStartMs: number;
+};
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;

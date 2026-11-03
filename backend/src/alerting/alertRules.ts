@@ -280,7 +280,7 @@ export function startAlertRules(ctx: {
       key: "settlement-digest",
       severity: "P3",
       title: `Settled ${settlement.date}`,
-      message: `Realized ${formatSekForAlert(settlement.realized_revenue_sek)} (exported ${settlement.export_kwh} kWh, imported ${settlement.import_kwh} kWh)`,
+      message: `Realized ${formatSekForAlert(settlement.realized_revenue_sek)} at the meter, est. (exported ${settlement.export_kwh} kWh, imported ${settlement.import_kwh} kWh)`,
     });
   });
 }

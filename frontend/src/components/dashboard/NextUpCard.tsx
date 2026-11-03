@@ -148,7 +148,7 @@ export function NextUpCard() {
           <Show when={status()?.last_settlement}>
             {settlement => (
               <span
-                title={`Realized ${settlement().date}: exported ${settlement().export_kwh} kWh, imported ${settlement().import_kwh} kWh`}
+                title={`Realized ${settlement().date} at the meter (est.): exported ${settlement().export_kwh} kWh, imported ${settlement().import_kwh} kWh`}
               >
                 {settlementDayLabel(settlement().date, now())}{" "}
                 <b class="next-card__earn">{formatSek(settlement().realized_revenue_sek, { signed: true })}</b> ·{" "}

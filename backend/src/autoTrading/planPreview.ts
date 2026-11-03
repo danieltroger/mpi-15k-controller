@@ -8,6 +8,9 @@
  *   TERMINAL_VALUE_MODE=trailing yarn node src/autoTrading/planPreview.ts   # preview the terminal value
  *                                                    # before switching automatic_trading.terminal_value_mode on
  *   TERMINAL_VALUE_MODE=forecast yarn node src/autoTrading/planPreview.ts   # …priced at the SE3 price outlook
+ *   METER_CALIBRATION=identity yarn node src/autoTrading/planPreview.ts      # credit what the inverter reads, as
+ *                                                    # before the meter calibration (every meter_calibration setting 0)
+ *   CONFIG_PATH=/tmp/config.json yarn node src/autoTrading/planPreview.ts   # another config.json than backend/config.json
  */
 import { promises as fs_promises } from "fs";
 import path from "path";
@@ -26,10 +29,11 @@ import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW } from "./measuredFeedIn.ts";
 import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { effectiveTerminalValueMode } from "./terminalValue.ts";
+import { IDENTITY_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 import type { MqttValue } from "../sharedTypes.ts";
 import type { PlannerInput } from "./planner.types.ts";
 
-const configPath = path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
+const configPath = process.env.CONFIG_PATH ?? path.resolve(path.dirname(process.argv[1]), "../..", "config.json");
 const config: Config = JSON.parse(await fs_promises.readFile(configPath, { encoding: "utf-8" }));
 const at = config.automatic_trading;
 if (!at) {
@@ -102,9 +106,15 @@ const terminalValueModeOverride = process.env.TERMINAL_VALUE_MODE
   ? effectiveTerminalValueMode(process.env.TERMINAL_VALUE_MODE)
   : undefined;
 if (terminalValueModeOverride?.correction) console.log(`TERMINAL_VALUE_MODE: ${terminalValueModeOverride.correction}`);
-const knobs = terminalValueModeOverride
-  ? { ...configuredKnobs, terminal_value_mode: terminalValueModeOverride.value }
-  : configuredKnobs;
+const meterCalibrationIdentity = process.env.METER_CALIBRATION === "identity";
+console.log(
+  `Meter calibration: ${meterCalibrationIdentity ? "identity (METER_CALIBRATION=identity): revenue at the inverter's reading" : JSON.stringify(configuredKnobs.meter_calibration)}`
+);
+const knobs = {
+  ...configuredKnobs,
+  ...(terminalValueModeOverride ? { terminal_value_mode: terminalValueModeOverride.value } : {}),
+  ...(meterCalibrationIdentity ? { meter_calibration: IDENTITY_METER_CALIBRATION } : {}),
+};
 // The live trader estimates it the same way (planRun.ts); past days' prices are fetched from the price API,
 // and for "forecast" the weather from open-meteo
 const expectedSpot = await expectedSpotForPlan(

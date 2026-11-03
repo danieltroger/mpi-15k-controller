@@ -67,4 +67,7 @@ export const mqttValueKeys = [
   "component_max_temperature",
   "external_battery_temperature",
   "setting_change_bit",
+  // Derived from each PS round, not decoded: what the utility meter would count (grid/meterEquivalentGrid.ts)
+  "meter_equivalent_grid_import_watts",
+  "meter_equivalent_grid_export_watts",
 ] as const;

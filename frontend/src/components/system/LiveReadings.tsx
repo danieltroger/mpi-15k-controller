@@ -19,6 +19,8 @@ export function LiveReadings() {
   const [solar_input_power_2] = getBackendSyncedSignal("solar_input_power_2");
   const [ac_output_total_active_power] = getBackendSyncedSignal("ac_output_total_active_power");
   const [ac_input_total_active_power] = getBackendSyncedSignal("ac_input_total_active_power");
+  const [meter_equivalent_grid_import_watts] = getBackendSyncedSignal("meter_equivalent_grid_import_watts");
+  const [meter_equivalent_grid_export_watts] = getBackendSyncedSignal("meter_equivalent_grid_export_watts");
   const [ac_input_active_power_r] = getBackendSyncedSignal("ac_input_active_power_r");
   const [ac_input_active_power_s] = getBackendSyncedSignal("ac_input_active_power_s");
   const [ac_input_active_power_t] = getBackendSyncedSignal("ac_input_active_power_t");
@@ -109,6 +111,13 @@ export function LiveReadings() {
       value: () =>
         `${dashUnless(ac_input_total_active_power()?.value, watts => `${formatWatts(watts)} (${watts < 0 ? "exporting" : watts > 0 ? "importing" : "idle"})`)} — ${phaseWatts(ac_input_active_power_r(), ac_input_active_power_s(), ac_input_active_power_t())}`,
       time: () => ac_input_total_active_power()?.time,
+    },
+    {
+      label: "Grid at the meter (estimated)",
+      value: () =>
+        `import ${dashUnless(meter_equivalent_grid_import_watts()?.value, formatWatts)} · export ${dashUnless(meter_equivalent_grid_export_watts()?.value, formatWatts)}`,
+      time: () => meter_equivalent_grid_import_watts()?.time,
+      hint: "What the utility meter counts for the reading above: the inverter's reading leaves out its own draw (config: Grid meter calibration). Settlement uses this; the balance below uses the raw reading",
     },
     {
       label: "Grid current per phase",

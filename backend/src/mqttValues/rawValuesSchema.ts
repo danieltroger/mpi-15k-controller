@@ -57,6 +57,10 @@ export const rawMQTTValuesSchema = z.object({
   validity_check: z.enum(["Error: CRC error P17"]),
   error: z.string(),
   unknown_value_in_response_25: z.string(),
+  // Not decoded: derived from each PS round's grid power and converter direction
+  // (grid/meterEquivalentGrid.ts) — what the utility meter would count, next to the raw reading
+  meter_equivalent_grid_import_watts: z.number(),
+  meter_equivalent_grid_export_watts: z.number(),
 });
 
 // 2. Infer the TS type from this schema

@@ -81,6 +81,7 @@ export function pathIsUnsettable(path: readonly string[]): boolean {
 const TOP_LEVEL_CONFIG_KEYS = {
   automatic_trading: true,
   alerting: true,
+  meter_calibration: true,
   usb_parameter_setting: true,
   current_measuring: true,
   scheduled_power_selling: true,

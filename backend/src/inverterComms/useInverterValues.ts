@@ -2,14 +2,18 @@
  * Feeds solid-js reactivity directly from the native serial decoder: one store with every GS/PS
  * field under its historical mpp-solar name (value + timestamp — the exact shape the old
  * MQTT-subscription store had, so every consumer including the staleness alerting is untouched),
+ * plus the meter-equivalent grid import/export derived from each PS round (grid/meterEquivalentGrid.ts),
  * one store with the settings readbacks (GPMP/HECS/BATS) under the legacy CLI keys, the inverter's
  * operating status (MOD/CFS/WS/HFS, useInverterStatus.ts), and a per-decoded-response signal the
  * one-way MQTT/Influx publisher hangs off.
  */
-import { type Accessor, batch, createMemo, createSignal } from "solid-js";
+import { type Accessor, batch, createMemo, createSignal, untrack } from "solid-js";
 import { createStore, type SetStoreFunction } from "solid-js/store";
 import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
+import { createRateLimitedWarnLog } from "../utilities/rateLimitedWarnLog.ts";
+import { correctedMeterCalibration } from "../grid/correctedMeterCalibration.ts";
+import { withMeterEquivalentGridFields } from "../grid/meterEquivalentGridRound.ts";
 import { type RawMQTTValues, validateMessage } from "../mqttValues/rawValuesSchema.ts";
 import type { DecodedRound } from "./pi17Protocol.types.ts";
 import type { UsbValues } from "./inverterComms.types.ts";
@@ -27,17 +31,28 @@ export function useInverterValues(config: Accessor<Config>) {
   // Rounds only arrive once the device is open (after stty's await), by when `session` is assigned
   const statusTracker = createInverterStatusTracker(queries => session.requestStatusQueries(queries));
 
+  const warnUnmappableRound = createRateLimitedWarnLog(10 * 60_000);
+
   // No schedulerTimingOverrides: production runs the measured defaults (schedulerTiming.ts)
   const session = createInverterSession({
     poll_values_interval_seconds: createMemo(() => config().usb_parameter_setting.poll_values_interval_seconds),
-    onDecodedRound: round =>
+    onDecodedRound: decodedRound => {
+      // The meter-equivalent grid fields ride along in the PS round (raw fields untouched), so the
+      // store, the ws and the MQTT → InfluxDB feed all get them from the same reading
+      const { round, unmappable } = withMeterEquivalentGridFields(
+        decodedRound,
+        correctedMeterCalibration(untrack(config).meter_calibration)
+      );
+      // Every PS answer the gate passes carries all the inputs, so this means a decoding change broke them
+      if (unmappable) warnUnmappableRound("PS round without meter-equivalent grid fields:", unmappable);
       // One batch per round: consumers must never observe half a round. A BATS parse used to
       // expose bulk=new/float=old for one tick (2026-07-23), which queued a redundant MCHGV write.
       batch(() => {
         applyRoundToStores(round, setInverterValues, setUsbValues);
         statusTracker.trackRound(round);
         setLastDecodedRound(round);
-      }),
+      });
+    },
   });
 
   return {
