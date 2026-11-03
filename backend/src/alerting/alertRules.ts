@@ -44,6 +44,8 @@ export function startAlertRules(ctx: {
   acChargingEnabledOnInverter: Accessor<boolean>;
   /** The inverter's own MOD/CFS/WS report (inverterComms/useInverterStatus.ts) */
   inverterStatus: Accessor<InverterOperatingStatus>;
+  /** Off-Grid III is requested or read back (gridOff/): the grid relay is open by design, not a grid fault */
+  gridRelayOpenOnPurpose: Accessor<boolean>;
 }) {
   const bootedAtMs = Date.now();
   const alerting = createMemo(() => ctx.config().alerting);
@@ -202,12 +204,16 @@ export function startAlertRules(ctx: {
 
     const gridVoltage = untrack(() => ctx.mqttValues.ac_input_voltage_r);
     const gridFresh = gridVoltage && nowMs - gridVoltage.time < 2 * 60_000;
-    const gridLow = !!gridFresh && gridVoltage.value < limits.grid_out_below_volts;
+    // Off-Grid III may read the grid as absent: hold, and count a low grid afresh once the relay closes
+    const gridRelayOpenOnPurpose = untrack(ctx.gridRelayOpenOnPurpose);
+    const gridLow = !!gridFresh && !gridRelayOpenOnPurpose && gridVoltage.value < limits.grid_out_below_volts;
     if (!gridLow) gridLowSinceMs = undefined;
     else gridLowSinceMs ??= nowMs;
     gridOutAlert.update(
       // stale grid reading → hold (the mqtt-stale rule owns that failure)
-      !gridFresh ? undefined : gridLow && nowMs - gridLowSinceMs! >= limits.grid_out_p2_seconds * 1000,
+      !gridFresh || gridRelayOpenOnPurpose
+        ? undefined
+        : gridLow && nowMs - gridLowSinceMs! >= limits.grid_out_p2_seconds * 1000,
       "Grid appears down",
       () =>
         `ac_input_voltage_r at ${gridVoltage?.value ?? "?"} V for ${Math.round((nowMs - (gridLowSinceMs ?? nowMs)) / 1000)} s — house is running on the battery`
@@ -236,6 +242,7 @@ export function startAlertRules(ctx: {
     holdWindowInForce: ctx.holdWindowInForce,
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter,
     inverterStatus: ctx.inverterStatus,
+    gridRelayOpenOnPurpose: ctx.gridRelayOpenOnPurpose,
     paging: inverterEpisodePaging,
     inGracePeriod,
   });

@@ -2,7 +2,7 @@
 """
 Fake MPI 15K speaking PI17 on a pty — the far end for inverterSession.pty.selftest.ts.
 
-Answers GS/PS/GPMP/HECS/BATS queries and ACKs setters (committing them ~0.6 s later, like the real
+Answers GS/PS/GPMP/HECS/BATS/DM queries and ACKs setters (committing them ~0.6 s later, like the real
 inverter's ACK != commit), dribbling bytes at 2400-baud speed in FTDI-sized chunks. A fixed fault
 plan replays what broke the first production cutover (2026-10-25) and more:
 
@@ -21,7 +21,7 @@ plan replays what broke the first production cutover (2026-10-25) and more:
 
 Like the real firmware, every CRC byte that would be 0x0A/0x0D/0x28 is sent as that byte + 1 (found
 live at the second cutover attempt, 2026-10-25; 0x00 is not bumped), so ~2.3 % of all frames
-exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC theirs.
+exercise it anyway. EDx setters change the HECS readback, GPMP0/MCHGV/MUCHGC/DM theirs.
 
 The status queries answer like this inverter did in October 2026: MOD 05 (Hybrid), CFS 12,00 (the
 latest fault before the incident), WS all clear, and HFS00-08 the nine records it returned on
@@ -143,6 +143,8 @@ class FakeInverter:
         self.gpmp = 350
         self.charge_voltage_tenths = (580, 580)
         self.max_ac_charging_tenths = 100
+        # Hybrid type VDE certification, what the real inverter reports (its cloud log, 2026-10)
+        self.machine_model = "050"
         # priority, then EDA..EDG (solar charge, AC charge, feed utility, discharge loads x2, feed grid x2), reserved
         self.hecs_tokens = ["00", "1", "0", "1", "1", "1", "1", "1", "0"]
         self.fault_14_latched = False
@@ -219,6 +221,8 @@ class FakeInverter:
             return data_frame("%05d" % self.gpmp), None
         if command == "HECS":
             return data_frame(",".join(self.hecs_tokens)), None
+        if command == "DM":
+            return data_frame(self.machine_model), None
         tokens = list(BATS_TOKENS)
         tokens[1] = "%04d" % self.charge_voltage_tenths[0]
         tokens[2] = "%04d" % self.charge_voltage_tenths[1]
@@ -349,7 +353,7 @@ class FakeInverter:
                 self.next_command_follows_anomaly = True
             frame, serial = self.ps_frame()
             self.queue(frame, "PS", "PS", "answer", serial)
-        elif command in ("GPMP", "HECS", "BATS"):
+        elif command in ("GPMP", "HECS", "BATS", "DM"):
             frame, serial = self.settings_frame(command)
             self.queue(frame, command, command, "answer", serial)
         elif command in ("MOD", "CFS", "WS") or (command.startswith("HFS0") and len(command) == 5):
@@ -405,6 +409,9 @@ class FakeInverter:
         elif command.startswith("MUCHGC"):
             amps_tenths = int(command[6:])
             self.pending_commits.append((apply_at, command, lambda: setattr(self, "max_ac_charging_tenths", amps_tenths)))
+        elif command.startswith("DM") and len(command) == 5:
+            model = command[2:]
+            self.pending_commits.append((apply_at, command, lambda: setattr(self, "machine_model", model)))
 
     def end_buy_window_into_fault_14(self):
         self.hecs_tokens[2] = "0"

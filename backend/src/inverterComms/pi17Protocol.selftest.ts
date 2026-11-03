@@ -362,12 +362,17 @@ for (const key of derivedFieldNames) {
   check(`derived field never collides with a decoded name: ${key}`, !liveDecodeNames.has(key));
 }
 const settingsDecodeNames = new Set(
-  [...PI17_QUERY_RESPONSE_FIELDS.GPMP, ...PI17_QUERY_RESPONSE_FIELDS.HECS, ...PI17_QUERY_RESPONSE_FIELDS.BATS]
+  [
+    ...PI17_QUERY_RESPONSE_FIELDS.GPMP,
+    ...PI17_QUERY_RESPONSE_FIELDS.HECS,
+    ...PI17_QUERY_RESPONSE_FIELDS.BATS,
+    ...PI17_QUERY_RESPONSE_FIELDS.DM,
+  ]
     .filter(spec => spec.reading.kind !== "exclude")
     .map(spec => influxFieldName(spec.name))
 );
 for (const key of USB_VALUE_KEYS) {
-  check(`UsbValues key decodes from GPMP/HECS/BATS: ${key}`, settingsDecodeNames.has(key));
+  check(`UsbValues key decodes from GPMP/HECS/BATS/DM: ${key}`, settingsDecodeNames.has(key));
 }
 
 // ---------- influx line protocol (must match live broker samples byte-for-byte) ----------

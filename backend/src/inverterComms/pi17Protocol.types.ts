@@ -4,10 +4,18 @@
  */
 
 /** Query commands the backend has decode tables for (HFS takes a slot argument on the wire: HFS03). */
-export type Pi17QueryCommandName = "GS" | "PS" | "GPMP" | "HECS" | "BATS" | "MOD" | "CFS" | "WS" | "HFS";
+export type Pi17QueryCommandName = "GS" | "PS" | "GPMP" | "HECS" | "BATS" | "DM" | "MOD" | "CFS" | "WS" | "HFS";
 
 /** The slow-cadence settings queries — also used as targeted post-write confirm queries. */
-export type SettingsQueryCommandName = "GPMP" | "HECS" | "BATS";
+export type SettingsQueryCommandName = "GPMP" | "HECS" | "BATS" | "DM";
+
+/**
+ * The machine models (PI17 DM, the spec's "machine model": the grid code plus the operation mode)
+ * this backend may ever write: "050" Hybrid type VDE certification is what the inverter runs on
+ * (its cloud log, 2026-10), "151" "Off Grid 3 type" is the manual's Off-Grid III, the one mode
+ * whose grid relay stays open on battery. Every other code is refused (machineModel.ts).
+ */
+export type MachineModelCode = "050" | "151";
 
 /** How one comma-separated token in a PI17 data response decodes. */
 export type Pi17FieldReading =

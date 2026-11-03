@@ -169,7 +169,7 @@ export function decideNextAction(
   };
 }
 
-const SETTINGS_QUERIES: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS"];
+const SETTINGS_QUERIES: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS", "DM"];
 
 /**
  * An ACKed write past STARVED_WRITE_PAGE_AFTER_MS, unproven, with no readback of its field since: read
@@ -359,7 +359,7 @@ export function withSettingsReadbackRequested(
 }
 
 /**
- * Record a decoded GPMP/HECS/BATS answer (background poll or confirm) as the newest readback for
+ * Record a decoded GPMP/HECS/BATS/DM answer (background poll or confirm) as the newest readback for
  * that query, note any field it shows starved, and credit it to the writes it proves landed
  * (fieldWriteChains.ts).
  */

@@ -2,6 +2,7 @@ import { Title } from "@solidjs/meta";
 import { LiveReadings } from "~/components/system/LiveReadings";
 import { DiagnosticsCards } from "~/components/system/DiagnosticsCards";
 import { AlertsCard } from "~/components/system/AlertsCard";
+import { GridOffCard } from "~/components/system/GridOffCard";
 import "./system.scss";
 
 /** Live data + diagnostics merged: raw sensor truth on top, controller internals below. */
@@ -12,6 +13,8 @@ export default function System() {
       <h1>System</h1>
       <h2 class="system__heading">Alerts</h2>
       <AlertsCard />
+      <h2 class="system__heading">Grid relay</h2>
+      <GridOffCard />
       <h2 class="system__heading">Live readings</h2>
       <LiveReadings />
       <h2 class="system__heading">Controller internals</h2>

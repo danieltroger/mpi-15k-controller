@@ -2,7 +2,7 @@
  * Consumer-facing types of the inverter comms module (control-write queue items and the settings
  * readback store). Pure — no runtime imports.
  */
-import type { SettingsQueryCommandName } from "./pi17Protocol.types.ts";
+import type { MachineModelCode, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
 
 type InverterSetterCommand =
   // Only the setters the backend currently sends — see the PI17 spec / jblance mpp-solar docs for more
@@ -32,7 +32,13 @@ type InverterSetterCommand =
    * At 20 bytes this only works over the FTDI serial cable — the inverter's USB-HID port firmware
    * NAKs every command longer than 16 bytes.
    */
-  | `MCHGV${string}`;
+  | `MCHGV${string}`
+  /**
+   * Set the machine model (grid code + operation mode) -- only the two whitelisted codes: DM050
+   * (Hybrid type VDE, normal operation) and DM151 (Off-Grid III, grid relay open). The session
+   * refuses any other DM command at runtime too (machineModel.ts).
+   */
+  | `DM${MachineModelCode}`;
 
 /**
  * Frame-level outcome of a control write. `acknowledged: false` means the inverter NAKed it
@@ -74,4 +80,6 @@ export type UsbValues = Partial<{
   /** The CV/bulk charge voltage from BATS; the "(c.v.)" in the key is verbatim mpp-solar naming */
   "battery_constant_charge_voltage(c.v.)": string;
   battery_floating_charge_voltage: string;
+  /** The DM readback: the 3-digit machine model code ("050", "151", …) as the inverter sent it */
+  machine_model: string;
 }>;

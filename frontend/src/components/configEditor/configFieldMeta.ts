@@ -16,6 +16,7 @@ import {
   METER_CALIBRATION_BOUNDS,
   type MeterCalibrationSettingName,
 } from "../../../../backend/src/grid/meterCalibrationBounds";
+import { GRID_OFF_SETTING_BOUNDS, type GridOffSettingName } from "../../../../backend/src/gridOff/gridOffSettings";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -131,6 +132,16 @@ function meterCalibrationInput(settingName: MeterCalibrationSettingName): Partia
 }
 function describeMeterCalibrationBounds(settingName: MeterCalibrationSettingName): string {
   const { min, max, unit, defaultValue } = METER_CALIBRATION_BOUNDS[settingName];
+  return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
+}
+
+/** Number-input hints for a grid-off knob: the bounds the backend clamps to */
+function gridOffSettingInput(settingName: GridOffSettingName): Partial<ConfigFieldMeta> {
+  const { min, max, unit } = GRID_OFF_SETTING_BOUNDS[settingName];
+  return { unit, min, max, step: 1 };
+}
+function describeGridOffSettingBounds(settingName: GridOffSettingName): string {
+  const { min, max, unit, defaultValue } = GRID_OFF_SETTING_BOUNDS[settingName];
   return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
 }
 
@@ -1079,6 +1090,56 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "PV2 protection voltage",
         "Above this PV string 2 voltage, surplus is forced through to the grid.",
         { unit: "V" }
+      ),
+    ],
+  },
+  {
+    id: "grid-off",
+    title: "Grid relay off (Off-Grid III)",
+    description:
+      "The System page's grid relay switch puts the inverter into machine model 151, Off-Grid III: on battery its grid relay stays open (on-grid at night it burns ~100 W more battery), PV supplies the house first and then the battery, nothing is fed to the grid, and the grid only takes the house over by itself on an overload or a flat battery. Nothing switches it on automatically, and it never survives a controller restart. These knobs bound it; all apply live (the guards re-check every 10 s).",
+    rootKeys: ["grid_off"],
+    fields: [
+      f(
+        ["grid_off", "min_soc_percent"],
+        "Back on the grid below SOC",
+        `While off the grid, the controller switches back to normal hybrid (050) once the SOC falls below this. Higher keeps more battery for the morning and for the grid being away; lower runs the night longer off the grid, closer to the inverter's own battery cut-off, where Off-Grid III hands the house to the grid by itself. ${describeGridOffSettingBounds("min_soc_percent")}`,
+        gridOffSettingInput("min_soc_percent")
+      ),
+      f(
+        ["grid_off", "switch_on_soc_margin_percent"],
+        "Switch-off margin above that SOC",
+        `Switching off the grid is refused unless the SOC is at least this far above the floor above, so the switch can't flap on the floor itself. Higher refuses more marginal nights. ${describeGridOffSettingBounds("switch_on_soc_margin_percent")}`,
+        gridOffSettingInput("switch_on_soc_margin_percent")
+      ),
+      f(
+        ["grid_off", "reconnect_before_window_minutes"],
+        "Back on the grid before a window",
+        `Switches back to 050 this long before any buy or sell window (a hold too) starts, and refuses to switch off while one is active or this close. The inverter needs ~10 s to commit the switch and then ~60 s of grid checks before it connects, so too little risks a window starting off the grid; more gives up that much grid-off time before each window. ${describeGridOffSettingBounds("reconnect_before_window_minutes")}`,
+        gridOffSettingInput("reconnect_before_window_minutes")
+      ),
+      f(
+        ["grid_off", "shutdown_wait_seconds"],
+        "Stop waits for switch-back",
+        `On a clean controller stop (systemctl restart) while off the grid, DM050 is sent and the stop waits at most this long for the inverter's ACK. Longer is surer but delays the restart; 0 doesn't wait. Whatever it misses, the next start switches back by itself. ${describeGridOffSettingBounds("shutdown_wait_seconds")}`,
+        gridOffSettingInput("shutdown_wait_seconds")
+      ),
+      f(
+        ["grid_off", "min_seconds_between_switches"],
+        "Minimum time between switches",
+        `Switching off the grid is refused this soon after the previous switch either way (from the page or a guard), so neither a double click nor a script on the network can cycle the grid relay. Back to normal (050) is never refused. Shorter allows quicker retries while testing. Applies live, from the next request. ${describeGridOffSettingBounds("min_seconds_between_switches")}`,
+        gridOffSettingInput("min_seconds_between_switches")
+      ),
+      f(
+        ["grid_off", "stuck_p1_after_minutes"],
+        "Page when stuck off the grid after",
+        `If the inverter still reads 151 this long after normal (050) was wanted (DM050 refused or never applied, or found at startup), a P1 pages through Do Not Disturb, and from then on buying, the night feed and the grid alerts run as if the relay were closed, so a missed buy window alerts too. DM050 is resent 1, 2 and 5 min after the previous one, then every 10 min. Shorter pages on a slow commit; longer can let a buy window go by. Applies live (the guards re-check every 10 s). ${describeGridOffSettingBounds("stuck_p1_after_minutes")}`,
+        gridOffSettingInput("stuck_p1_after_minutes")
+      ),
+      f(
+        ["grid_off", "poll_machine_model"],
+        "Read the machine model (DM)",
+        "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Off also disables the startup fail-safe: it needs the DM readback, so a 151 left behind by a crash or a kill isn't switched back (check the inverter's display). Applies from the next settings round."
       ),
     ],
   },

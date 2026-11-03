@@ -57,6 +57,14 @@ export type InverterStuckSnapshot = {
   holdWindowInForce: boolean;
   /** HECS readback: the inverter has confirmed AC charging is enabled (EDB1 landed) */
   acChargingEnabledOnInverter: boolean;
+  /**
+   * Off-Grid III (machine model 151) is requested or read back, and not stuck there (gridOff/): no buy
+   * window can charge. The grid relay stays open on battery and the grid takes the house over by itself only
+   * on an overload or a flat battery.
+   */
+  gridRelayOpenOnPurpose: boolean;
+  /** MOD reads 02 Bypass: with the relay open on purpose, that is the grid's takeover, which its own P2 reports */
+  inverterInBypassMode: boolean;
 };
 
 export type RuleEvaluation = { observation: ConditionObservation; detail: string };
@@ -103,6 +111,8 @@ export const HIGH_SOC_IDLE_MAX_HALL_WATTS = 60;
 export const HOLD_FULL_PACK_SOC_PERCENT = 95;
 /** A hall at or above this during a hold is its trickle arriving, however the inverter reports it */
 export const HOLD_TRICKLE_MIN_HALL_WATTS = 30;
+
+const GRID_RELAY_OPEN_ON_PURPOSE = "grid relay open on purpose (Off-Grid III)";
 
 // ——— Rule A: PV stalled in daylight ———
 /** The 59.25 N winter maximum is only ~7°; dawn/dusk look-alikes all sit below 3° (report §4.3). */
@@ -154,6 +164,12 @@ export function evaluateDcSideIdle(snapshot: InverterStuckSnapshot): RuleEvaluat
     `${values.battery_power_direction}/${values["dc/ac_power_direction"]}, grid ${formatSignedWatts(values.ac_input_total_active_power)}, ` +
     `${values.battery_voltage} V, SOC ${formatSoc(snapshot.averageSOC)}`;
   if (batteryFlowEvidence(values, hallWatts)) return { observation: "healthy", detail: summary };
+  // Off-Grid III's takeover on an overload or a flat battery idles the battery with the house on the grid, in
+  // Bypass, which its own P2 reports. Any other idle battery with the grid carrying the house is a latch;
+  // a house running from the battery doesn't import, and that rules it out below.
+  if (snapshot.gridRelayOpenOnPurpose && snapshot.inverterInBypassMode) {
+    return indeterminate(`${summary} (${GRID_RELAY_OPEN_ON_PURPOSE}, the grid took the house in Bypass)`);
+  }
   const holdExplanation = holdExplainsIdleBattery(snapshot, values.battery_voltage, hallWatts);
   if (holdExplanation) return indeterminate(`${summary} (${holdExplanation})`);
   if (Math.abs(hallWatts) >= DC_IDLE_MAX_HALL_WATTS) {
@@ -253,6 +269,8 @@ function buyCheckExclusion(
   hallWatts: number
 ): string | undefined {
   if (commandedWatts < BUY_CHECK_MIN_COMMANDED_WATTS) return `no buy window above ${BUY_CHECK_MIN_COMMANDED_WATTS} W`;
+  // Buying waits for the inverter to read 050 again (index.ts)
+  if (snapshot.gridRelayOpenOnPurpose) return GRID_RELAY_OPEN_ON_PURPOSE;
   if (!snapshot.acChargingEnabledOnInverter) return "AC charging not confirmed on the inverter yet";
   if (batteryVolts >= BUY_CHECK_MAX_BATTERY_VOLTS) return `battery at ${batteryVolts} V is held near CV`;
   if (batteryVolts <= DC_IDLE_MIN_BATTERY_VOLTS) return `battery at ${batteryVolts} V is in the low-voltage cut-off`;

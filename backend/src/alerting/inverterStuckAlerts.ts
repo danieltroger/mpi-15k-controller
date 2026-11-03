@@ -64,6 +64,8 @@ export function startInverterStuckAlerts(ctx: {
   acChargingEnabledOnInverter: Accessor<boolean>;
   /** What the inverter says about itself: the alert quotes its fault code while it reports Fault mode */
   inverterStatus: Accessor<InverterOperatingStatus>;
+  /** Off-Grid III is requested or read back: the house off the grid by design (inverterStuckDetection.ts) */
+  gridRelayOpenOnPurpose: Accessor<boolean>;
   /** Shared with the fault-mode alert: one P1 per episode */
   paging: InverterEpisodePaging;
   inGracePeriod: () => boolean;
@@ -188,6 +190,8 @@ function takeSnapshot(
     commandedChargingAmps: ctx.chargingAmperageForBuying(),
     holdWindowInForce: ctx.holdWindowInForce(),
     acChargingEnabledOnInverter: ctx.acChargingEnabledOnInverter(),
+    gridRelayOpenOnPurpose: ctx.gridRelayOpenOnPurpose(),
+    inverterInBypassMode: ctx.inverterStatus().working_mode?.code === "02",
   };
 }
 

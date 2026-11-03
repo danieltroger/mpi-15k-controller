@@ -76,6 +76,11 @@ export function expectedReadbackChecksForSetter(command: string): readonly Sette
       },
     ];
   }
+  const machineModel = command.match(/^DM(\d{3})$/);
+  if (machineModel) {
+    // Decoded as the wire's string, so "050" compares as "050" (pi17FieldTables.ts)
+    return [{ query: "DM", field: "machine_model", expectedValue: machineModel[1]!, forCommand: command }];
+  }
   // Setter without a known readback (none today) — its refresh queries still run, just no convergence check
   return [];
 }

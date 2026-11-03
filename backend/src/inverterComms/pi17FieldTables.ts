@@ -148,6 +148,9 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
     field("Reserved", { kind: "exclude" }, ""),
   ],
   GPMP: [field("Maximum Feeding Grid power", INT, "W")],
+  // ^D006AAA: the 3-digit machine model code (050 Hybrid VDE … 151 Off Grid 3). Kept as the string
+  // the wire carries, so "050" stays "050" for the setter confirm and the page.
+  DM: [field("Machine model", STRING, "")],
   MOD: [field("Working mode", { kind: "str_keyed", mapping: WORKING_MODE_TEXT_BY_CODE }, "")],
   // ^D008AA,BB: the LATEST fault code (sticky, so not an active-fault flag) and its flash slot 0–8
   CFS: [field("Latest fault code", INT, ""), field("Latest fault record id", INT, "")],

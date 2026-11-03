@@ -4,6 +4,7 @@ import type { AutoTraderStatus } from "./autoTrading/autoTraderState.types.ts";
 import type { FetchedPrices } from "./autoTrading/priceService.types.ts";
 import type { AlertRecord } from "./alerting/alerting.types.ts";
 import type { InverterOperatingStatus } from "./inverterComms/inverterStatus.types.ts";
+import type { GridOffStatus } from "./gridOff/gridOff.types.ts";
 import type {
   CurrentBatteryPowerBroadcast,
   ElpatronDisplayState,
@@ -29,6 +30,8 @@ export type WsExposedSignals = {
   recentAlerts: AlertRecord[];
   /** The inverter's own working mode, latest fault code, warning flags and fault records */
   inverterStatus: InverterOperatingStatus;
+  /** The grid-off switch: requested vs read-back machine model (050 normal / 151 Off-Grid III) */
+  gridOff: GridOffStatus;
   elpatronState: ElpatronDisplayState;
   currentBatteryPower: CurrentBatteryPowerBroadcast;
   /** THE SOC everything runs on: the Ah ledger clamped to [0,100] */
@@ -82,7 +85,14 @@ export type ConfigPatchResponse = {
   message?: string;
 };
 
-export type WsAction = "generate_trading_plan" | "clear_trading_vetoes" | "send_test_alert";
+export type WsAction =
+  | "generate_trading_plan"
+  | "clear_trading_vetoes"
+  | "send_test_alert"
+  /** Off-Grid III (DM151, grid relay open); refused with the reason unless every precondition holds */
+  | "grid_off_open_relay"
+  /** Back to normal hybrid (DM050) */
+  | "grid_off_normal";
 
 /**
  * What index.ts must hand wsMessaging: an accessor per contract key, except `config` and
