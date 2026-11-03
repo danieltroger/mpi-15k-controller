@@ -19,10 +19,7 @@
 import type { MeterCalibration } from "../config/config.types.ts";
 import type { ConverterDirection, InverterGridReading, MeterEquivalentGrid } from "./meterEquivalentGrid.types.ts";
 
-export function meterEquivalentGrid(
-  reading: InverterGridReading,
-  calibration: MeterCalibration
-): MeterEquivalentGrid {
+export function meterEquivalentGrid(reading: InverterGridReading, calibration: MeterCalibration): MeterEquivalentGrid {
   const meterNetImportWatts = meterNetImportWattsOf(reading, calibration);
   return {
     meter_equivalent_grid_import_watts: Math.max(0, meterNetImportWatts),
