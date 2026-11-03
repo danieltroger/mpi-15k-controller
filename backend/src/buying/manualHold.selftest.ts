@@ -347,5 +347,8 @@ function stuckSnapshot(values: {
     commandedChargingAmps: 2,
     holdWindowInForce: values.holdWindowInForce,
     acChargingEnabledOnInverter: true,
+    // On the grid, as a hold is: the relay isn't open on purpose (#87's Off-Grid III), the inverter not in bypass
+    gridRelayOpenOnPurpose: false,
+    inverterInBypassMode: false,
   };
 }
