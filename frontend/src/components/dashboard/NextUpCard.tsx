@@ -13,13 +13,14 @@ import {
 } from "~/helpers/format";
 import type { Config } from "../../../../backend/src/config/config.types";
 import type { AutoTraderStatus, StateWindow } from "../../../../backend/src/autoTrading/autoTraderState.types";
+import { addDays, stockholmDateOf } from "../../../../backend/src/utilities/stockholmDate";
 
 type UpcomingWindow = ScheduleWindow & { planned?: StateWindow };
 
 /** "Yesterday" when the settled day really was yesterday, otherwise the date — settlement can lag. */
 function settlementDayLabel(settledDate: string, nowMs: number): string {
-  const yesterday = new Date(nowMs - 24 * 3600 * 1000).toLocaleDateString("sv-SE", { timeZone: "Europe/Stockholm" });
-  if (settledDate === yesterday) return "Yesterday";
+  // The previous calendar day, not the date of now − 24 h, which is off by one next to midnight on DST days
+  if (settledDate === addDays(stockholmDateOf(nowMs), -1)) return "Yesterday";
   return new Date(`${settledDate}T12:00:00`).toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
 }
 

@@ -42,36 +42,66 @@ async function fetchDayByDate(area: string, date: string): Promise<ApiEntry[] | 
 
 /**
  * Normalise API entries to 15-min slots (handles the pre-2025-10 hourly-era days too), one slot per start:
- * the planner needs distinct, sorted slots, and a start seen twice (overlapping entries, or one day fetched
- * twice) would count that quarter-hour's energy twice. Keeps the first price and warns, never silently.
+ * the planner needs distinct, sorted slots, and a start seen twice would count that quarter-hour's energy
+ * twice. Where entries overlap, the one that started latest owns the slot: the API's autumn switch-day files
+ * (2024-10-27, 2025-10-26) stretch the last summer-time entry to 03:00 winter time, across the repeated
+ * hour whose own entries follow it. An exact repeat (the same start, e.g. one day fetched twice) keeps the
+ * first. Overlaps and malformed entries are warned about, never dropped silently.
  */
 export function entriesToSlots(entries: ApiEntry[]): PriceSlot15[] {
-  const slotsByStartMs = new Map<number, PriceSlot15>();
-  const duplicates: string[] = [];
+  const slotsByStartMs = new Map<number, SlotFromEntry>();
+  const overlaps: string[] = [];
+  const malformedEntries: ApiEntry[] = [];
   for (const entry of entries) {
-    const startMs = +new Date(entry.time_start);
-    const endMs = +new Date(entry.time_end);
-    if (!isFinite(startMs) || !isFinite(endMs) || typeof entry.SEK_per_kWh !== "number") continue;
-    for (let slotStartMs = startMs; slotStartMs < endMs; slotStartMs += SLOT_MS) {
-      const kept = slotsByStartMs.get(slotStartMs);
-      if (kept) {
-        duplicates.push(`${new Date(slotStartMs).toISOString()} (kept ${kept.spot}, dropped ${entry.SEK_per_kWh})`);
+    const entryStartMs = +new Date(entry.time_start);
+    const entryEndMs = +new Date(entry.time_end);
+    if (!isFinite(entryStartMs) || !isFinite(entryEndMs) || typeof entry.SEK_per_kWh !== "number") {
+      malformedEntries.push(entry);
+      continue;
+    }
+    for (let slotStartMs = entryStartMs; slotStartMs < entryEndMs; slotStartMs += SLOT_MS) {
+      const candidate = { slot: { startMs: slotStartMs, spot: entry.SEK_per_kWh }, entryStartMs };
+      const existing = slotsByStartMs.get(slotStartMs);
+      if (!existing) {
+        slotsByStartMs.set(slotStartMs, candidate);
         continue;
       }
-      slotsByStartMs.set(slotStartMs, { startMs: slotStartMs, spot: entry.SEK_per_kWh });
+      const [kept, dropped] = entryStartMs > existing.entryStartMs ? [candidate, existing] : [existing, candidate];
+      slotsByStartMs.set(slotStartMs, kept);
+      overlaps.push(
+        `${isoTime(slotStartMs)} (kept ${kept.slot.spot} from the entry starting ${isoTime(kept.entryStartMs)}, ` +
+          `dropped ${dropped.slot.spot} from ${isoTime(dropped.entryStartMs)})`
+      );
     }
   }
-  if (duplicates.length) {
-    const listed = duplicates.slice(0, MAX_LISTED_DUPLICATES).join(", ");
+  if (overlaps.length) {
     warnLog(
-      `Price API: ${duplicates.length} duplicate 15-min slot(s) dropped, each start's first price kept:`,
-      duplicates.length > MAX_LISTED_DUPLICATES ? `${listed}, …` : listed
+      `Price API: ${overlaps.length} 15-min slot(s) covered by more than one entry, each kept once:`,
+      listSome(overlaps)
     );
   }
-  return [...slotsByStartMs.values()].sort((first, second) => first.startMs - second.startMs);
+  if (malformedEntries.length) {
+    warnLog(
+      `Price API: ${malformedEntries.length} malformed entr${malformedEntries.length === 1 ? "y" : "ies"} skipped, e.g.`,
+      JSON.stringify(malformedEntries[0])
+    );
+  }
+  return [...slotsByStartMs.values()].map(({ slot }) => slot).sort((first, second) => first.startMs - second.startMs);
 }
 
-const MAX_LISTED_DUPLICATES = 8;
+/** A slot and the start of the entry it was expanded from, which decides who owns an overlapped slot */
+type SlotFromEntry = { slot: PriceSlot15; entryStartMs: number };
+
+const MAX_LISTED_OVERLAPS = 8;
+
+function listSome(items: string[]): string {
+  const listed = items.slice(0, MAX_LISTED_OVERLAPS).join(", ");
+  return items.length > MAX_LISTED_OVERLAPS ? `${listed}, …` : listed;
+}
+
+function isoTime(ms: number): string {
+  return new Date(ms).toISOString();
+}
 
 /** Fetch one specific date's (YYYY-MM-DD) 15-min spot prices; [] if the day isn't published. */
 export async function fetchPriceSlotsForDate(area: string, dateStr: string): Promise<PriceSlot15[]> {
@@ -104,7 +134,8 @@ export async function fetchPrices(area: string, forceRefresh = false): Promise<F
   const horizonEndMs = slots.length ? slots[slots.length - 1].startMs + SLOT_MS : Date.now();
   const value: FetchedPrices = {
     slots,
-    coversTomorrow: !!tomorrow?.length,
+    // From the kept slots, not the response: a tomorrow URL serving another day's file must not end the wait
+    coversTomorrow: slots.some(slot => stockholmDateOf(slot.startMs) === tomorrowDate),
     fetchedAtMs: Date.now(),
     horizonEndMs,
   };

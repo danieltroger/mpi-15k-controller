@@ -3,10 +3,12 @@
  * next calendar day, also in the two hours a year where now + 24 h isn't: the 25-hour autumn day's first
  * hour (now + 24 h is still today, so today was fetched twice and every slot doubled) and the spring-forward
  * eve's last hour (now + 24 h is Monday, so Sunday was never fetched). A slot start can't appear twice in the
- * merged prices, and a duplicate is warned about. fetchPrices also runs end to end against a stubbed price
- * API and clock. Run from backend/ with:
+ * merged prices: overlapping entries give the slot to the one that started latest, which the real autumn
+ * switch-day files need (fixtures/autumnDstPriceDays.json), and overlaps and malformed entries are warned
+ * about. fetchPrices also runs end to end against a stubbed price API and clock. Run from backend/ with:
  *   yarn node src/autoTrading/priceService.selftest.ts
  */
+import { readFileSync } from "fs";
 import process from "process";
 import { addDays, stockholmDateOf } from "../utilities/stockholmDate.ts";
 import { type ApiEntry, entriesToSlots, fetchPrices, priceDatesToFetch } from "./priceService.ts";
@@ -133,11 +135,12 @@ console.warn = (...args: unknown[]) => {
   capturedWarnings.length = 0;
   const doubled = entriesToSlots([...longDay, ...longDay]);
   check(
-    "merge: the same day twice (the old autumn 00:xx fetch) keeps each slot once, and warns",
+    "merge: the same day twice (the old autumn 00:xx fetch) keeps each slot once, the first copy, and warns",
     doubled.length === 100 &&
       isContiguous(doubled) &&
+      doubled.every((slot, index) => slot.spot === longDay[index].SEK_per_kWh) &&
       capturedWarnings.length === 1 &&
-      capturedWarnings[0].includes("100 duplicate"),
+      capturedWarnings[0].includes("100 15-min slot(s) covered by more than one entry"),
     `(${doubled.length} slots, ${capturedWarnings.length} warning)`
   );
 
@@ -147,13 +150,85 @@ console.warn = (...args: unknown[]) => {
     { SEK_per_kWh: 5, time_start: "2026-11-03T09:30:00Z", time_end: "2026-11-03T09:45:00Z" },
   ]);
   check(
-    "merge: an hourly entry overlapping a 15-min one keeps the first price for the shared slot, and warns",
+    "merge: an hourly entry overlapping a later 15-min one gives the shared slot to the later entry, and warns",
     overlapping.length === 4 &&
-      overlapping.every(slot => slot.spot === 1) &&
+      overlapping.map(slot => slot.spot).join() === "1,1,5,1" &&
       capturedWarnings.length === 1 &&
-      capturedWarnings[0].includes("1 duplicate") &&
-      capturedWarnings[0].includes("2026-11-03T09:30:00.000Z"),
-    `(${overlapping.length} slots, ${capturedWarnings.length} warning)`
+      capturedWarnings[0].includes("1 15-min slot(s) covered by more than one entry") &&
+      capturedWarnings[0].includes("2026-11-03T09:30:00.000Z (kept 5"),
+    `(${overlapping.map(slot => slot.spot).join()}, ${capturedWarnings.length} warning)`
+  );
+
+  capturedWarnings.length = 0;
+  const withMalformed = entriesToSlots([
+    { SEK_per_kWh: 1, time_start: "2026-11-03T09:00:00Z", time_end: "2026-11-03T09:15:00Z" },
+    { SEK_per_kWh: 2, time_start: "not a time", time_end: "2026-11-03T09:30:00Z" },
+    { SEK_per_kWh: null as unknown as number, time_start: "2026-11-03T09:30:00Z", time_end: "2026-11-03T09:45:00Z" },
+    { SEK_per_kWh: "0.5" as unknown as number, time_start: "2026-11-03T09:45:00Z", time_end: "2026-11-03T10:00:00Z" },
+  ]);
+  check(
+    "merge: malformed entries are skipped with one warning naming their count and an example",
+    withMalformed.length === 1 &&
+      capturedWarnings.length === 1 &&
+      capturedWarnings[0].includes("3 malformed entries skipped") &&
+      capturedWarnings[0].includes('"not a time"'),
+    `(${withMalformed.length} slot, ${capturedWarnings.length} warning)`
+  );
+}
+
+// ---------- the real autumn switch-day files ----------
+// The last summer-time entry runs to 03:00 winter time, across the repeated hour (01:00–02:00Z) whose own
+// entries come after it in the file: each repeated slot must get its own entry's price
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/autumnDstPriceDays.json", import.meta.url), { encoding: "utf-8" })
+  ) as { source: string; days: Record<string, ApiEntry[]> };
+
+  capturedWarnings.length = 0;
+  const entries2025 = fixture.days["2025-10-26"];
+  const slots2025 = entriesToSlots(entries2025);
+  const spotAt2025 = (isoTime: string) => slots2025.find(slot => slot.startMs === Date.parse(isoTime))?.spot;
+  const ownStartPrices2025 = [...entries2025]
+    .sort((first, second) => Date.parse(first.time_start) - Date.parse(second.time_start))
+    .map(entry => entry.SEK_per_kWh);
+  check(
+    "real 2025-10-26: 100 contiguous slots, each the price of the entry starting there (the repeated hour's own)",
+    entries2025.length === 100 &&
+      slots2025.length === 100 &&
+      isContiguous(slots2025) &&
+      slots2025[0].startMs === Date.parse("2025-10-25T22:00:00Z") &&
+      slots2025.map(slot => slot.spot).join() === ownStartPrices2025.join() &&
+      spotAt2025("2025-10-26T00:45:00Z") === 0.02627 &&
+      spotAt2025("2025-10-26T01:00:00Z") === 0.03118 &&
+      spotAt2025("2025-10-26T01:15:00Z") === 0.02693 &&
+      spotAt2025("2025-10-26T01:30:00Z") === 0.02322 &&
+      spotAt2025("2025-10-26T01:45:00Z") === 0.01254,
+    `(${slots2025.length} slots; 00:45Z ${spotAt2025("2025-10-26T00:45:00Z")}, 01:00–01:45Z ${["01:00", "01:15", "01:30", "01:45"].map(time => spotAt2025(`2025-10-26T${time}:00Z`)).join(" ")})`
+  );
+  check(
+    "real 2025-10-26: the four overlapped slots are warned about",
+    capturedWarnings.length === 1 && capturedWarnings[0].includes("4 15-min slot(s) covered by more than one entry"),
+    `(${capturedWarnings.length} warning)`
+  );
+
+  capturedWarnings.length = 0;
+  const slots2024 = entriesToSlots(fixture.days["2024-10-27"]);
+  const spotsBetween2024 = (fromIso: string, toIso: string) =>
+    slots2024
+      .filter(slot => slot.startMs >= Date.parse(fromIso) && slot.startMs < Date.parse(toIso))
+      .map(slot => slot.spot);
+  check(
+    "real 2024-10-27 (hourly): 100 slots; the 120-min entry keeps 00:00–01:00Z, the repeated hour gets its own price",
+    fixture.days["2024-10-27"].length === 25 &&
+      slots2024.length === 100 &&
+      isContiguous(slots2024) &&
+      spotsBetween2024("2024-10-27T00:00:00Z", "2024-10-27T01:00:00Z").join() ===
+        "-0.00057,-0.00057,-0.00057,-0.00057" &&
+      spotsBetween2024("2024-10-27T01:00:00Z", "2024-10-27T02:00:00Z").join() ===
+        "-0.00126,-0.00126,-0.00126,-0.00126" &&
+      capturedWarnings.length === 1 &&
+      capturedWarnings[0].includes("4 15-min slot(s) covered by more than one entry"),
+    `(${slots2024.length} slots; 00:00–01:00Z ${spotsBetween2024("2024-10-27T00:00:00Z", "2024-10-27T01:00:00Z").join(" ")}; 01:00–02:00Z ${spotsBetween2024("2024-10-27T01:00:00Z", "2024-10-27T02:00:00Z").join(" ")})`
   );
 }
 
@@ -181,7 +256,23 @@ console.warn = (...args: unknown[]) => {
       spring.prices.horizonEndMs === Date.parse("2026-03-29T22:00:00Z"),
     `(asked ${spring.requestedDates.join(", ")}; ${spring.prices.slots.length} slots, coversTomorrow ${spring.prices.coversTomorrow}, horizon end ${new Date(spring.prices.horizonEndMs).toISOString()})`
   );
-  check("fetch: no duplicate-slot warning on either", !capturedWarnings.length, capturedWarnings.join(" | "));
+  check("fetch: no overlap warning on either", !capturedWarnings.length, capturedWarnings.join(" | "));
+
+  // A tomorrow URL serving today's file collapses into today's slots: tomorrow isn't in, so keep waiting
+  capturedWarnings.length = 0;
+  const wrongFile = await fetchPricesAt(
+    Date.parse("2026-11-03T12:00:00Z"),
+    ["2026-11-03", "2026-11-04"],
+    () => "2026-11-03"
+  );
+  check(
+    "fetch: tomorrow's URL serving today's file is not 'tomorrow included', and warns",
+    wrongFile.prices.slots.length === 96 &&
+      !wrongFile.prices.coversTomorrow &&
+      capturedWarnings.length === 1 &&
+      capturedWarnings[0].includes("96 15-min slot(s) covered by more than one entry"),
+    `(${wrongFile.prices.slots.length} slots, coversTomorrow ${wrongFile.prices.coversTomorrow}, ${capturedWarnings.length} warning)`
+  );
 }
 
 console.warn = realConsoleWarn;
@@ -190,10 +281,14 @@ console.log(
 );
 process.exit(failedChecks.length ? 1 : 0);
 
-/** fetchPrices at a frozen clock against a stubbed price API that has only `publishedDates` (404 otherwise) */
+/**
+ * fetchPrices at a frozen clock against a stubbed price API that has only `publishedDates` (404 otherwise),
+ * serving each requested date the file of `servedDateFor(date)`
+ */
 async function fetchPricesAt(
   nowMs: number,
-  publishedDates: string[]
+  publishedDates: string[],
+  servedDateFor: (requestedDate: string) => string = requestedDate => requestedDate
 ): Promise<{ prices: FetchedPrices; requestedDates: string[] }> {
   const realFetch = globalThis.fetch;
   const realDateNow = Date.now;
@@ -205,7 +300,7 @@ async function fetchPricesAt(
     const date = `${match[1]}-${match[2]}-${match[3]}`;
     requestedDates.push(date);
     if (!publishedDates.includes(date)) return new Response("not published", { status: 404 });
-    return new Response(JSON.stringify(apiEntriesForDate(date, 1)), { status: 200 });
+    return new Response(JSON.stringify(apiEntriesForDate(servedDateFor(date), 1)), { status: 200 });
   }) as typeof fetch;
   Date.now = () => nowMs;
   try {
