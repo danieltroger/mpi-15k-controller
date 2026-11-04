@@ -15,6 +15,9 @@ export const HOUR_MS = 3600_000;
 /** Midnight (UTC) of today: the "day" the scenarios count their hours from */
 export const testDayStartMs = Math.floor(Date.now() / (24 * HOUR_MS)) * 24 * HOUR_MS;
 
+/** Every month: a terminal-value scenario is in season whatever day the selftest runs on */
+export const EVERY_MONTH = "1,2,3,4,5,6,7,8,9,10,11,12";
+
 export const baseKnobs: PlannerKnobs = {
   max_sell_power_watts: 15000,
   min_sell_power_watts: 1500,
@@ -54,6 +57,9 @@ export const baseKnobs: PlannerKnobs = {
   terminal_value_solar_scale: 0,
   terminal_value_solar_lookahead_hours: 48,
   terminal_value_solar_forecast_max_age_hours: 12,
+  // Every month, so a scenario with the refill's scale above 0 sees it whatever day the selftest runs on;
+  // terminalValueSolarMonths.selftest.ts covers the month gate
+  terminal_value_solar_months: EVERY_MONTH,
   // Off, like the config default; on, it only acts with the terminal value (holdAllocation.ts)
   hold_enabled: false,
   hold_power_watts: 100,
@@ -66,9 +72,6 @@ export const baseKnobs: PlannerKnobs = {
   // (planner.selftest.ts, simulatedMeterCredit.selftest.ts) switch the calibrated defaults on
   meter_calibration: IDENTITY_METER_CALIBRATION,
 };
-
-/** Every month: a terminal-value scenario is in season whatever day the selftest runs on */
-export const EVERY_MONTH = "1,2,3,4,5,6,7,8,9,10,11,12";
 
 /** The input with the terminal value on (the trailing source) at the given expected spot */
 export function withTerminalValue(input: PlannerInput, expectedSpot: number, months = EVERY_MONTH): PlannerInput {

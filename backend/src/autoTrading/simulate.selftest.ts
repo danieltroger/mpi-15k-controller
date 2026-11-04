@@ -10,6 +10,7 @@ import { buildSlots, generatePlan, projectWithFixedWindows, SLOT_MS } from "./pl
 import { simulate } from "./simulate.ts";
 import { feedInReachedAtNow, rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
 import {
+  DEFAULT_TERMINAL_VALUE_MONTHS,
   effectiveTerminalValueMode,
   effectiveTerminalValueMonths,
   parseTerminalValueMonths,
@@ -367,26 +368,27 @@ const UNIT_TAIL_SPOT: HorizonValuation = { tailSpot: 1, endEnergySekPerKwh: 0 };
 
 // ---------- The terminal value knobs' corrections (config.json is hand-editable) ----------
 {
-  const parsed = parseTerminalValueMonths("10, 11,12;1 x 13 10");
+  const parsed = parseTerminalValueMonths("10, 11,12;1 x 13 10", DEFAULT_TERMINAL_VALUE_MONTHS);
   check(
     "terminal months: separators, duplicates and non-months",
     JSON.stringify(parsed) === JSON.stringify({ months: [10, 11, 12, 1], invalidEntries: ["x", "13"] }),
     `(${JSON.stringify(parsed)})`
   );
-  const corrected = effectiveTerminalValueMonths("10,11,12,1,2,3,13");
+  const corrected = effectiveTerminalValueMonths("10,11,12,1,2,3,13", DEFAULT_TERMINAL_VALUE_MONTHS);
   check(
     "terminal months: an invalid entry is dropped with a correction",
     corrected.value === "10,11,12,1,2,3" && !!corrected.correction,
     `(${corrected.correction})`
   );
-  const notAString = effectiveTerminalValueMonths([10, 11]);
+  const notAString = effectiveTerminalValueMonths([10, 11], DEFAULT_TERMINAL_VALUE_MONTHS);
   check(
     "terminal months: a non-string falls back to the default",
     notAString.value === "10,11,12,1,2,3" && !!notAString.correction
   );
   check(
     "terminal months: empty means never",
-    effectiveTerminalValueMonths("").correction === undefined && parseTerminalValueMonths("").months.length === 0
+    effectiveTerminalValueMonths("", DEFAULT_TERMINAL_VALUE_MONTHS).correction === undefined &&
+      parseTerminalValueMonths("", DEFAULT_TERMINAL_VALUE_MONTHS).months.length === 0
   );
   check(
     "terminal mode: a known mode passes, an unknown one is corrected to off",

@@ -9,10 +9,20 @@ import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
 import { plannerMeterCalibration } from "../grid/correctedMeterCalibration.ts";
 import { type BoundedPlannerKnobName, effectivePlannerKnob } from "./plannerKnobBounds.ts";
-import { effectiveTerminalValueMode, effectiveTerminalValueMonths } from "./terminalValue.ts";
+import {
+  DEFAULT_TERMINAL_VALUE_MONTHS,
+  DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
+  effectiveTerminalValueMode,
+  effectiveTerminalValueMonths,
+} from "./terminalValue.ts";
 import type { PlannerKnobs } from "./planner.types.ts";
 
-type CorrectedKnobName = BoundedPlannerKnobName | "terminal_value_mode" | "terminal_value_months" | "hold_enabled";
+type CorrectedKnobName =
+  | BoundedPlannerKnobName
+  | "terminal_value_mode"
+  | "terminal_value_months"
+  | "terminal_value_solar_months"
+  | "hold_enabled";
 
 /** The correction last warned about per knob: a bad value warns once, not on every 15-min plan run */
 const lastWarnedCorrections = new Map<CorrectedKnobName, string>();
@@ -41,7 +51,7 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     ),
     terminal_value_months: correctedKnobValue(
       "terminal_value_months",
-      effectiveTerminalValueMonths(tradingConfig.terminal_value_months)
+      effectiveTerminalValueMonths(tradingConfig.terminal_value_months, DEFAULT_TERMINAL_VALUE_MONTHS)
     ),
     terminal_value_forecast_max_deviation_sek: boundedTradingKnob(
       "terminal_value_forecast_max_deviation_sek",
@@ -66,6 +76,10 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     terminal_value_solar_forecast_max_age_hours: boundedTradingKnob(
       "terminal_value_solar_forecast_max_age_hours",
       tradingConfig.terminal_value_solar_forecast_max_age_hours
+    ),
+    terminal_value_solar_months: correctedKnobValue(
+      "terminal_value_solar_months",
+      effectiveTerminalValueMonths(tradingConfig.terminal_value_solar_months, DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS)
     ),
     hold_enabled: holdEnabledKnob(tradingConfig.hold_enabled),
     hold_power_watts: boundedTradingKnob("hold_power_watts", tradingConfig.hold_power_watts),

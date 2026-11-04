@@ -110,6 +110,7 @@ const {
   terminal_value_solar_scale,
   terminal_value_solar_lookahead_hours,
   terminal_value_solar_forecast_max_age_hours,
+  terminal_value_solar_months,
   ...tradingBeforeSolarRefill
 } = default_config.automatic_trading;
 const healedSolarRefillTrading = mergeWithDefaults({
@@ -122,9 +123,30 @@ check(
     healedSolarRefillTrading.terminal_value_solar_lookahead_hours === terminal_value_solar_lookahead_hours &&
     healedSolarRefillTrading.terminal_value_solar_forecast_max_age_hours ===
       terminal_value_solar_forecast_max_age_hours &&
+    healedSolarRefillTrading.terminal_value_solar_months === terminal_value_solar_months &&
     terminal_value_solar_scale === 0 &&
     typeof terminal_value_solar_lookahead_hours === "number" &&
     typeof terminal_value_solar_forecast_max_age_hours === "number"
+);
+
+// ——— automatic_trading stored by #89 (the live pi's: the solar knobs written, the scale at 0, no months) ———
+const healedSolarMonthsTrading = mergeWithDefaults({
+  automatic_trading: {
+    ...tradingBeforeSolarRefill,
+    terminal_value_mode: "forecast",
+    terminal_value_solar_scale: 0,
+    terminal_value_solar_lookahead_hours: 48,
+    terminal_value_solar_forecast_max_age_hours: 12,
+  },
+} as unknown as Partial<Config>).automatic_trading;
+check(
+  "merge: an automatic_trading from before the solar months picks up their default and keeps its stored scale",
+  healedSolarMonthsTrading.terminal_value_solar_months === terminal_value_solar_months &&
+    typeof terminal_value_solar_months === "string" &&
+    terminal_value_solar_months.length > 0 &&
+    healedSolarMonthsTrading.terminal_value_solar_scale === 0 &&
+    healedSolarMonthsTrading.terminal_value_mode === "forecast",
+  `(${JSON.stringify(healedSolarMonthsTrading.terminal_value_solar_months)})`
 );
 
 // ——— automatic_trading stored before the hold ———

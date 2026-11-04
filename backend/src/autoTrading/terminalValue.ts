@@ -22,6 +22,14 @@ import type { PlannerInput, PlannerKnobs } from "./planner.types.ts";
 /** terminal_value_months' default: October–March, the backtested season */
 export const DEFAULT_TERMINAL_VALUE_MONTHS = "10,11,12,1,2,3";
 
+/**
+ * terminal_value_solar_months' default (terminalValueSolar.ts): March, the month the solar refill gained in on the
+ * inputs live plans with (backtest 2022-11 → 2026-11), though with holds on not in every winter. November–February it
+ * changed nothing; October (with holds on) gained in three Octobers of four but lost in autumn 2026, the
+ * 14-day-median load forecast lagging the heating coming on, so the walk sees a PV surplus that isn't there.
+ */
+export const DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS = "3";
+
 /** Every source terminal_value_mode may name; expectedSpot.ts has an estimator for each */
 const EXPECTED_SPOT_SOURCES: Record<ExpectedSpotSource, true> = { trailing: true, forecast: true };
 
@@ -98,7 +106,9 @@ export function terminalValueInSeason(
   nowMs: number
 ): boolean {
   if (!isExpectedSpotSource(knobs.terminal_value_mode)) return false;
-  return parseTerminalValueMonths(knobs.terminal_value_months).months.includes(stockholmMonth(nowMs));
+  return parseTerminalValueMonths(knobs.terminal_value_months, DEFAULT_TERMINAL_VALUE_MONTHS).months.includes(
+    stockholmMonth(nowMs)
+  );
 }
 
 export function isExpectedSpotSource(mode: unknown): mode is ExpectedSpotSource {
@@ -116,17 +126,22 @@ export function effectiveTerminalValueMode(configured: unknown): {
 }
 
 /**
- * terminal_value_months normalised to its valid entries; entries that aren't whole months 1–12 are
- * dropped, and a value that isn't a string at all falls back to the default.
+ * A month list (terminal_value_months, terminal_value_solar_months) normalised to its valid entries; entries that
+ * aren't whole months 1–12 are dropped, and a value that isn't a string at all falls back to that knob's default.
+ * The default is required: the two knobs' defaults differ (Oct–Mar against March), and falling back to the wrong
+ * one would switch the solar refill on in October.
  */
-export function effectiveTerminalValueMonths(configured: unknown): { value: string; correction: string | undefined } {
+export function effectiveTerminalValueMonths(
+  configured: unknown,
+  defaultMonths: string
+): { value: string; correction: string | undefined } {
   if (typeof configured !== "string") {
     return {
-      value: DEFAULT_TERMINAL_VALUE_MONTHS,
-      correction: `${JSON.stringify(configured)} is not a comma-separated list of month numbers, using the default "${DEFAULT_TERMINAL_VALUE_MONTHS}"`,
+      value: defaultMonths,
+      correction: `${JSON.stringify(configured)} is not a comma-separated list of month numbers, using the default "${defaultMonths}"`,
     };
   }
-  const { months, invalidEntries } = parseTerminalValueMonths(configured);
+  const { months, invalidEntries } = parseTerminalValueMonths(configured, defaultMonths);
   if (!invalidEntries.length) return { value: configured, correction: undefined };
   return {
     value: months.join(","),
@@ -134,9 +149,12 @@ export function effectiveTerminalValueMonths(configured: unknown): { value: stri
   };
 }
 
-/** The months (1–12) a terminal_value_months value lists, and the entries that aren't one */
-export function parseTerminalValueMonths(configured: unknown): { months: number[]; invalidEntries: string[] } {
-  if (typeof configured !== "string") return parseTerminalValueMonths(DEFAULT_TERMINAL_VALUE_MONTHS);
+/** The months (1–12) a month list names, and the entries that aren't one; a non-string reads as defaultMonths */
+export function parseTerminalValueMonths(
+  configured: unknown,
+  defaultMonths: string
+): { months: number[]; invalidEntries: string[] } {
+  if (typeof configured !== "string") return parseTerminalValueMonths(defaultMonths, defaultMonths);
   const months: number[] = [];
   const invalidEntries: string[] = [];
   for (const entry of configured.split(/[\s,;]+/).filter(Boolean)) {
