@@ -15,6 +15,7 @@ import {
   passThroughExtraImportWatts,
   uncountedExportWatts,
 } from "./simulatedMeterCredit.ts";
+import { BASELINE_FEED_SOLAR_MARGIN_WATTS, endEnergyCreditSek } from "./terminalValueSolar.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
 /** A buy slot grid-charges only while the battery starts it below this share of its capacity */
@@ -137,7 +138,7 @@ export function simulate(
       reachedExportW = ramped.endW;
       feedReadingShortfallW = feedReadingShortfallWatts(sellSetW, ratingHeadroomW, calibration);
     } else {
-      if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + 380) {
+      if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + BASELINE_FEED_SOLAR_MARGIN_WATTS) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw. It drains the battery by
         // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts)
         exportW = knobs.baseline_feed_watts;
@@ -203,12 +204,13 @@ export function simulate(
     socAfterSlot[i] = socWh;
   }
 
-  // The energy left at the end saves a later import (terminalValue.ts). Credited inside revenueSek, the
-  // number every allocation pass compares, so keeping a kWh competes with selling it on equal terms. A
-  // forecast gap can leave socWh NaN; the revenue must stay a number then, as it does without the credit
+  // The energy left at the end saves a later import (terminalValue.ts), less what the PV refills after the
+  // horizon anyway (terminalValueSolar.ts). Credited inside revenueSek, the number every allocation pass
+  // compares, so keeping a kWh competes with selling it on equal terms. A forecast gap can leave socWh NaN;
+  // the revenue must stay a number then, as it does without the credit
   const endEnergyValueSek =
     valuation.endEnergySekPerKwh > 0 && Number.isFinite(socWh)
-      ? (Math.max(0, socWh - floorEmergencyWh) / 1000) * valuation.endEnergySekPerKwh
+      ? endEnergyCreditSek(valuation, socWh, floorEmergencyWh)
       : 0;
   if (endEnergyValueSek) revenueSek += endEnergyValueSek;
 

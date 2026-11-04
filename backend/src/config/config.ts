@@ -89,6 +89,8 @@ export const default_config: Config = {
       PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_deviation_sek.defaultValue,
     terminal_value_forecast_max_age_hours: PLANNER_KNOB_BOUNDS.terminal_value_forecast_max_age_hours.defaultValue,
     terminal_value_forecast_wait_seconds: PLANNER_KNOB_BOUNDS.terminal_value_forecast_wait_seconds.defaultValue,
+    terminal_value_solar_scale: PLANNER_KNOB_BOUNDS.terminal_value_solar_scale.defaultValue,
+    terminal_value_solar_lookahead_hours: PLANNER_KNOB_BOUNDS.terminal_value_solar_lookahead_hours.defaultValue,
     // Ships off: switched on by hand on the live system, with hold_overhead_watts at the measured 170 W
     hold_enabled: false,
     hold_power_watts: PLANNER_KNOB_BOUNDS.hold_power_watts.defaultValue,

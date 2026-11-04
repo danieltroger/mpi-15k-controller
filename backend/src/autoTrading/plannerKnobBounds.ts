@@ -17,6 +17,8 @@ export type BoundedPlannerKnobName = keyof Pick<
   | "terminal_value_forecast_max_deviation_sek"
   | "terminal_value_forecast_max_age_hours"
   | "terminal_value_forecast_wait_seconds"
+  | "terminal_value_solar_scale"
+  | "terminal_value_solar_lookahead_hours"
   | HoldKnobName
 >;
 
@@ -104,6 +106,17 @@ export const PLANNER_KNOB_BOUNDS = {
   // for the next plan). One open-meteo call, plus up to ~22 price-history days after a restart; on a CPU-pegged
   // Zero 2 W a TLS connect alone can take seconds. Each request has its own 60 s timeout.
   terminal_value_forecast_wait_seconds: { defaultValue: 30, min: 5, max: 120, unit: "s", step: 5 },
+  // The share of V the solar refill takes off the end-of-plan energy the PV forecast refills anyway, towards the
+  // spill value (terminalValueSolar.ts). Backtest 2022-11 → 2026-11 (Oct–Mar, the actual solar past the horizon
+  // as its forecast, open-meteo's range): 0.5 saved 0–35 SEK per winter, positive in every winter also with the
+  // solar ×0.7, ×1.3 or a day late; 0.75 earned less, 1 lost in two periods (a later plan often sells the top of
+  // the battery at a peak before the sun refills it, worth more than the spill). On the live consumption forecast
+  // 0.5 was +22 SEK over the four winters, −4.5 in 2025/26 (one October decision, the same at 0.25). 0 = off.
+  terminal_value_solar_scale: { defaultValue: 0.5, min: 0, max: 1, unit: "×", step: 0.05 },
+  // How far past the plan's end the walk looks. In the backtest 24 h earned ~20 % less than 48 on the actual load
+  // (the same on the live consumption forecast), 72 about the same as 48; open-meteo's 4 forecast days end 31–55 h
+  // past the plan anyway. 0 = off.
+  terminal_value_solar_lookahead_hours: { defaultValue: 48, min: 0, max: 96, unit: "h", step: 1 },
   // The charge power of a hold window (holdAllocation.ts): the runtime turns it into battery amps (watts /
   // battery volts, rounded, at least 1 A), so 50 W is MUCHGC0010 and 100 W MUCHGC0020. The 2025-01, 2025-11
   // and 2026-03 low-current windows charged ~4 A (~200 W) whatever 1–4 A was commanded, so the battery may

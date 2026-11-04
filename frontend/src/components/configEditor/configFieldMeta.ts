@@ -351,7 +351,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "terminal_value_months"],
         "Active months",
-        `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. Only October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}, the default) has been backtested. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
+        `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}) is the default. In the four-winter backtest with the solar refill below at 0.5, adding April (10,11,12,1,2,3,4) saved another ~20–90 SEK in three Aprils of four and lost 13–30 SEK in April 2026; September looked good too but was backtested less. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
       ),
       f(
         ["automatic_trading", "terminal_value_forecast_max_deviation_sek"],
@@ -370,6 +370,18 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Price outlook: max wait for its inputs",
         `Price outlook only: how long a plan waits for the weather forecast and any missing days of the 30-day price history it needs (up to ~22 after a restart, otherwise none or one). Past this the plan uses the trailing mean and the fetch carries on, so the next plan has it. Lower never holds a plan up for long; higher rides out a slow network or a busy pi before falling back. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_forecast_wait_seconds")}`,
         plannerKnobInput("terminal_value_forecast_wait_seconds")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_solar_scale"],
+        "Solar refill: value taken off",
+        `In spring, autumn and on sunny winter days the solar panels refill the battery within a day or two after the plan ends. A kWh kept or bought now then saves no import: it only makes the battery full sooner, and the solar it displaces is exported. The planner walks the battery forward past the plan's end on the solar and house-load forecasts; energy above the level from which the sun fills the battery before the house drains it is worth less, by this share of the gap between the end-of-plan value and what the displaced solar earns exported. 0 = no reduction (the end-of-plan value as without this); 1 = all of it, down to the export value. Backtested over four winters (October–March, this house's load and prices, the real solar after the plan standing in for its forecast): 0.5 saved 0–35 SEK per winter over the end-of-plan value without it, mostly in March, and stayed positive in every winter with the solar forecast 30 % too low, 30 % too high or a day late; on the live consumption forecast it was +22 SEK over the four winters but −4.5 in 2025/26. 0.75 earned less, and 1 lost in some winters: a later plan often sells the top of the battery at a peak before the sun refills it, worth more than the export. Dark days change nothing. With the solar forecast more than 12 h old (open-meteo down), plans leave the reduction out and the log says so once. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_solar_scale")}`,
+        plannerKnobInput("terminal_value_solar_scale")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_solar_lookahead_hours"],
+        "Solar refill: hours looked ahead",
+        `How far past the plan's end (the published prices plus the reserve tail) the solar refill above walks the battery forward. The solar forecast reaches 31–55 hours past it, and the walk stops there whatever this says. Shorter only counts the sun of the next day (24 h earned ~20 % less in the backtest); longer also counts days whose forecast is less sure (72 h was no better than 48). 0 = the solar refill is off. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_solar_lookahead_hours")}`,
+        plannerKnobInput("terminal_value_solar_lookahead_hours")
       ),
       f(
         ["automatic_trading", "hold_enabled"],

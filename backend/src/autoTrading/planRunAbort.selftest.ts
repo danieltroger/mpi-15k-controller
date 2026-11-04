@@ -33,7 +33,14 @@ const ctx: TraderCtx = {
   nextDailyRunAt: () => undefined,
   setStatus: () => {},
   state: { owned_entries: { selling: {}, buying: {} }, vetoes: [], forecast_log: {} },
-  flags: { stateLoaded: true, planInFlight: false, aborted: false, consecutiveFailures: 0, measuredFeedInStale: false },
+  flags: {
+    stateLoaded: true,
+    planInFlight: false,
+    aborted: false,
+    consecutiveFailures: 0,
+    measuredFeedInStale: false,
+    solarForecastTooOldForRefill: false,
+  },
   timers: {},
   // Never released: nothing may get past the abort check to the schedule
   scheduleLock: new Promise(() => {}),

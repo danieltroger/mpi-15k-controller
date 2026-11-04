@@ -23,6 +23,8 @@ const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: numbe
   { knobName: "terminal_value_forecast_max_deviation_sek", inBounds: 0.5, tooLow: -0.25, tooHigh: 10 },
   { knobName: "terminal_value_forecast_max_age_hours", inBounds: 3, tooLow: 0, tooHigh: 48 },
   { knobName: "terminal_value_forecast_wait_seconds", inBounds: 60, tooLow: 1, tooHigh: 600 },
+  { knobName: "terminal_value_solar_scale", inBounds: 0.75, tooLow: -0.5, tooHigh: 1.5 },
+  { knobName: "terminal_value_solar_lookahead_hours", inBounds: 24, tooLow: -12, tooHigh: 240 },
   { knobName: "hold_power_watts", inBounds: 200, tooLow: 20, tooHigh: 5000 },
   { knobName: "hold_overhead_watts", inBounds: 150, tooLow: -50, tooHigh: 2000 },
   // The one knob that may be negative (the battery still giving a little during a hold): clamped, not reset

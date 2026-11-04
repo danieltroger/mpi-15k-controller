@@ -38,6 +38,8 @@ export type PlannerKnobs = Pick<
   | "terminal_value_forecast_max_deviation_sek"
   | "terminal_value_forecast_max_age_hours"
   | "terminal_value_forecast_wait_seconds"
+  | "terminal_value_solar_scale"
+  | "terminal_value_solar_lookahead_hours"
   | "hold_enabled"
   | "hold_power_watts"
   | "hold_overhead_watts"
@@ -64,6 +66,12 @@ export type PlannerInput = {
    * slot's midpoint alone would skip a sub-step; slots and hours integrate through this when given.
    */
   solarAverageWattsBetween?: (startMs: number, endMs: number) => number;
+  /**
+   * Where the solar forecast ends (its last hour's end), when it is fresh enough to look past the horizon with:
+   * the terminal value's solar refill (terminalValueSolar.ts) walks solarWattsAt up to here at most. Absent, the
+   * end-of-plan energy is valued as without the solar refill.
+   */
+  solarForecastEndMs?: number;
   /** House consumption forecast (AC output) in watts, excluding inverter parasitic draw. */
   houseLoadWattsAt: (ms: number) => number;
   parasiticWatts: number;
@@ -129,6 +137,23 @@ export type HorizonValuation = {
    * 0 = the energy left at the end is worth nothing
    */
   endEnergySekPerKwh: number;
+  /** The end-of-plan energy the solar forecast past the horizon refills anyway, credited at less; absent = none */
+  solarRefill?: SolarRefill;
+};
+/**
+ * The part of the end-of-plan energy the PV surplus after the horizon would refill before the house drains it
+ * (terminalValueSolar.ts): above fromWh a DC kWh is credited at sekPerKwh instead of endEnergySekPerKwh
+ */
+export type SolarRefill = {
+  /** Battery energy (Wh) from which the idle battery is full before it ever reaches the emergency floor */
+  fromWh: number;
+  /**
+   * SEK per DC kWh above fromWh: from endEnergySekPerKwh (terminal_value_solar_scale 0) down to what the PV it
+   * displaces earns exported (1)
+   */
+  sekPerKwh: number;
+  /** When the idle battery, starting the walk at fromWh, is full: the plan note quotes it */
+  fullAtMs: number;
 };
 export type PlannedWindow = {
   startMs: number;

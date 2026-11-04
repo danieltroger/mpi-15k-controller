@@ -55,6 +55,14 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
       "terminal_value_forecast_wait_seconds",
       tradingConfig.terminal_value_forecast_wait_seconds
     ),
+    terminal_value_solar_scale: boundedTradingKnob(
+      "terminal_value_solar_scale",
+      tradingConfig.terminal_value_solar_scale
+    ),
+    terminal_value_solar_lookahead_hours: boundedTradingKnob(
+      "terminal_value_solar_lookahead_hours",
+      tradingConfig.terminal_value_solar_lookahead_hours
+    ),
     hold_enabled: holdEnabledKnob(tradingConfig.hold_enabled),
     hold_power_watts: boundedTradingKnob("hold_power_watts", tradingConfig.hold_power_watts),
     hold_overhead_watts: boundedTradingKnob("hold_overhead_watts", tradingConfig.hold_overhead_watts),

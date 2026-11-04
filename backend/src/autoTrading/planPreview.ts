@@ -145,6 +145,8 @@ const input: PlannerInput = {
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
   solarAverageWattsBetween: solar.averageWattsBetween,
+  // Fetched just now (or a stale cache after a failure, which fetchSolarForecast warned about above)
+  solarForecastEndMs: solar.rangeEndMs,
   houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
   parasiticWatts: inverterIdleWatts(config),
   socPercent: soc,

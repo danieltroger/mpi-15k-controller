@@ -23,7 +23,8 @@
  * covers the house. The accepted slots are finally merged into schedule windows (planWindows.ts).
  *
  * Energy left in the battery when the simulation ends is worth nothing, unless terminal_value_mode values
- * it at the import it avoids later (terminalValue.ts): then selling competes with keeping, buying goes in
+ * it at the import it avoids later (terminalValue.ts), less the part the solar forecast past the horizon would
+ * refill anyway (terminalValueSolar.ts): then selling competes with keeping, buying goes in
  * blocks and can stock up for after the horizon, the sells get a second pass once the buys have filled the
  * battery, and the unpriced tail is priced at the expected spot where that is higher. With hold_enabled it
  * finally holds (holdAllocation.ts): in cheap dark quarters no trade took, the house runs from the grid
@@ -40,6 +41,8 @@ import { allocateHolds, holdNote, holdWattsBySlot, plannedHoldSlots } from "./ho
 import { resolveRunningHold, runningHoldNote } from "./runningHold.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
 import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
+import { solarRefillFor } from "./terminalValueSolar.ts";
+import { terminalValueNote } from "./terminalValueNote.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type {
   AllocationContext,
@@ -73,7 +76,7 @@ export function generatePlan(plannerInput: PlannerInput): PlanResult {
       socSeries: [],
     };
   }
-  const { valuation, terminal } = horizonValuation(input, pricedSlots);
+  const { valuation, terminal } = horizonValuation(input, slots, pricedSlots);
 
   const sellW = new Array(slots.length).fill(0);
   const buyW = new Array(slots.length).fill(0);
@@ -188,7 +191,7 @@ export function generatePlan(plannerInput: PlannerInput): PlanResult {
     `Horizon ${new Date(Math.max(input.nowMs, pricedSlots[0].startMs)).toISOString()} → ${new Date(pricedSlots[pricedSlots.length - 1].endMs).toISOString()} (+${input.constraintTailHours}h reserve tail)`
   );
   if (knobs.extra_reserve_kwh > 0) notes.push(`User extra reserve of ${knobs.extra_reserve_kwh} kWh respected`);
-  const terminalNote = terminalValueNote(terminal, current);
+  const terminalNote = terminalValueNote(input, terminal, valuation, current);
   if (terminalNote) notes.push(terminalNote);
 
   const projection: PlanProjection = {
@@ -262,7 +265,7 @@ export function projectWithFixedWindows(plannerInput: PlannerInput): {
     : withoutRunningHold;
   const slots = buildSlots(input);
   const pricedSlots = slots.filter(slot => slot.spot !== undefined);
-  const { valuation } = horizonValuation(input, pricedSlots);
+  const { valuation } = horizonValuation(input, slots, pricedSlots);
   const result = simulate(input, slots, new Array(slots.length).fill(0), new Array(slots.length).fill(0), valuation);
   return {
     violationWh: result.violationWh,
@@ -278,17 +281,22 @@ export function projectWithFixedWindows(plannerInput: PlannerInput): {
 /**
  * How a plan for this input prices what lies past the published prices: the unpriced constraint tail at
  * the median of the last priced day (a conservative stand-in) and the energy left at the end at nothing.
- * With an active terminal value (terminalValue.ts) that energy is worth V, and the tail is priced at the
- * expected spot when that is the higher of the two: a cheaper tail would make room for the tail's PV
- * overflow look worth less and sell more now, trading the conservative tail for mean reversion just when
- * prices run above their trailing mean. generatePlan and projectWithFixedWindows share it, so a fresh plan
- * and a replayed schedule count the same things (the opportunistic replan compares their value).
+ * With an active terminal value (terminalValue.ts) that energy is worth V, less where the solar forecast
+ * after the last slot refills it anyway (terminalValueSolar.ts), and the tail is priced at the expected spot
+ * when that is the higher of the two: a cheaper tail would make room for the tail's PV overflow look worth
+ * less and sell more now, trading the conservative tail for mean reversion just when prices run above their
+ * trailing mean. generatePlan and projectWithFixedWindows share it, so a fresh plan and a replayed schedule
+ * count the same things (the opportunistic replan compares their value).
  */
 function horizonValuation(
   input: PlannerInput,
+  slots: Slot[],
   pricedSlots: Slot[]
 ): { valuation: HorizonValuation; terminal: TerminalValuationResult } {
   const terminal = terminalValuationFor(input);
+  const solarRefill = terminal.valuation
+    ? solarRefillFor(input, slots[slots.length - 1]?.endMs ?? input.nowMs, terminal.valuation)
+    : undefined;
   const lastDaySpots = pricedSlots
     .slice(-96)
     .map(slot => slot.spot!)
@@ -298,18 +306,10 @@ function horizonValuation(
     valuation: {
       tailSpot: Math.max(lastDayMedianSpot, terminal.valuation?.expectedSpot ?? lastDayMedianSpot),
       endEnergySekPerKwh: terminal.valuation?.endEnergySekPerKwh ?? 0,
+      ...(solarRefill ? { solarRefill } : {}),
     },
     terminal,
   };
-}
-
-/** The plan note on the terminal value: what end-of-plan energy is worth and what the plan leaves, or why it has none */
-function terminalValueNote(terminal: TerminalValuationResult, finalResult: SimResult): string | undefined {
-  if (terminal.unavailable) return `End-of-plan energy not valued: ${terminal.unavailable}`;
-  const valuation = terminal.valuation;
-  if (!valuation) return undefined;
-  const leftKwh = valuation.endEnergySekPerKwh > 0 ? finalResult.endEnergyValueSek / valuation.endEnergySekPerKwh : 0;
-  return `End-of-plan energy valued at ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh (${valuation.basis}): the ${leftKwh.toFixed(1)} kWh left above the emergency floor are worth ${finalResult.endEnergyValueSek.toFixed(1)} SEK, not counted in the revenue figures`;
 }
 
 function windowPowerAt(windows: FixedWindow[], startMs: number, endMs: number): number {
