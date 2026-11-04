@@ -2,8 +2,9 @@
  * The solar refill's month gate, terminal_value_solar_months (terminalValueSolar.ts' solarRefillInSeason): the refill
  * only acts in the listed months, read in Swedish time at the plan's run as terminal_value_months is, so a plan on
  * the last day of February is February's even though its horizon ends in March. Outside them the plan is the plan
- * without the refill to the byte; inside, the one the refill made before the gate. The stale-forecast warning and
- * its "fresh again" line follow the gate, and a bad value is corrected with a warning. Run from backend/ with:
+ * without the refill to the byte; inside, the one the refill made before the gate. The whole gate (solarRefillApplies)
+ * names the first part that fails, the stale-forecast warning and its "fresh again" line follow it, and a bad value
+ * is corrected with a warning. Run from backend/ with:
  *   yarn node src/autoTrading/terminalValueSolarMonths.selftest.ts
  */
 import { default_config } from "../config/config.ts";
@@ -16,7 +17,13 @@ import {
   parseTerminalValueMonths,
   stockholmMonth,
 } from "./terminalValue.ts";
-import { solarRefillFor, solarRefillInSeason } from "./terminalValueSolar.ts";
+import {
+  solarRefillApplies,
+  solarRefillBlocker,
+  solarRefillFor,
+  type SolarRefillGateKnobs,
+  solarRefillInSeason,
+} from "./terminalValueSolar.ts";
 import {
   baseKnobs,
   check,
@@ -53,25 +60,79 @@ const MARCH_1_AFTER_MIDNIGHT_MS = Date.UTC(2026, 1, 28, 23, 30);
     "months: Swedish time (23:30 UTC on February 28 is March in Sweden)",
     inSeason("3", MARCH_1_AFTER_MIDNIGHT_MS) && !inSeason("2", MARCH_1_AFTER_MIDNIGHT_MS)
   );
-  const everyMonthStartMs = Array.from({ length: 12 }, (_, monthIndex) => Date.UTC(2026, monthIndex, 15, 12));
+  const midMonthNoonsMs = Array.from({ length: 12 }, (_, monthIndex) => Date.UTC(2026, monthIndex, 15, 12));
   check(
     "months: empty = never",
-    everyMonthStartMs.every(nowMs => !inSeason("", nowMs)) &&
-      everyMonthStartMs.every(nowMs => inSeason(EVERY_MONTH, nowMs))
+    midMonthNoonsMs.every(nowMs => !inSeason("", nowMs)) && midMonthNoonsMs.every(nowMs => inSeason(EVERY_MONTH, nowMs))
   );
   check(
     "months: stray entries and spaces are ignored, as in terminal_value_months",
     inSeason("2; x, 13 3", MARCH_1_AFTER_MIDNIGHT_MS) && !inSeason("x, 13, 4", MARCH_1_AFTER_MIDNIGHT_MS)
   );
-  const defaultMonths = parseTerminalValueMonths(DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS).months;
+  const defaultMonths = parseTerminalValueMonths(
+    DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
+    DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS
+  ).months;
   check(
     "months: a value that isn't a string reads as the knob's default, not terminal_value_months'",
-    everyMonthStartMs.every(
+    midMonthNoonsMs.every(
       nowMs =>
         solarRefillInSeason({ terminal_value_solar_months: undefined as unknown as string }, nowMs) ===
         defaultMonths.includes(stockholmMonth(nowMs))
     ),
     `(default "${DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS}")`
+  );
+}
+
+// ---------- (a2) The whole gate in one place, and the first part of it that fails (the dry-run preview prints it) ----------
+{
+  const onInMarch: SolarRefillGateKnobs = {
+    terminal_value_mode: "forecast",
+    terminal_value_months: "10,11,12,1,2,3",
+    terminal_value_solar_scale: 0.5,
+    terminal_value_solar_lookahead_hours: 48,
+    terminal_value_solar_months: "3",
+  };
+  const cases: [string, SolarRefillGateKnobs, string | undefined][] = [
+    ["on, March listed", onInMarch, undefined],
+    ["mode off", { ...onInMarch, terminal_value_mode: "off" }, "the end-of-plan value is off"],
+    ["April listed only here", { ...onInMarch, terminal_value_solar_months: "3,4" }, undefined],
+    ["scale 0", { ...onInMarch, terminal_value_solar_scale: 0 }, "terminal_value_solar_scale is 0"],
+    [
+      "look-ahead 0",
+      { ...onInMarch, terminal_value_solar_lookahead_hours: 0 },
+      "terminal_value_solar_lookahead_hours is 0",
+    ],
+    [
+      "March not listed",
+      { ...onInMarch, terminal_value_solar_months: "2" },
+      'this month isn\'t in terminal_value_solar_months ("2")',
+    ],
+  ];
+  const marchNoonMs = Date.UTC(2026, 2, 15, 12);
+  const aprilNoonMs = Date.UTC(2026, 3, 15, 12);
+  const failures = cases.filter(
+    ([, knobs, expected]) =>
+      solarRefillBlocker(knobs, marchNoonMs) !== expected ||
+      solarRefillApplies(knobs, marchNoonMs) !== (expected === undefined)
+  );
+  check(
+    "gate: each part blocks with its reason, in order (mode, terminal months, scale, look-ahead, solar months)",
+    failures.length === 0,
+    `(${failures.map(([scenario]) => scenario).join(", ")})`
+  );
+  check(
+    "gate: April listed only in the solar months doesn't apply outside terminal_value_months",
+    !solarRefillApplies({ ...onInMarch, terminal_value_solar_months: "3,4" }, aprilNoonMs) &&
+      solarRefillBlocker({ ...onInMarch, terminal_value_solar_months: "3,4" }, aprilNoonMs) ===
+        'this month isn\'t in terminal_value_months ("10,11,12,1,2,3")'
+  );
+  check(
+    "gate: the scale at 0 is named before the months (March at the live scale 0 isn't reported as on)",
+    solarRefillBlocker(
+      { ...onInMarch, terminal_value_solar_scale: 0, terminal_value_solar_months: "2" },
+      marchNoonMs
+    ) === "terminal_value_solar_scale is 0"
   );
 }
 

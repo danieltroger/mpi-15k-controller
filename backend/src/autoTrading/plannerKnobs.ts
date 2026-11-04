@@ -10,6 +10,7 @@ import { warnLog } from "../utilities/logging.ts";
 import { plannerMeterCalibration } from "../grid/correctedMeterCalibration.ts";
 import { type BoundedPlannerKnobName, effectivePlannerKnob } from "./plannerKnobBounds.ts";
 import {
+  DEFAULT_TERMINAL_VALUE_MONTHS,
   DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
   effectiveTerminalValueMode,
   effectiveTerminalValueMonths,
@@ -50,7 +51,7 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     ),
     terminal_value_months: correctedKnobValue(
       "terminal_value_months",
-      effectiveTerminalValueMonths(tradingConfig.terminal_value_months)
+      effectiveTerminalValueMonths(tradingConfig.terminal_value_months, DEFAULT_TERMINAL_VALUE_MONTHS)
     ),
     terminal_value_forecast_max_deviation_sek: boundedTradingKnob(
       "terminal_value_forecast_max_deviation_sek",

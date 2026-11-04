@@ -18,15 +18,17 @@
  * heating coming on in October (the walk then sees a surplus that isn't there) and the falling load in March (the
  * safe side). On that forecast the refill's gains were mostly in March, and its biggest losses in Octobers.
  *
- * Pure (type-only imports, a constant and terminalValue.ts' month parsing): the walk reads only the planner input's
- * forecasts.
+ * Pure (type-only imports, a constant and terminalValue.ts' season and month parsing): the walk reads only the planner
+ * input's forecasts.
  */
 import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
 import {
   DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
+  isExpectedSpotSource,
   parseTerminalValueMonths,
   stockholmMonth,
   type TerminalValuation,
+  terminalValueInSeason,
 } from "./terminalValue.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SolarRefill } from "./planner.types.ts";
 
@@ -55,8 +57,8 @@ export function solarRefillFor(
 ): SolarRefill | undefined {
   const knobs = input.knobs;
   const fullValueSekPerKwh = valuation.endEnergySekPerKwh;
-  if (!(knobs.terminal_value_solar_scale > 0) || !(knobs.terminal_value_solar_lookahead_hours > 0)) return undefined;
-  if (!solarRefillInSeason(knobs, input.nowMs)) return undefined;
+  // The caller has a valuation, so the terminal value is in season: the refill's own part of the gate is left
+  if (solarRefillKnobsBlocker(knobs, input.nowMs) !== undefined) return undefined;
   if (!(fullValueSekPerKwh > 0) || input.solarForecastEndMs === undefined) return undefined;
   const walkEndMs = Math.min(
     horizonEndMs + knobs.terminal_value_solar_lookahead_hours * HOUR_MS,
@@ -76,6 +78,48 @@ export function solarRefillFor(
   // A low terminal_value_scale can put V at or below the spill: then nothing is taken off
   if (!(refilledSekPerKwh < fullValueSekPerKwh - 1e-9)) return undefined;
   return { fromWh: threshold.fromWh, sekPerKwh: refilledSekPerKwh, fullAtMs: threshold.fullAtMs };
+}
+
+/** The knobs the solar refill's gate reads */
+export type SolarRefillGateKnobs = Pick<
+  PlannerKnobs,
+  | "terminal_value_mode"
+  | "terminal_value_months"
+  | "terminal_value_solar_scale"
+  | "terminal_value_solar_lookahead_hours"
+  | "terminal_value_solar_months"
+>;
+
+/**
+ * Whether the solar refill can act in a plan at nowMs (given an expected spot and a fresh solar forecast): the terminal
+ * value on and in season, the refill's scale and look-ahead above 0, the month in terminal_value_solar_months. The
+ * stale-forecast log (solarRefillForecast.ts) reads it; solarRefillFor checks the same refill knobs.
+ */
+export function solarRefillApplies(knobs: SolarRefillGateKnobs, nowMs: number): boolean {
+  return solarRefillBlocker(knobs, nowMs) === undefined;
+}
+
+/** The first part of solarRefillApplies' gate that fails at nowMs, in words (the dry-run preview prints it) */
+export function solarRefillBlocker(knobs: SolarRefillGateKnobs, nowMs: number): string | undefined {
+  if (!terminalValueInSeason(knobs, nowMs)) {
+    return isExpectedSpotSource(knobs.terminal_value_mode)
+      ? `this month isn't in terminal_value_months ("${knobs.terminal_value_months}")`
+      : "the end-of-plan value is off";
+  }
+  return solarRefillKnobsBlocker(knobs, nowMs);
+}
+
+/** The refill's own knobs' part of the gate: the scale, the look-ahead and the months */
+function solarRefillKnobsBlocker(
+  knobs: Omit<SolarRefillGateKnobs, "terminal_value_mode" | "terminal_value_months">,
+  nowMs: number
+): string | undefined {
+  if (!(knobs.terminal_value_solar_scale > 0)) return "terminal_value_solar_scale is 0";
+  if (!(knobs.terminal_value_solar_lookahead_hours > 0)) return "terminal_value_solar_lookahead_hours is 0";
+  if (!solarRefillInSeason(knobs, nowMs)) {
+    return `this month isn't in terminal_value_solar_months ("${knobs.terminal_value_solar_months}")`;
+  }
+  return undefined;
 }
 
 /**
