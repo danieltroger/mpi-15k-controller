@@ -11,6 +11,7 @@ import { logLog } from "../utilities/logging.ts";
 import { inverterIdleWatts, packCapacityWh } from "../battery/ahLedgerDerivedValues.ts";
 import type { FetchedPrices } from "./priceService.ts";
 import { fetchSolarForecast } from "./solarForecast.ts";
+import { solarForecastEndForRefill } from "./solarRefillForecast.ts";
 import { fetchConsumptionForecast } from "./consumptionForecast.ts";
 import { fetchElpatronForecast } from "./elpatronForecast.ts";
 import { plannerKnobsFromConfig } from "./plannerKnobs.ts";
@@ -21,7 +22,10 @@ import type { ExpectedSpotEstimate, FixedWindow, PlannerInput } from "./planner.
 import type { MqttValue } from "../sharedTypes.ts";
 import type { TraderCtx } from "./traderContext.ts";
 
-/** The parts of the trader context planner-input assembly reads (and flags.measuredFeedInStale, which it writes) */
+/**
+ * The parts of the trader context planner-input assembly reads (and flags.measuredFeedInStale and
+ * flags.solarForecastTooOldForRefill, which it writes)
+ */
 export type PlannerInputContext = Pick<TraderCtx, "gridPowerReading" | "influxClient" | "state" | "flags">;
 
 /**
@@ -58,12 +62,15 @@ export async function buildPlannerInput(
     cfg.elpatron_switching
   );
   const { sells, buys } = userWindows(ctx, cfg);
+  const knobs = plannerKnobsFromConfig(cfg);
   return {
     nowMs,
     prices: prices.slots,
     solarWattsAt: solar.wattsAt,
     solarAverageWattsBetween: solar.averageWattsBetween,
+    solarForecastEndMs: solarForecastEndForRefill(ctx.flags, solar, knobs, nowMs),
     houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
+    houseLoadForecastEndMs: elpatron.modelEndMs,
     // Idle draw and usable capacity now come from the Ah ledger's online-tracked drain/capacity (the Wh
     // fitter's persisted capacity/parasitic state is gone): inverterIdleWatts = drain_a × v_discharge, capacityWh = capacity_ah × v_discharge.
     parasiticWatts: inverterIdleWatts(cfg),
@@ -83,7 +90,7 @@ export async function buildPlannerInput(
       .filter(veto => veto.kind === "buy")
       .map(veto => ({ startMs: +new Date(veto.start), endMs: +new Date(veto.end) })),
     expectedSpot,
-    knobs: plannerKnobsFromConfig(cfg),
+    knobs,
   };
 }
 

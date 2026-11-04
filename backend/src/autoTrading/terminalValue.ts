@@ -11,6 +11,9 @@
  * in autumn 2026, positive in every period. Plain rules (fill below X öre, hold X % SOC, fill to 100 % on a
  * price rise) lost 100–1500 SEK per winter against the planner without them.
  *
+ * Where the solar forecast past the horizon refills the battery anyway, the top of it is worth less than V
+ * (terminalValueSolar.ts).
+ *
  * Pure (type-only imports): the config page shares the knob defaults.
  */
 import type { ExpectedSpotSource, TerminalValueMode } from "../config/config.types.ts";

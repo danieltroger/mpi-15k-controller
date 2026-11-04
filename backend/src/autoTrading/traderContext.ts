@@ -34,6 +34,8 @@ export type TraderCtx = {
     consecutiveFailures: number;
     /** The last planner input found no fresh grid power reading (see logMeasuredFeedInFreshnessChange) */
     measuredFeedInStale: boolean;
+    /** The last planner input's solar forecast was too old for the solar refill (see solarForecastEndForRefill) */
+    solarForecastTooOldForRefill: boolean;
   };
   timers: { recovery?: ReturnType<typeof setTimeout> };
   /** See withScheduleLock */

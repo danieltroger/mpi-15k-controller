@@ -50,6 +50,10 @@ export const baseKnobs: PlannerKnobs = {
   terminal_value_forecast_max_deviation_sek: 1,
   terminal_value_forecast_max_age_hours: 6,
   terminal_value_forecast_wait_seconds: 30,
+  // The scenarios predate the solar refill and give no solarForecastEndMs; terminalValueSolar.selftest.ts covers it
+  terminal_value_solar_scale: 0,
+  terminal_value_solar_lookahead_hours: 48,
+  terminal_value_solar_forecast_max_age_hours: 12,
   // Off, like the config default; on, it only acts with the terminal value (holdAllocation.ts)
   hold_enabled: false,
   hold_power_watts: 100,

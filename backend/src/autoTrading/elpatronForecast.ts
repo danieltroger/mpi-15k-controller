@@ -22,7 +22,20 @@ export type ElpatronForecast = {
   wattsAt: (ms: number) => number;
   armed: boolean;
   tankTempC: number | undefined;
+  /**
+   * While armed, where wattsAt stops modelling the element (0 after): ELPATRON_MODEL_HORIZON_MS from now, or a
+   * manually switched-on element's MANUAL_ON_MODEL_HORIZON_MS. Undefined when not armed (0 is then the whole truth).
+   */
+  modelEndMs: number | undefined;
 };
+
+/**
+ * How far ahead the element is modelled. Four days: past the plan's slots (prices + reserve tail, under 3 days) and
+ * past the 4-day solar forecast, which ends at most 4 days from now; the terminal value's solar refill walks up to
+ * there (terminalValueSolar.ts) and stops at modelEndMs. The forward simulation is causal, so the first days are the
+ * same whatever this is.
+ */
+export const ELPATRON_MODEL_HORIZON_MS = 4 * 24 * 3600 * 1000;
 
 /**
  * A manually-switched-on element (mode off, GPIO on by hand) is a point-in-time observation, not
@@ -48,7 +61,7 @@ export async function fetchElpatronForecast({
   // on manually — that last case is only knowable by asking the heating pi
   const elpatronMode = resolveElpatronMode(elpatronConfig);
   const armed = elpatronMode !== "off" || (await readElpatronGpioIsOn(elpatronConfig.heating_pi_ip)) === true;
-  if (!armed) return { wattsAt: () => 0, armed: false, tankTempC: undefined };
+  if (!armed) return { wattsAt: () => 0, armed: false, tankTempC: undefined, modelEndMs: undefined };
 
   const tankTempC = await fetchTankTemperature(influxClient);
   // Without a tank reading, assume mid-band: still predicts a plausible dawn burn + top-ups
@@ -69,12 +82,13 @@ export async function fetchElpatronForecast({
     tank_cooling_degrees_per_hour: elpatronConfig.tank_cooling_degrees_per_hour,
     tank_max_temperature: elpatronConfig.tank_max_temperature,
   });
-  return { wattsAt, armed: true, tankTempC };
+  const modelHorizonMs = elpatronMode === "off" ? MANUAL_ON_MODEL_HORIZON_MS : ELPATRON_MODEL_HORIZON_MS;
+  return { wattsAt, armed: true, tankTempC, modelEndMs: nowMs + modelHorizonMs };
 }
 
 /**
- * Pure forward simulation of tank temperature vs the switching rule, 15-min steps over 3 days
- * (past the planner's price horizon + constraint tail). Exported for the selftest.
+ * Pure forward simulation of tank temperature vs the switching rule, 15-min steps over ELPATRON_MODEL_HORIZON_MS.
+ * Exported for the selftest.
  */
 export function buildElpatronLoadModel({
   nowMs,
@@ -95,7 +109,7 @@ export function buildElpatronLoadModel({
 }): (ms: number) => number {
   const stepMs = 15 * 60 * 1000;
   const stepHours = 0.25;
-  const steps = 3 * 24 * 4;
+  const steps = ELPATRON_MODEL_HORIZON_MS / stepMs;
   const roomTempC = 20;
   // While the thermostat holds the band, the element duty-cycles at just the standing loss
   const standingLossW = tank_wh_per_degree * tank_cooling_degrees_per_hour;

@@ -31,7 +31,10 @@ export type PackagingContext = {
   stockingBuySlots: Set<number>;
   /** The slots written as holds (holdAllocation.ts): their windows are holds */
   holdSlots: Set<number>;
-  /** What a DC kWh left at plan end is worth (HorizonValuation): what a hold at the end of the prices keeps it for */
+  /**
+   * What the last DC kWh left at plan end is worth (terminalValueSolar.ts' marginalEndEnergySekPerKwh: V, or less
+   * where the solar refill covers the plan's end SOC): what a hold at the end of the prices keeps it for
+   */
   endEnergySekPerKwh: number;
 };
 

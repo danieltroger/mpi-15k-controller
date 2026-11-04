@@ -44,6 +44,7 @@ export function useAutoTrader({ configSignal }: { configSignal: Awaited<ReturnTy
       aborted: false,
       consecutiveFailures: 0,
       measuredFeedInStale: false,
+      solarForecastTooOldForRefill: false,
     },
     timers: {},
     scheduleLock: Promise.resolve(),

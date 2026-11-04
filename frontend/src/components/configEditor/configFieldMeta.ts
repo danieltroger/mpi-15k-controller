@@ -351,7 +351,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["automatic_trading", "terminal_value_months"],
         "Active months",
-        `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. Only October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}, the default) has been backtested. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
+        `Comma-separated month numbers (1 = January, Swedish time) the end-of-plan value applies in; outside them the planner behaves as with it off. Only October–March (${DEFAULT_TERMINAL_VALUE_MONTHS}, the default) has been backtested as a live setting. Adding April gained in three of four backtested Aprils but lost in every variant of the latest and sunniest, April 2026, for a reason not yet understood, with the solar refill below on or off. Entries that aren't 1–12 are ignored with a warning; empty = never. Applies from the next plan run.`
       ),
       f(
         ["automatic_trading", "terminal_value_forecast_max_deviation_sek"],
@@ -370,6 +370,24 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         "Price outlook: max wait for its inputs",
         `Price outlook only: how long a plan waits for the weather forecast and any missing days of the 30-day price history it needs (up to ~22 after a restart, otherwise none or one). Past this the plan uses the trailing mean and the fetch carries on, so the next plan has it. Lower never holds a plan up for long; higher rides out a slow network or a busy pi before falling back. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_forecast_wait_seconds")}`,
         plannerKnobInput("terminal_value_forecast_wait_seconds")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_solar_scale"],
+        "Solar refill: value taken off",
+        `In spring, autumn and on sunny winter days the solar panels refill the battery within a day or two after the plan ends. A kWh kept or bought now then saves no import: it only makes the battery full sooner, and the solar it displaces is exported. The planner walks the battery forward past the plan's end on the solar and house-load forecasts; energy above the level from which the sun fills the battery before the house drains it is worth less, by this share of the gap between the end-of-plan value and what the displaced solar earns exported. 0 (the default) = no reduction, the end-of-plan value exactly as without this; 1 = all of it, down to the export value. Backtested over four winters (October–March, this house's prices, the real solar after the plan standing in for its forecast), 0.5 was the best setting: on the real house load it saved 0–35 SEK per winter, mostly in March, and was never negative with the solar forecast 30 % too low, 30 % too high or a day late. On the consumption forecast the planner actually uses it was only ~+22 SEK over the four winters, and −4.5 SEK in 2025/26 (an October decision: the 14-day median load lags the heating coming on). 0.75 earned less, and 1 lost in some winters: a later plan often sells the top of the battery at a peak before the sun refills it, worth more than the export. Dark days change nothing. With the solar forecast older than the max age below (open-meteo down), plans leave the reduction out and the log says so once. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_solar_scale")}`,
+        plannerKnobInput("terminal_value_solar_scale")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_solar_lookahead_hours"],
+        "Solar refill: hours looked ahead",
+        `How far past the plan's end (the published prices plus the reserve tail) the solar refill above walks the battery forward. The solar forecast reaches 31–55 hours past it, and the walk stops there whatever this says. Shorter only counts the sun of the next day (24 h earned ~20 % less in the backtest); longer also counts days whose forecast is less sure (72 h was no better than 48). 0 = the solar refill is off. Only acts with the value taken off above 0. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_solar_lookahead_hours")}`,
+        plannerKnobInput("terminal_value_solar_lookahead_hours")
+      ),
+      f(
+        ["automatic_trading", "terminal_value_solar_forecast_max_age_hours"],
+        "Solar refill: solar forecast max age",
+        `The solar forecast is fetched hourly; when open-meteo is down, plans keep using the last one. Past this age the solar refill above is left out (the end-of-plan value is then as without it) until a fresh forecast arrives, and the log says so once. Lower drops the refill sooner in an outage; higher keeps it on an older forecast (the forecast covers 4 days, so at 48 h half of it is gone). Only acts with the value taken off above 0. Applies from the next plan run. ${describePlannerKnobBounds("terminal_value_solar_forecast_max_age_hours")}`,
+        plannerKnobInput("terminal_value_solar_forecast_max_age_hours")
       ),
       f(
         ["automatic_trading", "hold_enabled"],
