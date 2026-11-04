@@ -41,6 +41,7 @@ export type PlannerKnobs = Pick<
   | "terminal_value_solar_scale"
   | "terminal_value_solar_lookahead_hours"
   | "terminal_value_solar_forecast_max_age_hours"
+  | "terminal_value_solar_months"
   | "hold_enabled"
   | "hold_power_watts"
   | "hold_overhead_watts"

@@ -113,7 +113,11 @@ export const PLANNER_KNOB_BOUNDS = {
   // on the actual load, never negative, also with the solar ×0.7, ×1.3 or a day late; 0.75 earned less, 1 lost in
   // two periods (a later plan often sells the top of the battery at a peak before the sun refills it, worth more
   // than the spill). On the live consumption forecast 0.5 was only ~+22 SEK over the four winters, −4.5 in 2025/26
-  // (one October decision, the same at 0.25 and 0.75): the 14-day median lags October's heating ramp-up.
+  // (one October decision, the same at 0.25 and 0.75): the 14-day median lags October's heating ramp-up. On the
+  // whole live combination (that forecast, the price outlook, holds, the meter calibration) 0.5 in March alone
+  // (terminal_value_solar_months' default) gained 24–52 SEK over the four winters but lost up to 3.2 in 2024/25, so
+  // it still ships off: the owner's bar was ≥ 0 in every winter with the solar forecast right, a day late and 30 % low.
+  // With holds off it clears that bar (17–59 SEK, no winter below 0).
   terminal_value_solar_scale: { defaultValue: 0, min: 0, max: 1, unit: "×", step: 0.05 },
   // How far past the plan's end the walk looks (only with the scale above 0). In the backtest 24 h earned ~20 % less
   // than 48 on the actual load (the same on the live consumption forecast), 72 about the same as 48; open-meteo's 4

@@ -54,6 +54,9 @@ export const baseKnobs: PlannerKnobs = {
   terminal_value_solar_scale: 0,
   terminal_value_solar_lookahead_hours: 48,
   terminal_value_solar_forecast_max_age_hours: 12,
+  // Every month, so a scenario with the refill's scale above 0 sees it whatever day the selftest runs on;
+  // terminalValueSolarMonths.selftest.ts covers the month gate
+  terminal_value_solar_months: "1,2,3,4,5,6,7,8,9,10,11,12",
   // Off, like the config default; on, it only acts with the terminal value (holdAllocation.ts)
   hold_enabled: false,
   hold_power_watts: 100,

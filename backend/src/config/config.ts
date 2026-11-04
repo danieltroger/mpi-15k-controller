@@ -7,7 +7,7 @@ import type { AlertingConfig, AutomaticTradingConfig, Config, SolarModelConfig }
 import { DEFAULT_THERMOMETER_SWEEP_SETTINGS } from "../temperatureMeasuring/thermometerSweepSettings.ts";
 import { DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS } from "../inverterComms/setterChangeThrottle.ts";
 import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
-import { DEFAULT_TERMINAL_VALUE_MONTHS } from "../autoTrading/terminalValue.ts";
+import { DEFAULT_TERMINAL_VALUE_MONTHS, DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS } from "../autoTrading/terminalValue.ts";
 import { DEFAULT_APPLY_TO_PLANNER, DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 import { DEFAULT_GRID_OFF_SETTINGS } from "../gridOff/gridOffSettings.ts";
 
@@ -93,6 +93,7 @@ export const default_config: Config = {
     terminal_value_solar_lookahead_hours: PLANNER_KNOB_BOUNDS.terminal_value_solar_lookahead_hours.defaultValue,
     terminal_value_solar_forecast_max_age_hours:
       PLANNER_KNOB_BOUNDS.terminal_value_solar_forecast_max_age_hours.defaultValue,
+    terminal_value_solar_months: DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
     // Ships off: switched on by hand on the live system, with hold_overhead_watts at the measured 170 W
     hold_enabled: false,
     hold_power_watts: PLANNER_KNOB_BOUNDS.hold_power_watts.defaultValue,

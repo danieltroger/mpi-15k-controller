@@ -4,6 +4,7 @@
  */
 import { logLog, warnLog } from "../utilities/logging.ts";
 import { terminalValueInSeason } from "./terminalValue.ts";
+import { solarRefillInSeason } from "./terminalValueSolar.ts";
 import type { SolarForecast } from "./solarForecast.ts";
 import type { PlannerKnobs } from "./planner.types.ts";
 import type { TraderCtx } from "./traderContext.ts";
@@ -14,8 +15,8 @@ const HOUR_MS = 3600_000;
  * Main: where the solar forecast ends, or undefined while it is older than terminal_value_solar_forecast_max_age_hours
  * (a stale cache fetchSolarForecast hands out through an open-meteo outage; the end-of-plan energy is then valued as
  * without the refill). Logs when that starts while the refill applies (the terminal value on and in season, the
- * refill's knobs above 0), and once when the forecast is fresh again if it still does; not on every plan: planner
- * input is built on every guard and opportunistic tick.
+ * month one of terminal_value_solar_months, the refill's knobs above 0), and once when the forecast is fresh again if
+ * it still does; not on every plan: planner input is built on every guard and opportunistic tick.
  */
 export function solarForecastEndForRefill(
   flags: Pick<TraderCtx["flags"], "solarForecastTooOldForRefill">,
@@ -27,6 +28,7 @@ export function solarForecastEndForRefill(
     | "terminal_value_solar_scale"
     | "terminal_value_solar_lookahead_hours"
     | "terminal_value_solar_forecast_max_age_hours"
+    | "terminal_value_solar_months"
   >,
   nowMs: number
 ): number | undefined {
@@ -35,6 +37,7 @@ export function solarForecastEndForRefill(
   const tooOld = ageMs > maxAgeHours * HOUR_MS;
   const refillApplies =
     terminalValueInSeason(knobs, nowMs) &&
+    solarRefillInSeason(knobs, nowMs) &&
     knobs.terminal_value_solar_scale > 0 &&
     knobs.terminal_value_solar_lookahead_hours > 0;
   if (tooOld && refillApplies && !flags.solarForecastTooOldForRefill) {

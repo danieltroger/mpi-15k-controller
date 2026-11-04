@@ -29,6 +29,7 @@ import { sellScheduleWindows } from "./sellScheduleWindows.ts";
 import { freshMeasuredFeedInW } from "./measuredFeedIn.ts";
 import { expectedSpotForPlan } from "./expectedSpot.ts";
 import { effectiveTerminalValueMode } from "./terminalValue.ts";
+import { solarRefillInSeason } from "./terminalValueSolar.ts";
 import { IDENTITY_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 import type { MqttValue } from "../sharedTypes.ts";
 import type { PlannerInput } from "./planner.types.ts";
@@ -125,6 +126,10 @@ console.log(
   expectedSpot
     ? `Expected spot after the horizon (${expectedSpot.source}): ${expectedSpot.expectedSpot === undefined ? "unavailable" : `${expectedSpot.expectedSpot.toFixed(3)} SEK/kWh`} — ${expectedSpot.detail}`
     : `Terminal value: ${knobs.terminal_value_mode === "off" ? "off" : `not in season (months ${knobs.terminal_value_months})`} — TERMINAL_VALUE_MODE=trailing or =forecast previews it`
+);
+// The plan's note only mentions the solar refill when it acts; say here why it may not
+console.log(
+  `Solar refill: scale ${knobs.terminal_value_solar_scale}, months "${knobs.terminal_value_solar_months}" (${solarRefillInSeason(knobs, previewNowMs) ? "this month is one of them" : "not this month: no refill"})`
 );
 const outlookSummary = expectedSpot?.forecast;
 if (outlookSummary?.used) {

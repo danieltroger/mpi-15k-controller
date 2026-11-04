@@ -98,6 +98,12 @@ export type AutomaticTradingConfig = {
    */
   terminal_value_solar_forecast_max_age_hours: number;
   /**
+   * Comma-separated month numbers (1 = January, Swedish time, read at the plan's run like terminal_value_months) the
+   * solar refill applies in; it only acts in those also in terminal_value_months. Entries that aren't 1–12 are
+   * ignored with a warning; empty = never.
+   */
+  terminal_value_solar_months: string;
+  /**
    * Hold: in cheap dark quarters the planner writes a buy window at hold_power_watts, so the house runs
    * from the grid and the battery keeps its energy for pricier hours (autoTrading/holdAllocation.ts).
    * Planned only while the terminal value applies: without it kept energy is worth nothing to the planner.

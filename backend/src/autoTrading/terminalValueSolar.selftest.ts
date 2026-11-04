@@ -17,13 +17,18 @@ import {
   everyMonthExcept,
   finishSelftest,
   HOUR_MS,
-  mkPrices,
   testDayStartMs,
   withTerminalValue,
 } from "./plannerSelftestFixtures.ts";
+import {
+  cheapDayBeforeSunnyDaysInput,
+  fullBatteryBeforeSunnyDaysInput,
+  samePlanWithNotes,
+  SOLAR_ON,
+  sunAfterHorizon,
+  withSolar,
+} from "./terminalValueSolarSelftestFixtures.ts";
 import type { PlannerInput, PlannerKnobs, PlanResult, SolarRefill } from "./planner.types.ts";
-
-const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead_hours: 48 };
 
 // ---------- (a) The walk, by hand: one threshold where "full first" starts ----------
 // Lossless, no idle draw or baseline feed, a 10 kWh battery with its floor at 0: the house drains 1 kW for 4 h, then
@@ -232,6 +237,14 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
       withSolar(sunny, { terminal_value_solar_scale: 1, terminal_value_solar_lookahead_hours: 0 }),
     ],
     ["no solar forecast (stale or missing)", sunny, { ...withSolar(sunny), solarForecastEndMs: undefined }],
+    [
+      "the plan's month not in terminal_value_solar_months",
+      sunny,
+      {
+        ...withSolar(sunny),
+        knobs: { ...withSolar(sunny).knobs, terminal_value_solar_months: everyMonthExcept(sunny.nowMs) },
+      },
+    ],
     ["a solar forecast that ends at the horizon", sunny, withSolar(sunny, SOLAR_ON, 0)],
     [
       "terminal value off",
@@ -364,11 +377,12 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
     { ...knobs, terminal_value_solar_forecast_max_age_hours: 24 },
     nowMs
   );
-  // Quiet where the refill doesn't apply: its scale at 0, or out of season (a July outage)
+  // Quiet where the refill doesn't apply: its scale at 0, out of season (a July outage), or out of its own months
   const quietCases = [
     { ...knobs, terminal_value_solar_scale: 0 },
     { ...knobs, terminal_value_months: everyMonthExcept(nowMs) },
     { ...knobs, terminal_value_mode: "off" as const },
+    { ...knobs, terminal_value_solar_months: everyMonthExcept(nowMs) },
   ].map(quietKnobs => {
     const quietFlags = { solarForecastTooOldForRefill: false };
     return {
@@ -397,7 +411,7 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
     `(${warningsWhileStale} warnings, ${freshAgainLines} fresh-again lines)`
   );
   check(
-    "stale forecast: no warning while the refill doesn't apply (scale 0, out of season, mode off)",
+    "stale forecast: no warning while the refill doesn't apply (scale 0, out of season, mode off, out of its months)",
     quietCases.every(({ end, flagged }) => end === undefined && !flagged) && warnings.length === 2,
     `(${warnings.length} warnings: one per stale-while-on episode, two episodes)`
   );
@@ -444,77 +458,6 @@ function losslessWalkInput(
   };
 }
 
-/**
- * Planning at 13:00 at 88 % SOC, dark through the horizon and its 6 h tail: 1.0 SEK with 1.6 SEK evening peaks. With
- * p̂ 1.0 a kWh left at the end is worth 2.29 SEK, so those peaks don't sell; refilled by the sun anyway, it is worth
- * the spill, 1.15.
- */
-function fullBatteryBeforeSunnyDaysInput(solarWattsAt: (ms: number) => number): PlannerInput {
-  return {
-    nowMs: testDayStartMs + 13 * HOUR_MS,
-    prices: mkPrices(48, hour => (hour % 24 >= 17 && hour % 24 < 21 ? 1.6 : 1.0)),
-    solarWattsAt,
-    houseLoadWattsAt: () => 300,
-    parasiticWatts: 140,
-    socPercent: 88,
-    capacityWh: 65000,
-    constraintTailHours: 6,
-    fixedSells: [],
-    fixedBuys: [],
-    sellVetoWindows: [],
-    buyVetoWindows: [],
-    knobs: { ...baseKnobs, baseline_feed_watts: 0 },
-  };
-}
-
-/** terminalValue.selftest.ts's cheap day (0.01–0.04 SEK, 80 % SOC), before sunny days */
-function cheapDayBeforeSunnyDaysInput(solarWattsAt: (ms: number) => number): PlannerInput {
-  return {
-    nowMs: testDayStartMs + 13 * HOUR_MS,
-    prices: mkPrices(48, hour => (hour % 24 < 6 ? 0.01 : 0.04)),
-    solarWattsAt,
-    houseLoadWattsAt: () => 300,
-    parasiticWatts: 230,
-    socPercent: 80,
-    capacityWh: 65000,
-    constraintTailHours: 0,
-    fixedSells: [],
-    fixedBuys: [],
-    sellVetoWindows: [],
-    buyVetoWindows: [],
-    knobs: baseKnobs,
-  };
-}
-
-/** No PV within the 48 priced hours and their tail; from day 3 on a sunny day of this peak, 06–18 UTC */
-function sunAfterHorizon(peakW: number): (ms: number) => number {
-  return ms => {
-    const hoursIn = (ms - testDayStartMs) / HOUR_MS;
-    const hourOfDay = hoursIn % 24;
-    if (hoursIn < 54 || hourOfDay < 6 || hourOfDay > 18) return 0;
-    return peakW * Math.sin(((hourOfDay - 6) / 12) * Math.PI);
-  };
-}
-
-/**
- * The input with the terminal value on (p̂ 1.0, unless it already has one), the solar refill's knobs (on by
- * default) and a solar forecast reaching forecastHoursPastHorizon past the plan's end
- */
-function withSolar(
-  input: PlannerInput,
-  solarKnobs: Pick<PlannerKnobs, "terminal_value_solar_scale" | "terminal_value_solar_lookahead_hours"> = SOLAR_ON,
-  forecastHoursPastHorizon = 96
-): PlannerInput {
-  const withValue = input.expectedSpot ? input : withTerminalValue(input, 1.0);
-  const pricedEndMs = withValue.prices[withValue.prices.length - 1].startMs + 15 * 60_000;
-  const horizonEndMs = pricedEndMs + withValue.constraintTailHours * HOUR_MS;
-  return {
-    ...withValue,
-    solarForecastEndMs: horizonEndMs + forecastHoursPastHorizon * HOUR_MS,
-    knobs: { ...withValue.knobs, ...solarKnobs },
-  };
-}
-
 /** Cash plus end-of-plan value: what the planner maximises */
 function planValue(plan: PlanResult): number {
   return plan.projection.estimatedRevenueSek + (plan.projection.endEnergyValueSek ?? 0);
@@ -528,10 +471,6 @@ function replayedValue(input: PlannerInput, plan: PlanResult): number {
     fixedBuys: plan.buys.map(window => ({ startMs: window.startMs, endMs: window.endMs, watts: window.watts })),
   });
   return replayed.revenueSek + replayed.endEnergyValueSek;
-}
-
-function samePlanWithNotes(plan: PlanResult, reference: PlanResult): boolean {
-  return JSON.stringify(plan) === JSON.stringify(reference);
 }
 
 function describeRefill(refill: SolarRefill | undefined): string {
