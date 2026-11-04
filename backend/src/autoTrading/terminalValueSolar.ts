@@ -6,38 +6,36 @@
  *
  * From the end of the plan's slots, the idle battery (simulate.ts's slot with no trade: the baseline feed while the
  * PV doesn't cover the house) is walked forward on the solar and house-load forecasts, for
- * terminal_value_solar_lookahead_hours or until the solar forecast ends (past it no PV is assumed, which is no
- * reduction). An extra kWh at the start keeps its fate until the battery first reaches an edge: full first, and the
- * PV spills it; the emergency floor first, and it averts an import (V); neither, and it is still in the battery
- * when the walk ends (V). A fuller start is full sooner and at the floor later, so one threshold splits the two:
- * energy above fromWh is refilled anyway. The walk runs once per plan; each simulation then credits a two-piece
- * concave value of its end energy (endEnergyCreditSek), as cheap as the flat V.
+ * terminal_value_solar_lookahead_hours or until either forecast ends (past the solar one no PV is assumed, which is
+ * no reduction; past the house-load one the load would be missing, which is too much). An extra kWh at the start
+ * keeps its fate until the battery first reaches an edge: full first, and the PV spills it; the emergency floor
+ * first, and it averts an import (V); neither, and it is still in the battery when the walk ends (V). A fuller start
+ * is full sooner and at the floor later, so one threshold splits the two: energy above fromWh is refilled anyway.
+ * The walk runs once per plan; each simulation then credits a two-piece concave value of its end energy
+ * (endEnergyCreditSek), as cheap as the flat V.
  *
- * Pure (type-only imports): the walk reads only the planner input's forecasts.
+ * Pure (type-only imports and a constant): the walk reads only the planner input's forecasts.
  */
+import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
 import type { HorizonValuation, PlannerInput, SolarRefill } from "./planner.types.ts";
 import type { TerminalValuation } from "./terminalValue.ts";
 
 const HOUR_MS = 3600_000;
 
-/**
- * The walk steps by the hour: the house-load forecast is per hour, and each read of it converts to Swedish time
- * (consumptionForecast.ts). 48 hourly steps take ~7 ms on the VM, 15-min ones ~4× that (the pi Zero plans on the
- * event loop the inverter comms share) for no sharper threshold.
- */
+/** The walk steps by the hour, as the house-load forecast does: 15-min steps would sharpen nothing */
 const WALK_STEP_MS = HOUR_MS;
 
 /**
- * The simulation's idle slot feeds the baseline night feed unless the PV covers the house, the inverter's idle draw
- * and this margin (simulate.ts and this walk share it, so the walk drains the battery as the plan does)
+ * A refill band (capacity − fromWh) under this share of the capacity is left out: a sliver below full the next sunny
+ * hour tops off changes no decision worth having, and would swap the plan's note for one about a 100 % SOC threshold
  */
-export const BASELINE_FEED_SOLAR_MARGIN_WATTS = 380;
+const MIN_REFILL_BAND_SHARE = 0.01;
 
 /**
  * Main: the part of the end-of-plan energy the solar forecast past horizonEndMs refills anyway, and what a DC kWh of
  * it is worth, or undefined when nothing is to be taken off V: terminal_value_solar_scale or the look-ahead at 0,
- * no solar forecast past the horizon (PlannerInput.solarForecastEndMs), or no PV surplus that fills the battery
- * before the house drains it.
+ * no solar forecast past the horizon (PlannerInput.solarForecastEndMs), no PV surplus that fills the battery
+ * before the house drains it, a band under MIN_REFILL_BAND_SHARE, or a spill value no lower than V.
  */
 export function solarRefillFor(
   input: PlannerInput,
@@ -50,21 +48,34 @@ export function solarRefillFor(
   if (!(fullValueSekPerKwh > 0) || input.solarForecastEndMs === undefined) return undefined;
   const walkEndMs = Math.min(
     horizonEndMs + knobs.terminal_value_solar_lookahead_hours * HOUR_MS,
-    input.solarForecastEndMs
+    input.solarForecastEndMs,
+    input.houseLoadForecastEndMs ?? Infinity
   );
   const threshold = refillThreshold(input, horizonEndMs, walkEndMs);
-  if (!threshold) return undefined;
+  if (!threshold || input.capacityWh - threshold.fromWh < MIN_REFILL_BAND_SHARE * input.capacityWh) return undefined;
   // A DC kWh more in the battery when it is full spills 1/charge_efficiency kWh of PV, credited at the expected spot
   // plus the sell bonus: an upper estimate, as sunny-hour spot runs below the daily mean
   const spillSekPerKwh = Math.min(
     fullValueSekPerKwh,
     Math.max(0, (valuation.expectedSpot + knobs.sell_bonus_sek_per_kwh) / knobs.charge_efficiency)
   );
-  return {
-    fromWh: threshold.fromWh,
-    sekPerKwh: fullValueSekPerKwh - knobs.terminal_value_solar_scale * (fullValueSekPerKwh - spillSekPerKwh),
-    fullAtMs: threshold.fullAtMs,
-  };
+  const refilledSekPerKwh =
+    fullValueSekPerKwh - knobs.terminal_value_solar_scale * (fullValueSekPerKwh - spillSekPerKwh);
+  // A low terminal_value_scale can put V at or below the spill: then nothing is taken off
+  if (!(refilledSekPerKwh < fullValueSekPerKwh - 1e-9)) return undefined;
+  return { fromWh: threshold.fromWh, sekPerKwh: refilledSekPerKwh, fullAtMs: threshold.fullAtMs };
+}
+
+/**
+ * What the last DC kWh the plan ends with is worth: the refill's value above fromWh, V below it. The plan's texts
+ * quote it (the stocking note, a hold's reason); the decisions all go through endEnergyCreditSek.
+ */
+export function marginalEndEnergySekPerKwh(
+  valuation: Pick<HorizonValuation, "endEnergySekPerKwh" | "solarRefill">,
+  endSocWh: number
+): number {
+  const refill = valuation.solarRefill;
+  return refill && endSocWh > refill.fromWh ? refill.sekPerKwh : valuation.endEnergySekPerKwh;
 }
 
 /**

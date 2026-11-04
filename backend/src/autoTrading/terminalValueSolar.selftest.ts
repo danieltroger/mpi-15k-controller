@@ -7,12 +7,14 @@
  *   yarn node src/autoTrading/terminalValueSolar.selftest.ts
  */
 import { generatePlan, projectWithFixedWindows } from "./planner.ts";
-import { endEnergyCreditSek, solarRefillFor } from "./terminalValueSolar.ts";
+import { endEnergyCreditSek, marginalEndEnergySekPerKwh, solarRefillFor } from "./terminalValueSolar.ts";
 import { terminalValueSekPerKwh } from "./terminalValue.ts";
-import { SOLAR_REFILL_MAX_FORECAST_AGE_MS, solarForecastEndForRefill } from "./solarRefillForecast.ts";
+import { solarForecastEndForRefill } from "./solarRefillForecast.ts";
 import {
   baseKnobs,
   check,
+  EVERY_MONTH,
+  everyMonthExcept,
   finishSelftest,
   HOUR_MS,
   mkPrices,
@@ -60,6 +62,35 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
     "walk: nor past the solar forecast's end",
     cutByForecast !== undefined && Math.abs(cutByForecast.fromWh - 9000) < 1e-6,
     `(${describeRefill(cutByForecast)})`
+  );
+  // An armed water heater is modelled for so long (elpatronForecast.ts); past that the load would read 0
+  const loadModelEndsEarly = {
+    ...losslessWalkInput(walkStartMs, hoursIn => (hoursIn >= 4 && hoursIn < 6 ? 6000 : 0)),
+    houseLoadForecastEndMs: walkStartMs + 5 * HOUR_MS,
+  };
+  const cutByLoadModel = solarRefillFor(loadModelEndsEarly, walkStartMs, { expectedSpot: 1, endEnergySekPerKwh: 2 });
+  check(
+    "walk: nor past where the house-load forecast stops counting the water heater",
+    cutByLoadModel !== undefined && Math.abs(cutByLoadModel.fromWh - 9000) < 1e-6,
+    `(${describeRefill(cutByLoadModel)})`
+  );
+  // A sliver below full (here 50 Wh of 10 kWh, under 1 %) is no refill: the plan and its note stay as without one
+  const sliver = losslessWalkInput(walkStartMs, hoursIn => (hoursIn === 0 ? 1050 : 0));
+  check(
+    "walk: a refill band under 1 % of the capacity is none",
+    solarRefillFor(sliver, walkStartMs, { expectedSpot: 1, endEnergySekPerKwh: 2 }) === undefined
+  );
+  // A V at or below the spill (a low terminal_value_scale) takes nothing off: no refill either
+  check(
+    "walk: no refill when the spill is worth V or more",
+    solarRefillFor(input, walkStartMs, { expectedSpot: 1, endEnergySekPerKwh: 1.05 }) === undefined
+  );
+  check(
+    "marginal value: the refill's above fromWh, V at or below it",
+    refill !== undefined &&
+      marginalEndEnergySekPerKwh({ endEnergySekPerKwh: 2, solarRefill: refill }, 4500) === refill.sekPerKwh &&
+      marginalEndEnergySekPerKwh({ endEnergySekPerKwh: 2, solarRefill: refill }, 4000) === 2 &&
+      marginalEndEnergySekPerKwh({ endEnergySekPerKwh: 2 }, 9000) === 2
   );
   // Spill value: (spot + sell bonus) / charge efficiency, here (1 + 0.092) / 1; scale 1 credits exactly that, 0.5 halfway
   check(
@@ -162,6 +193,21 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
     "cheap day, sunny after: with it the stocking is gone",
     refilled.projection.plannedBuyKwh < 1 && !refilled.notes.some(note => note.startsWith("Stocking up")),
     `(${refilled.projection.plannedBuyKwh} kWh)`
+  );
+  // At scale 0.25 a refilled kWh is still worth 2.00 SEK (V 2.29 less a quarter of its gap to the 1.15 spill), more
+  // than a 0.04 SEK buy costs: the block fills into the refill band, and the note quotes what its top kWh is worth
+  const quarterScale = generatePlan(
+    withSolar(cheapDayBeforeSunnyDaysInput(sunAfterHorizon(10_000)), {
+      terminal_value_solar_scale: 0.25,
+      terminal_value_solar_lookahead_hours: 48,
+    })
+  );
+  const stockingNote = quarterScale.notes.find(note => note.startsWith("Stocking up")) ?? "";
+  check(
+    "cheap day, sunny after, scale 0.25: the stocking note quotes the refilled value, not V",
+    stockingNote.endsWith("end-of-plan energy is worth 2.00 SEK/kWh") &&
+      stocking.notes.some(note => note.endsWith("end-of-plan energy is worth 2.29 SEK/kWh")),
+    `(${stockingNote})`
   );
 }
 
@@ -286,6 +332,7 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
 }
 
 // ---------- (f) A stale solar forecast: no refill, said once in the log (and once when it is fresh again) ----------
+// Only while the refill applies: the terminal value on and in season, its knobs above 0
 {
   const warnings: string[] = [];
   const logLines: string[] = [];
@@ -293,24 +340,52 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
   const consoleLog = console.log;
   console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
   console.log = (...args: unknown[]) => logLines.push(args.map(String).join(" "));
-  const flags = { solarForecastTooOldForRefill: false };
-  const knobs = { ...baseKnobs, ...SOLAR_ON, terminal_value_mode: "forecast" as const };
+  const knobs = {
+    ...baseKnobs,
+    ...SOLAR_ON,
+    terminal_value_mode: "forecast" as const,
+    terminal_value_months: EVERY_MONTH,
+    terminal_value_solar_forecast_max_age_hours: 12,
+  };
   const nowMs = testDayStartMs + 12 * HOUR_MS;
   const fresh = { fetchedAtMs: nowMs - HOUR_MS, rangeEndMs: nowMs + 80 * HOUR_MS };
-  const stale = { fetchedAtMs: nowMs - SOLAR_REFILL_MAX_FORECAST_AGE_MS - HOUR_MS, rangeEndMs: nowMs + 60 * HOUR_MS };
+  const stale = { fetchedAtMs: nowMs - 13 * HOUR_MS, rangeEndMs: nowMs + 60 * HOUR_MS };
+  const flags = { solarForecastTooOldForRefill: false };
   const freshEnd = solarForecastEndForRefill(flags, fresh, knobs, nowMs);
   const staleEnds = [1, 2, 3].map(() => solarForecastEndForRefill(flags, stale, knobs, nowMs));
   const warningsWhileStale = warnings.length;
   const freshAgainEnd = solarForecastEndForRefill(flags, fresh, knobs, nowMs);
   solarForecastEndForRefill(flags, fresh, knobs, nowMs);
-  const refillOff = { ...knobs, terminal_value_solar_scale: 0 };
-  const quietFlags = { solarForecastTooOldForRefill: false };
-  const staleWhileOff = solarForecastEndForRefill(quietFlags, stale, refillOff, nowMs);
+  const freshAgainLines = logLines.filter(line => line.includes("solar forecast fresh again")).length;
+  // The max age is the knob's: at 24 h the same forecast is still fresh enough
+  const laxerEnd = solarForecastEndForRefill(
+    { solarForecastTooOldForRefill: false },
+    stale,
+    { ...knobs, terminal_value_solar_forecast_max_age_hours: 24 },
+    nowMs
+  );
+  // Quiet where the refill doesn't apply: its scale at 0, or out of season (a July outage)
+  const quietCases = [
+    { ...knobs, terminal_value_solar_scale: 0 },
+    { ...knobs, terminal_value_months: everyMonthExcept(nowMs) },
+    { ...knobs, terminal_value_mode: "off" as const },
+  ].map(quietKnobs => {
+    const quietFlags = { solarForecastTooOldForRefill: false };
+    return {
+      end: solarForecastEndForRefill(quietFlags, stale, quietKnobs, nowMs),
+      flagged: quietFlags.solarForecastTooOldForRefill,
+    };
+  });
+  // Stale while on, then switched off: fresh again clears the flag without claiming the refill is back
+  const switchedOffFlags = { solarForecastTooOldForRefill: false };
+  solarForecastEndForRefill(switchedOffFlags, stale, knobs, nowMs);
+  const linesBeforeSwitchOff = logLines.length;
+  solarForecastEndForRefill(switchedOffFlags, fresh, { ...knobs, terminal_value_solar_scale: 0 }, nowMs);
   console.warn = consoleWarn;
   console.log = consoleLog;
   check(
     "stale forecast: a fresh one's range end reaches the planner",
-    freshEnd === fresh.rangeEndMs && freshAgainEnd === fresh.rangeEndMs
+    freshEnd === fresh.rangeEndMs && freshAgainEnd === fresh.rangeEndMs && laxerEnd === stale.rangeEndMs
   );
   check(
     "stale forecast: past the max age none does (the refill is left out), on every plan",
@@ -318,15 +393,17 @@ const SOLAR_ON = { terminal_value_solar_scale: 1, terminal_value_solar_lookahead
   );
   check(
     "stale forecast: one warning for three stale plans, one line when it is fresh again",
-    warningsWhileStale === 1 &&
-      warnings.length === 1 &&
-      warnings[0].includes("valued without the solar refill") &&
-      logLines.filter(line => line.includes("solar forecast fresh again")).length === 1,
-    `(${warnings.length} warnings, ${logLines.length} log lines)`
+    warningsWhileStale === 1 && warnings[0].includes("valued without the solar refill") && freshAgainLines === 1,
+    `(${warningsWhileStale} warnings, ${freshAgainLines} fresh-again lines)`
   );
   check(
-    "stale forecast: no warning while the refill is off",
-    staleWhileOff === undefined && warnings.length === 1 && quietFlags.solarForecastTooOldForRefill === false
+    "stale forecast: no warning while the refill doesn't apply (scale 0, out of season, mode off)",
+    quietCases.every(({ end, flagged }) => end === undefined && !flagged) && warnings.length === 2,
+    `(${warnings.length} warnings: one per stale-while-on episode, two episodes)`
+  );
+  check(
+    "stale forecast: switched off meanwhile, fresh again says nothing (and clears the flag)",
+    logLines.length === linesBeforeSwitchOff && switchedOffFlags.solarForecastTooOldForRefill === false
   );
 }
 

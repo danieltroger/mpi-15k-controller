@@ -145,9 +145,10 @@ const input: PlannerInput = {
   prices: prices.slots,
   solarWattsAt: solar.wattsAt,
   solarAverageWattsBetween: solar.averageWattsBetween,
-  // Fetched just now (or a stale cache after a failure, which fetchSolarForecast warned about above)
+  // Fetched just now: the preview is a fresh process without a cache, so a failed fetch threw above
   solarForecastEndMs: solar.rangeEndMs,
   houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
+  houseLoadForecastEndMs: elpatron.modelEndMs,
   parasiticWatts: inverterIdleWatts(config),
   socPercent: soc,
   capacityWh: packCapacityWh(config),

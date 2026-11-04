@@ -15,7 +15,8 @@ import {
   passThroughExtraImportWatts,
   uncountedExportWatts,
 } from "./simulatedMeterCredit.ts";
-import { BASELINE_FEED_SOLAR_MARGIN_WATTS, endEnergyCreditSek } from "./terminalValueSolar.ts";
+import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
+import { endEnergyCreditSek } from "./terminalValueSolar.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
 /** A buy slot grid-charges only while the battery starts it below this share of its capacity */

@@ -70,6 +70,7 @@ export async function buildPlannerInput(
     solarAverageWattsBetween: solar.averageWattsBetween,
     solarForecastEndMs: solarForecastEndForRefill(ctx.flags, solar, knobs, nowMs),
     houseLoadWattsAt: ms => consumption.wattsAt(ms) + elpatron.wattsAt(ms),
+    houseLoadForecastEndMs: elpatron.modelEndMs,
     // Idle draw and usable capacity now come from the Ah ledger's online-tracked drain/capacity (the Wh
     // fitter's persisted capacity/parasitic state is gone): inverterIdleWatts = drain_a × v_discharge, capacityWh = capacity_ah × v_discharge.
     parasiticWatts: inverterIdleWatts(cfg),

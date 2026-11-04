@@ -19,11 +19,18 @@ export type ElpatronHistoryKnobs = {
 
 let cache: (ConsumptionForecast & { elpatronKey: string }) | undefined;
 
+/**
+ * Built once: toLocaleString with options builds a formatter on every call, ~0.1 ms each, and the planner reads the
+ * load for every slot and every hour of the solar refill's walk
+ */
+const stockholmHourFormat = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Europe/Stockholm",
+  hour: "2-digit",
+  hourCycle: "h23",
+});
+
 function localHour(ms: number): number {
-  return parseInt(
-    new Date(ms).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", hourCycle: "h23" }),
-    10
-  );
+  return parseInt(stockholmHourFormat.format(ms), 10);
 }
 
 /**

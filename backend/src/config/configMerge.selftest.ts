@@ -106,8 +106,12 @@ check(
 );
 
 // ——— automatic_trading stored before the solar refill's knobs (the planner reads them raw) ———
-const { terminal_value_solar_scale, terminal_value_solar_lookahead_hours, ...tradingBeforeSolarRefill } =
-  default_config.automatic_trading;
+const {
+  terminal_value_solar_scale,
+  terminal_value_solar_lookahead_hours,
+  terminal_value_solar_forecast_max_age_hours,
+  ...tradingBeforeSolarRefill
+} = default_config.automatic_trading;
 const healedSolarRefillTrading = mergeWithDefaults({
   automatic_trading: { ...tradingBeforeSolarRefill, terminal_value_mode: "forecast" },
 } as unknown as Partial<Config>).automatic_trading;
@@ -116,8 +120,11 @@ check(
   healedSolarRefillTrading.terminal_value_mode === "forecast" &&
     healedSolarRefillTrading.terminal_value_solar_scale === terminal_value_solar_scale &&
     healedSolarRefillTrading.terminal_value_solar_lookahead_hours === terminal_value_solar_lookahead_hours &&
-    typeof terminal_value_solar_scale === "number" &&
-    typeof terminal_value_solar_lookahead_hours === "number"
+    healedSolarRefillTrading.terminal_value_solar_forecast_max_age_hours ===
+      terminal_value_solar_forecast_max_age_hours &&
+    terminal_value_solar_scale === 0 &&
+    typeof terminal_value_solar_lookahead_hours === "number" &&
+    typeof terminal_value_solar_forecast_max_age_hours === "number"
 );
 
 // ——— automatic_trading stored before the hold ———

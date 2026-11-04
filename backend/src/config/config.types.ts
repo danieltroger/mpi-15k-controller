@@ -93,6 +93,11 @@ export type AutomaticTradingConfig = {
   /** How far past the plan's end the solar refill looks (0 = not at all). Bounds in plannerKnobBounds.ts, clamped. */
   terminal_value_solar_lookahead_hours: number;
   /**
+   * The oldest solar forecast the solar refill looks past the horizon with; an older one (open-meteo down, the cache
+   * handed out stale) leaves the refill out. Bounds in plannerKnobBounds.ts, clamped.
+   */
+  terminal_value_solar_forecast_max_age_hours: number;
+  /**
    * Hold: in cheap dark quarters the planner writes a buy window at hold_power_watts, so the house runs
    * from the grid and the battery keeps its energy for pricier hours (autoTrading/holdAllocation.ts).
    * Planned only while the terminal value applies: without it kept energy is worth nothing to the planner.

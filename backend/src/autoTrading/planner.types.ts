@@ -40,6 +40,7 @@ export type PlannerKnobs = Pick<
   | "terminal_value_forecast_wait_seconds"
   | "terminal_value_solar_scale"
   | "terminal_value_solar_lookahead_hours"
+  | "terminal_value_solar_forecast_max_age_hours"
   | "hold_enabled"
   | "hold_power_watts"
   | "hold_overhead_watts"
@@ -74,6 +75,12 @@ export type PlannerInput = {
   solarForecastEndMs?: number;
   /** House consumption forecast (AC output) in watts, excluding inverter parasitic draw. */
   houseLoadWattsAt: (ms: number) => number;
+  /**
+   * Where houseLoadWattsAt stops counting all of the load: the end of the water heater's forward model while the
+   * element is armed (elpatronForecast.ts), past which it reads 0. The solar refill's walk stops here (the plan's own
+   * slots read the load as given). Absent = it never stops (the consumption profile repeats).
+   */
+  houseLoadForecastEndMs?: number;
   parasiticWatts: number;
   socPercent: number;
   capacityWh: number;

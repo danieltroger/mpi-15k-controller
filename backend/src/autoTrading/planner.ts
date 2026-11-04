@@ -41,7 +41,7 @@ import { allocateHolds, holdNote, holdWattsBySlot, plannedHoldSlots } from "./ho
 import { resolveRunningHold, runningHoldNote } from "./runningHold.ts";
 import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWindows.ts";
 import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
-import { solarRefillFor } from "./terminalValueSolar.ts";
+import { marginalEndEnergySekPerKwh, solarRefillFor } from "./terminalValueSolar.ts";
 import { terminalValueNote } from "./terminalValueNote.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type {
@@ -121,7 +121,7 @@ export function generatePlan(plannerInput: PlannerInput): PlanResult {
     notes.push(
       resoldStockingSlots.size
         ? `Bought ~${preBuy.stockedKwh.toFixed(1)} kWh in one cheap block that a later peak then sells (arbitrage)`
-        : `Stocking up ~${preBuy.stockedKwh.toFixed(1)} kWh in one block for after the horizon — end-of-plan energy is worth ${valuation.endEnergySekPerKwh.toFixed(2)} SEK/kWh`
+        : `Stocking up ~${preBuy.stockedKwh.toFixed(1)} kWh in one block for after the horizon — end-of-plan energy is worth ${marginalEndEnergySekPerKwh(valuation, current.endSocWh).toFixed(2)} SEK/kWh`
     );
   }
 
@@ -174,7 +174,7 @@ export function generatePlan(plannerInput: PlannerInput): PlanResult {
     arbitrageBuySlots: new Set([...arbitrage.arbitrageBuySlots, ...resoldStockingSlots]),
     stockingBuySlots: preBuy.stockingBuySlots,
     holdSlots: new Set(holdSlots),
-    endEnergySekPerKwh: valuation.endEnergySekPerKwh,
+    endEnergySekPerKwh: marginalEndEnergySekPerKwh(valuation, current.endSocWh),
   };
   const sells = sellWindows.map(window => toPlanned(window, packaging));
   // A hold chained to a buy block is a power step between two windows, ordered by start like the schedule
