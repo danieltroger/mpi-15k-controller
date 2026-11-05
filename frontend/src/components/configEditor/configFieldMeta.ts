@@ -20,12 +20,19 @@ import {
   type MeterCalibrationSettingName,
 } from "../../../../backend/src/grid/meterCalibrationBounds";
 import { GRID_OFF_SETTING_BOUNDS, type GridOffSettingName } from "../../../../backend/src/gridOff/gridOffSettings";
-import { SOLAR_ENERGY_DISTRIBUTION_PRIORITIES } from "../../../../backend/src/gridOff/energyDistributionProfile";
-
-const ENABLED_OR_DISABLED_OPTIONS = [
-  { value: "enabled", label: "Enabled" },
-  { value: "disabled", label: "Disabled" },
-] as const;
+import {
+  ENERGY_DISTRIBUTION_SETTING_BOUNDS,
+  type EnergyDistributionSettingName,
+} from "../../../../backend/src/energyDistribution/energyDistributionSettings";
+import {
+  ENERGY_DISTRIBUTION_FIELD_LABELS,
+  ENERGY_DISTRIBUTION_FIELDS,
+  SOLAR_ENERGY_DISTRIBUTION_PRIORITIES,
+} from "../../../../backend/src/energyDistribution/energyDistributionProfile";
+import type {
+  EnergyDistributionField,
+  EnergyDistributionProfileName,
+} from "../../../../backend/src/energyDistribution/energyDistribution.types";
 
 /**
  * Human explanations for every config value, grouped into page sections. The renderer walks this
@@ -152,6 +159,46 @@ function gridOffSettingInput(settingName: GridOffSettingName): Partial<ConfigFie
 function describeGridOffSettingBounds(settingName: GridOffSettingName): string {
   const { min, max, unit, defaultValue } = GRID_OFF_SETTING_BOUNDS[settingName];
   return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
+}
+
+function describeEnergyDistributionSettingBounds(settingName: EnergyDistributionSettingName): string {
+  const { min, max, unit, defaultValue } = ENERGY_DISTRIBUTION_SETTING_BOUNDS[settingName];
+  return `${min}–${max} ${unit}, default ${defaultValue}; a value outside is clamped with a warning.`;
+}
+
+const UNMANAGED_OPTION = { value: "unmanaged", label: "Unmanaged (left to the inverter)" };
+
+/** What each enforced HECS field does, for its help on the config page */
+const ENERGY_DISTRIBUTION_FIELD_HELP: Readonly<Record<EnergyDistributionField, string>> = {
+  solar_energy_distribution_priority:
+    "Where PV power goes first (SEP). Load-Battery-Grid is what the inverter ran on before November 2026. On this firmware writing SEP also resets AC charge on, feed to the utility off and battery feed to the grid without PV off (seen live on 2026-11-05): the next readback shows that, feed to the utility is written back from here, and buying and feeding put their own fields back.",
+  battery_discharge_to_loads_when_solar_input_normal:
+    "Whether the battery may supply the house while PV produces (EDD). Off, the house draws from the grid instead, and the firmware refuses the night feed's battery feed to the grid (EDF1) until it's on again.",
+  battery_discharge_to_loads_when_solar_input_loss:
+    "Whether the battery may supply the house while PV is down, i.e. at night (EDE). Off, the house runs from the grid at night.",
+  solar_charge_battery: "Whether PV may charge the battery (EDA).",
+  feed_power_to_utility:
+    "Whether the inverter may feed the grid at all (EDC); off, neither PV surplus nor the night feed nor a sell reaches the grid.",
+};
+
+function energyDistributionField(
+  profileName: EnergyDistributionProfileName,
+  field: EnergyDistributionField,
+  extra: Partial<ConfigFieldMeta> = {}
+): ConfigFieldMeta {
+  const values =
+    field === "solar_energy_distribution_priority"
+      ? SOLAR_ENERGY_DISTRIBUTION_PRIORITIES.map(priority => ({ value: priority, label: priority }))
+      : [
+          { value: "enabled", label: "Enabled" },
+          { value: "disabled", label: "Disabled" },
+        ];
+  return f(
+    ["inverter_energy_distribution", profileName, field],
+    ENERGY_DISTRIBUTION_FIELD_LABELS[field],
+    `${ENERGY_DISTRIBUTION_FIELD_HELP[field]} Unmanaged leaves it to the inverter. Applies live: a change is written as soon as it's saved.`,
+    { options: [...values, UNMANAGED_OPTION], ...extra }
+  );
 }
 
 function hourAfterNextFullHourIso(): string {
@@ -1183,52 +1230,46 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       f(
         ["grid_off", "poll_machine_model"],
         "Read the machine model (DM)",
-        "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Off also disables the startup fail-safe: it needs the DM readback, so a 151 left behind by a crash or a kill isn't switched back (check the inverter's display). Off also stops the restore below: it starts on the DM readback. Applies from the next settings round."
+        "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Off also disables the startup fail-safe: it needs the DM readback, so a 151 left behind by a crash or a kill isn't switched back (check the inverter's display). Applies from the next settings round."
+      ),
+    ],
+  },
+  {
+    id: "inverter-energy-distribution",
+    title: "Inverter energy settings",
+    description:
+      "The inverter's energy-distribution settings (its HECS menu), with this page as their source of truth: one profile per machine model, picked by what the inverter reads back (050 normal hybrid, 151 Off-Grid III). Whenever the inverter reads a managed field differently, at startup, after a machine model change (which resets them to the factory defaults, 2026-11-05), after a change on its display, or after an edit here, the controller writes the profile's value at once and checks the readback. A change made on the inverter's display to a managed field is reverted: make it here, or set the field to Unmanaged. A write that doesn't land is retried when the machine model, the working mode or any of these settings change, otherwise every 10 min, with one P2 per difference. Nothing is written without a fresh machine model readback (grid_off.poll_machine_model), nor while a switch to another model is still in flight. AC charging (EDB) and battery feed to the grid (EDF/EDG) aren't here: buying and feeding set and enforce those themselves.",
+    rootKeys: ["inverter_energy_distribution"],
+    fields: [
+      ...ENERGY_DISTRIBUTION_FIELDS.map((field, index) =>
+        energyDistributionField(
+          "normal_hybrid",
+          field,
+          index === 0 ? { heading: "Normal hybrid (050): what the house runs on" } : {}
+        )
+      ),
+      ...ENERGY_DISTRIBUTION_FIELDS.map((field, index) =>
+        energyDistributionField(
+          "off_grid_iii",
+          field,
+          index === 0
+            ? {
+                heading:
+                  "Off-Grid III (151): all unmanaged by default. The house ran fine on the inverter's own 151 values on 2026-11-05, and which writes the firmware takes in 151 is unknown",
+              }
+            : {}
+        )
       ),
       f(
-        ["grid_off", "settings_restore_delay_seconds"],
-        "Restore settings after",
-        `A machine model change resets the inverter's energy settings (solar priority, battery to the loads, …) to the factory defaults, so after the DM readback confirms a switch back to 050 the controller waits this long, re-reads them and puts back the ones that differ from normal (below). The readback beside the DM confirm can predate the reset, and the inverter runs a ~60 s grid check first. Shorter gets the battery back on the house sooner; longer gives the inverter more time to settle. Applies live, from the next switch. ${describeGridOffSettingBounds("settings_restore_delay_seconds")}`,
-        gridOffSettingInput("settings_restore_delay_seconds")
-      ),
-      f(
-        ["grid_off", "settings_restore_p2_after_minutes"],
-        "Page when not restored after",
-        `If the restored settings still don't read back (or HECS isn't read at all) this long after the delay above has run out (after the page's Restore button: after the press), one P2 goes out for that switch; the setters are resent 1, 2 and 5 min apart, then every 10 min, until they land, and a P3 follows once they do. Shorter pages on a slow commit; longer leaves the house on the grid longer before anyone hears. Applies live. ${describeGridOffSettingBounds("settings_restore_p2_after_minutes")}`,
-        gridOffSettingInput("settings_restore_p2_after_minutes")
-      ),
-      f(
-        ["grid_off", "normal_energy_distribution", "solar_energy_distribution_priority"],
-        "Normal solar priority",
-        "Where PV power goes first in normal operation (SEP). The restore after a switch back to 050 puts this back, unless a snapshot of what the inverter read just before the switch to 151 exists (backend/grid_off_settings_snapshot.json, kept until a restore to it lands): then the snapshot's values win for that one switch. The System page shows when the inverter differs from these. Load-Battery-Grid is what the inverter ran on before November 2026. Applies from the next restore; nothing is written just because this changes.",
+        ["inverter_energy_distribution", "p2_after_minutes"],
+        "Page when still different after",
+        `One P2 when a managed setting still reads differently this long after the difference was first seen (a write the inverter keeps refusing, or no fresh readback to check it on), and a P3 once it matches. Shorter pages on a slow commit or the extra round a machine model change takes; longer leaves the house on the factory defaults longer before anyone hears. Applies live. ${describeEnergyDistributionSettingBounds("p2_after_minutes")}`,
         {
-          heading: "Normal energy settings (restored after a machine model change)",
-          options: SOLAR_ENERGY_DISTRIBUTION_PRIORITIES.map(priority => ({ value: priority, label: priority })),
+          unit: ENERGY_DISTRIBUTION_SETTING_BOUNDS.p2_after_minutes.unit,
+          min: ENERGY_DISTRIBUTION_SETTING_BOUNDS.p2_after_minutes.min,
+          max: ENERGY_DISTRIBUTION_SETTING_BOUNDS.p2_after_minutes.max,
+          step: 1,
         }
-      ),
-      f(
-        ["grid_off", "normal_energy_distribution", "battery_discharge_to_loads_when_solar_input_normal"],
-        "Battery to the house, with PV",
-        "Whether the battery may supply the house while PV produces (EDD). Off, the house draws from the grid instead, and the inverter refuses the night feed's battery feed to the grid (EDF1). AC charging (EDB) and battery feed to the grid (EDF/EDG) aren't restored here: buying and feeding set those themselves. Applies from the next restore.",
-        { options: ENABLED_OR_DISABLED_OPTIONS }
-      ),
-      f(
-        ["grid_off", "normal_energy_distribution", "battery_discharge_to_loads_when_solar_input_loss"],
-        "Battery to the house, without PV",
-        "Whether the battery may supply the house while PV is down, i.e. at night (EDE). Off, the house runs from the grid at night. Applies from the next restore.",
-        { options: ENABLED_OR_DISABLED_OPTIONS }
-      ),
-      f(
-        ["grid_off", "normal_energy_distribution", "solar_charge_battery"],
-        "Solar charges the battery",
-        "Whether PV may charge the battery (EDA). Applies from the next restore.",
-        { options: ENABLED_OR_DISABLED_OPTIONS }
-      ),
-      f(
-        ["grid_off", "normal_energy_distribution", "feed_power_to_utility"],
-        "Feed to the utility",
-        "Whether the inverter may feed the grid at all (EDC); off, neither PV surplus nor the night feed nor a sell reaches the grid. Applies from the next restore.",
-        { options: ENABLED_OR_DISABLED_OPTIONS }
       ),
     ],
   },

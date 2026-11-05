@@ -49,14 +49,11 @@ function startHarness() {
     gridOffSwitch = createGridOffSwitch({
       config,
       queueSetter: item => queued.push(item),
-      requestSettingsReadback: () => undefined,
       lastDecodedRound,
       mqttValues,
       soc,
       raise,
       wallClockNowMs: () => clock.nowMs,
-      energyDistributionSnapshotStore: { load: () => undefined, save: () => undefined, clear: () => undefined },
-      restoreTimingOverrides: undefined,
     });
     return disposeRoot;
   });

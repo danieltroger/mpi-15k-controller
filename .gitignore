@@ -39,5 +39,3 @@ backend/solar_model_state.json
 backend/solar_cache/
 backend/solar_model_state.json.tmp
 solar_model_state.json.tmp
-grid_off_settings_snapshot.json
-backend/grid_off_settings_snapshot.json

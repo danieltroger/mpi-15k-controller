@@ -26,7 +26,8 @@ exercise it anyway. EDx and SEPnn setters change the HECS readback, GPMP0/MCHGV/
 A DM write that changes the machine model resets HECS to the factory defaults the way DM050 did on
 2026-11-05 (priority Battery-Load-Grid, AC charge on, battery discharge to the loads and to the grid off;
 solar charge and feed to utility stay as they were), and EDF1 is NAKed while battery discharge to the loads
-with PV (EDD) is off, as feeding's EDF1 was every minute after that reset.
+with PV (EDD) is off, as feeding's EDF1 was every minute after that reset. A SEPnn write resets AC charge on,
+feed to utility off and battery feed to the grid without PV off, as SEP01 did on the live inverter that day.
 
 The status queries answer like this inverter did in October 2026: MOD 05 (Hybrid), CFS 12,00 (the
 latest fault before the incident), WS all clear, and HFS00-08 the nine records it returned on
@@ -45,7 +46,8 @@ of the July 2026 evidence (#52 found the real inverter behaves like the first):
   --no-faults               skip the fault plan above and the declined slot
   --initial-hecs TOKENS     the HECS answer to start from, comma-separated (default 00,1,0,1,1,1,1,1,0;
                             the live inverter before 2026-11-05 read 01,1,0,1,1,1,1,1,0)
-  --nak-setters PREFIXES    NAK every setter starting with one of these (comma-separated, e.g. SEP)
+  --nak-setters PREFIXES    NAK every setter starting with one of these (comma-separated, e.g. SEP);
+                            PREFIX:N NAKs only the first N of them (SEP:1: the first SEP is refused)
 
 Every frame carries a serial number (GS: inner_temperature, PS: solar_input_power_2) so the
 harness can map each decoded round back to the exact frame it came from. Events go to stdout as
@@ -105,6 +107,8 @@ HECS_PRIORITY_INDEX = 0
 HECS_AC_CHARGE_INDEX = 2
 HECS_DISCHARGE_TO_LOADS_INDEXES = (4, 5)
 HECS_DISCHARGE_TO_GRID_INDEXES = (6, 7)
+HECS_FEED_TO_UTILITY_INDEX = 3
+HECS_FEED_GRID_WITHOUT_SOLAR_INDEX = 7
 
 
 def crc16_xmodem(data):
@@ -146,7 +150,7 @@ def emit(event, **fields):
 
 
 class FakeInverter:
-    def __init__(self, master_fd, commit_delay_s, commit_needs_quiet_s, with_faults, initial_hecs, nak_setter_prefixes):
+    def __init__(self, master_fd, commit_delay_s, commit_needs_quiet_s, with_faults, initial_hecs, naks_left_by_prefix):
         self.master_fd = master_fd
         self.commit_delay_s = commit_delay_s
         self.commit_needs_quiet_s = commit_needs_quiet_s
@@ -161,7 +165,8 @@ class FakeInverter:
         self.machine_model = "050"
         # priority, then EDA..EDG (solar charge, AC charge, feed utility, discharge loads x2, feed grid x2), reserved
         self.hecs_tokens = initial_hecs.split(",")
-        self.nak_setter_prefixes = nak_setter_prefixes
+        # prefix -> how many more to NAK (None: every one)
+        self.naks_left_by_prefix = naks_left_by_prefix
         self.fault_14_latched = False
         self.held_first_edf = None
         self.pending_commits = []  # (apply_at, description, apply_fn)
@@ -384,7 +389,7 @@ class FakeInverter:
 
     def handle_setter(self, command):
         self.setters_seen += 1
-        if any(command.startswith(prefix) for prefix in self.nak_setter_prefixes):
+        if self.refuses(command):
             self.queue(NAK, "NAK", command, "refused", None)
             emit("setter_refused", setter=command)
             return
@@ -416,13 +421,24 @@ class FakeInverter:
         self.queue(ACK, "ACK", command, "answer", None)
         self.schedule_commit(command)
 
+    def refuses(self, command):
+        for prefix, naks_left in self.naks_left_by_prefix.items():
+            if not command.startswith(prefix):
+                continue
+            if naks_left is None:
+                return True
+            if naks_left > 0:
+                self.naks_left_by_prefix[prefix] = naks_left - 1
+                return True
+        return False
+
     def schedule_commit(self, command):
         apply_at = time.monotonic() + max(self.commit_delay_s, self.commit_needs_quiet_s)
         if command == "EDB0":
             self.pending_commits.append((apply_at, command, self.end_buy_window_into_fault_14))
         elif command.startswith("SEP") and len(command) == 5:
             priority = command[3:]
-            self.pending_commits.append((apply_at, command, lambda: self.hecs_tokens.__setitem__(HECS_PRIORITY_INDEX, priority)))
+            self.pending_commits.append((apply_at, command, lambda: self.change_priority(priority)))
         elif command.startswith("ED") and len(command) == 4:
             token_index = ord(command[2]) - ord("A") + 1
             value = command[3]
@@ -440,6 +456,13 @@ class FakeInverter:
             model = command[2:]
             self.pending_commits.append((apply_at, command, lambda: self.change_machine_model(model)))
 
+    def change_priority(self, priority):
+        self.hecs_tokens[HECS_PRIORITY_INDEX] = priority
+        self.hecs_tokens[HECS_AC_CHARGE_INDEX] = "1"
+        self.hecs_tokens[HECS_FEED_TO_UTILITY_INDEX] = "0"
+        self.hecs_tokens[HECS_FEED_GRID_WITHOUT_SOLAR_INDEX] = "0"
+        emit("hecs_reset", cause="SEP" + priority, hecs=",".join(self.hecs_tokens))
+
     def change_machine_model(self, model):
         if model == self.machine_model:
             return
@@ -448,7 +471,7 @@ class FakeInverter:
         self.hecs_tokens[HECS_AC_CHARGE_INDEX] = "1"
         for token_index in HECS_DISCHARGE_TO_LOADS_INDEXES + HECS_DISCHARGE_TO_GRID_INDEXES:
             self.hecs_tokens[token_index] = "0"
-        emit("hecs_reset", machine_model=model, hecs=",".join(self.hecs_tokens))
+        emit("hecs_reset", cause="DM" + model, hecs=",".join(self.hecs_tokens))
 
     def end_buy_window_into_fault_14(self):
         self.hecs_tokens[2] = "0"
@@ -460,6 +483,16 @@ class FakeInverter:
         emit("fault", fault=fault)
         if not self.faults_remaining:
             emit("faults_done")
+
+
+def parse_nak_setters(option):
+    naks_left_by_prefix = {}
+    for entry in option.split(","):
+        if not entry:
+            continue
+        prefix, _, count = entry.partition(":")
+        naks_left_by_prefix[prefix] = int(count) if count else None
+    return naks_left_by_prefix
 
 
 def main():
@@ -480,7 +513,7 @@ def main():
         arguments.commit_needs_quiet_s,
         not arguments.no_faults,
         arguments.initial_hecs,
-        [prefix for prefix in arguments.nak_setters.split(",") if prefix],
+        parse_nak_setters(arguments.nak_setters),
     )
     emit("ready", device=os.ttyname(slave_fd))
     received = b""

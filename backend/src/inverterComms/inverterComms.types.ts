@@ -8,13 +8,13 @@ type InverterSetterCommand =
   // Only the setters the backend currently sends — see the PI17 spec / jblance mpp-solar docs for more
   /**
    * Set the solar energy distribution priority: SEP00 Battery-Load-Grid, SEP01 Load-Battery-Grid, SEP02
-   * Load-Grid-Battery (^S006SEPnn). Only the restore after a machine model change sends it (gridOff/).
+   * Load-Grid-Battery (^S006SEPnn). Only the energy-distribution enforcement sends it (energyDistribution/).
    */
   | `SEP0${0 | 1 | 2}`
   /**
    * Enable/disable solar charge battery (EDA), feed power to utility (EDC), and battery discharge to the
-   * loads when solar input is normal (EDD) or lost (EDE). Only the restore after a machine model change
-   * sends them (gridOff/): a DM change resets them to the factory defaults.
+   * loads when solar input is normal (EDD) or lost (EDE). Only the energy-distribution enforcement sends
+   * them (energyDistribution/): config is their source of truth, and a DM change resets them.
    */
   | `ED${"A" | "C" | "D" | "E"}${0 | 1}`
   /**

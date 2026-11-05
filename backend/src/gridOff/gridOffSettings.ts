@@ -5,10 +5,9 @@
  */
 import type { GridOffConfig } from "../config/config.types.ts";
 import { effectiveBoundedNumber, type NumberSettingBounds } from "../config/boundedNumberSetting.ts";
-import { DEFAULT_NORMAL_ENERGY_DISTRIBUTION, effectiveNormalEnergyDistribution } from "./energyDistributionProfile.ts";
 
-/** The numeric knobs (poll_machine_model is the one switch, normal_energy_distribution the restore profile) */
-export type GridOffSettingName = Exclude<keyof GridOffConfig, "poll_machine_model" | "normal_energy_distribution">;
+/** The numeric knobs (poll_machine_model is the one switch) */
+export type GridOffSettingName = Exclude<keyof GridOffConfig, "poll_machine_model">;
 
 export type GridOffSettingBounds = NumberSettingBounds & { unit: "%" | "min" | "s" };
 
@@ -30,13 +29,6 @@ export const GRID_OFF_SETTING_BOUNDS = {
   // A DM050 commits ~10 s after its ACK and is resent 1, 2 and 5 min apart. Under a minute pages on a slow
   // commit; past 30 min a buy window can go by uncharged before anyone hears.
   stuck_p1_after_minutes: { defaultValue: 3, min: 1, max: 30, unit: "min" },
-  // The DM readback after a switch back to 050 comes with a HECS read before it, possibly from before the
-  // reset; then the inverter runs its ~60 s grid check. 90 s judges a HECS read well after both. 0 judges the
-  // first HECS read after the DM readback; past 15 min the house runs that long from the grid.
-  settings_restore_delay_seconds: { defaultValue: 90, min: 0, max: 900, unit: "s" },
-  // The restore's setters commit in ~10 s and are resent 1, 2 and 5 min apart. Under 2 min pages on a slow
-  // commit; past an hour the battery has stood idle for that long before anyone hears.
-  settings_restore_p2_after_minutes: { defaultValue: 10, min: 2, max: 60, unit: "min" },
 } as const satisfies Record<GridOffSettingName, GridOffSettingBounds>;
 
 export const DEFAULT_GRID_OFF_SETTINGS: GridOffConfig = {
@@ -47,9 +39,6 @@ export const DEFAULT_GRID_OFF_SETTINGS: GridOffConfig = {
   min_seconds_between_switches: GRID_OFF_SETTING_BOUNDS.min_seconds_between_switches.defaultValue,
   stuck_p1_after_minutes: GRID_OFF_SETTING_BOUNDS.stuck_p1_after_minutes.defaultValue,
   poll_machine_model: true,
-  settings_restore_delay_seconds: GRID_OFF_SETTING_BOUNDS.settings_restore_delay_seconds.defaultValue,
-  settings_restore_p2_after_minutes: GRID_OFF_SETTING_BOUNDS.settings_restore_p2_after_minutes.defaultValue,
-  normal_energy_distribution: { ...DEFAULT_NORMAL_ENERGY_DISTRIBUTION },
 };
 
 const GRID_OFF_SETTING_NAMES = Object.keys(GRID_OFF_SETTING_BOUNDS) as GridOffSettingName[];
@@ -74,8 +63,5 @@ export function effectiveGridOffSettings(configured: Partial<Record<keyof GridOf
     settings[settingName] = value;
     if (correction) corrections.push(`grid_off.${settingName}: ${correction}`);
   }
-  const normalEnergyDistribution = effectiveNormalEnergyDistribution(configured?.normal_energy_distribution);
-  settings.normal_energy_distribution = normalEnergyDistribution.profile;
-  corrections.push(...normalEnergyDistribution.corrections);
   return { settings, corrections };
 }

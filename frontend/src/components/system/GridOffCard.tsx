@@ -1,25 +1,19 @@
-import { createSignal, For, getOwner, Show } from "solid-js";
+import { createSignal, getOwner, Show } from "solid-js";
 import { getBackendSyncedSignal, sendBackendAction } from "~/helpers/getBackendSyncedSignal";
 import { showToastWithMessage } from "~/helpers/showToastWithMessage";
 import { useWebSocket } from "~/components/WebSocketProvider";
 import { formatRelativeTime, useNowMs } from "~/helpers/format";
-import type { EnergyDistributionStatus, GridOffStatus } from "../../../../backend/src/gridOff/gridOff.types";
+import type { GridOffStatus } from "../../../../backend/src/gridOff/gridOff.types";
 import type { GridOffConfig } from "../../../../backend/src/config/config.types";
 import type { MachineModelCode } from "../../../../backend/src/inverterComms/pi17Protocol.types";
 import { describeMachineModel, MACHINE_MODEL_DESCRIPTIONS } from "../../../../backend/src/inverterComms/machineModel";
-import { ENERGY_DISTRIBUTION_FIELD_LABELS } from "../../../../backend/src/gridOff/energyDistributionProfile";
-import type { WsAction } from "../../../../backend/src/wsContract.types";
 import { DiagRow } from "./DiagRow";
 import "./GridOffCard.scss";
-
-/** What the confirmation step is asking about: a DM switch, or the settings restore */
-type PendingConfirmation = MachineModelCode | "restore";
 
 /**
  * The grid-off switch: puts the inverter into Off-Grid III (machine model 151, the grid relay open on
  * battery) and back to normal hybrid (050). Shows what the inverter reads back next to what the
- * controller asked for, and the energy-distribution settings a DM change resets against the profile the
- * controller restores; each switch, and a manual restore, needs a second, in-page confirmation.
+ * controller asked for; each switch needs a second, in-page confirmation.
  */
 export function GridOffCard() {
   // silentReadErrors: a backend from before this card doesn't expose the key yet
@@ -28,17 +22,16 @@ export function GridOffCard() {
   const socket = useWebSocket();
   const owner = getOwner()!;
   const now = useNowMs(5000);
-  const [confirming, setConfirming] = createSignal<PendingConfirmation | undefined>(undefined);
+  const [confirming, setConfirming] = createSignal<MachineModelCode | undefined>(undefined);
   const [sending, setSending] = createSignal(false);
 
-  const sendConfirmed = async (pending: PendingConfirmation) => {
+  const sendSwitch = async (model: MachineModelCode) => {
     setSending(true);
-    const label = pending === "restore" ? "Normal settings" : "Grid relay";
     try {
-      const result = await sendBackendAction(socket, actionFor(pending));
-      await showToastWithMessage(owner, () => `${label} — ${result}`);
+      const result = await sendBackendAction(socket, model === "151" ? "grid_off_open_relay" : "grid_off_normal");
+      await showToastWithMessage(owner, () => `Grid relay — ${result}`);
     } catch (error) {
-      await showToastWithMessage(owner, () => `${label} — ${error instanceof Error ? error.message : error}`);
+      await showToastWithMessage(owner, () => `Grid relay — ${error instanceof Error ? error.message : error}`);
     } finally {
       setSending(false);
       setConfirming(undefined);
@@ -58,9 +51,6 @@ export function GridOffCard() {
       </Show>
       <Show when={config()?.grid_off}>
         {gridOffConfig => <p class="diag__reason">{describeGuards(gridOffConfig())}</p>}
-      </Show>
-      <Show when={gridOff()?.energy_distribution}>
-        {energyDistribution => <EnergyDistributionRows status={energyDistribution()} nowMs={now()} />}
       </Show>
 
       <Show
@@ -83,28 +73,20 @@ export function GridOffCard() {
             >
               Back to normal (050)
             </button>
-            <button
-              type="button"
-              class="grid-off-card__btn"
-              disabled={sending() || !gridOff()?.energy_distribution}
-              onClick={() => setConfirming("restore")}
-            >
-              Restore normal settings
-            </button>
           </div>
         }
       >
-        {pending => (
+        {model => (
           <div class="grid-off-card__confirm">
-            <p class="grid-off-card__question">{confirmationQuestion(pending(), gridOff()?.energy_distribution)}</p>
+            <p class="grid-off-card__question">{confirmationQuestion(model())}</p>
             <div class="grid-off-card__actions">
               <button
                 type="button"
-                class={`grid-off-card__btn${pending() === "151" ? " grid-off-card__btn--danger" : ""}`}
+                class={`grid-off-card__btn${model() === "151" ? " grid-off-card__btn--danger" : ""}`}
                 disabled={sending()}
-                onClick={() => void sendConfirmed(pending())}
+                onClick={() => void sendSwitch(model())}
               >
-                {sending() ? "Sending…" : pending() === "restore" ? "Yes, restore" : `Yes, send DM${pending()}`}
+                {sending() ? "Sending…" : `Yes, send DM${model()}`}
               </button>
               <button
                 type="button"
@@ -162,75 +144,8 @@ function GridOffRows(props: { status: GridOffStatus; nowMs: number }) {
   );
 }
 
-/** The HECS settings a DM change resets, against the profile the controller restores */
-function EnergyDistributionRows(props: { status: EnergyDistributionStatus; nowMs: number }) {
-  const profileSource = () =>
-    props.status.profile_source === "snapshot" && props.status.snapshot_taken_at !== undefined
-      ? `the snapshot from before DM151 (${formatRelativeTime(props.nowMs, props.status.snapshot_taken_at)})`
-      : "the config page's normal settings";
-  return (
-    <>
-      <DiagRow
-        label="Energy settings"
-        value={
-          props.status.mismatches === undefined
-            ? "not read yet"
-            : props.status.mismatches.length
-              ? `${props.status.mismatches.length} differ from normal`
-              : "normal"
-        }
-        title={`The HECS readback against ${profileSource()}. A machine model change resets these to the factory defaults; the controller restores them after a switch back to 050.`}
-      />
-      <Show when={props.status.mismatches?.length}>
-        <ul class="grid-off-card__mismatches">
-          <For each={props.status.mismatches}>
-            {mismatch => (
-              <li>
-                {`${ENERGY_DISTRIBUTION_FIELD_LABELS[mismatch.field]}: ${mismatch.live ?? "not read"}, normal ${mismatch.wanted}`}
-              </li>
-            )}
-          </For>
-        </ul>
-        <Show when={!props.status.restore}>
-          <p class="diag__reason">
-            Normal is {profileSource()}. Nothing is written without a machine model change: restore them below.
-          </p>
-        </Show>
-      </Show>
-      <Show when={props.status.restore}>
-        {restore => (
-          <p class="diag__reason">
-            <b>Restoring</b> ({restore().trigger === "manual" ? "from this page" : "after the switch back to 050"},{" "}
-            {formatRelativeTime(props.nowMs, restore().since)}): {restore().send_rounds} round(s) sent
-            {restore().p2_raised ? "; still not read back, a P2 went out" : ""}.
-          </p>
-        )}
-      </Show>
-      <Show when={props.status.last_event}>
-        {event => (
-          <p class="diag__reason">
-            {event().what} — {formatRelativeTime(props.nowMs, event().when)}
-          </p>
-        )}
-      </Show>
-    </>
-  );
-}
-
-function actionFor(pending: PendingConfirmation): WsAction {
-  if (pending === "restore") return "grid_off_restore_settings";
-  return pending === "151" ? "grid_off_open_relay" : "grid_off_normal";
-}
-
-function confirmationQuestion(
-  pending: PendingConfirmation,
-  energyDistribution: EnergyDistributionStatus | undefined
-): string {
-  if (pending === "restore") {
-    const differing = energyDistribution?.mismatches?.length ?? 0;
-    return `Restore the normal energy settings? The controller re-reads them and sends ${differing ? `the ${differing} that differ` : "whatever differs"} (solar priority, battery to the loads, solar charge, feed to utility). Refused during a buy, sell or hold window and while grid-off is in force.`;
-  }
-  return pending === "151"
+function confirmationQuestion(model: MachineModelCode): string {
+  return model === "151"
     ? "Open the grid relay? The house then runs on PV and the battery alone, nothing is fed to the grid, and the grid only takes the house over by itself on an overload or a flat battery. Untested on this firmware: have someone at the inverter."
     : "Back to normal hybrid (050)? The inverter reconnects to the grid after its own grid check (~60 s).";
 }

@@ -3,14 +3,12 @@
  * on battery) or normal hybrid (050); the guards switch back to 050 on a low SOC, an upcoming buy or sell
  * window, stale readings or a 151 that never applied; a clean stop switches back (gridOffShutdown.ts); and a
  * 151 read while 050 is wanted, at startup above all, is switched back too, with resends backing off and a
- * P1 once it stays stuck (gridOffStuckAlert.ts). A DM change resets the inverter's energy-distribution
- * settings (HECS), so a confirmed switch back to 050 restores them (energyDistributionRestore.ts). Nothing
- * here writes on its own initiative except DM050, only while the inverter reads 151, and that restore, only
- * after a DM change. Decisions: gridOffDecisions.ts.
+ * P1 once it stays stuck (gridOffStuckAlert.ts). Nothing here writes on its own initiative except DM050, and
+ * only while the inverter reads 151. Decisions: gridOffDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
-import type { DecodedRound, SettingsQueryCommandName } from "../inverterComms/pi17Protocol.types.ts";
+import type { DecodedRound } from "../inverterComms/pi17Protocol.types.ts";
 import type { SetterQueueItem } from "../inverterComms/inverterComms.types.ts";
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
@@ -27,38 +25,28 @@ import {
   type GridOffContext,
   isLoggedSettingsQuery,
   type MachineModelReadback,
-  manualRestoreSituation,
   queueMachineModel,
   recordMachineModelReadback,
   requestNormal,
   requestOffGrid,
   type RequestedModel,
 } from "./gridOffActions.ts";
-import { createEnergyDistributionRestore } from "./energyDistributionRestore.ts";
-import {
-  createEnergyDistributionSnapshotFileStore,
-  type EnergyDistributionSnapshotStore,
-} from "./energyDistributionSnapshotStore.ts";
-import type { RestoreTiming } from "./energyDistributionRestoreDecisions.ts";
 
 /** How often the time-based guards (SOC, windows, staleness, the confirm deadline, stuck) are re-judged */
 const GUARD_TICK_INTERVAL_MS = 10_000;
 
 export function useGridOffSwitch({ config, raise }: { config: Accessor<Config>; raise: AlertManager["raise"] }) {
-  const { queueSetter, lastDecodedRound, requestSettingsReadback } = useInverterComms();
+  const { queueSetter, lastDecodedRound } = useInverterComms();
   const { mqttValues } = useFromMqttProvider();
   const { clampedSocAh } = useBatteryValuesProvider();
   return createGridOffSwitch({
     config,
     queueSetter,
-    requestSettingsReadback,
     lastDecodedRound,
     mqttValues,
     soc: clampedSocAh,
     raise,
     wallClockNowMs: () => Date.now(),
-    energyDistributionSnapshotStore: createEnergyDistributionSnapshotFileStore(),
-    restoreTimingOverrides: undefined,
   });
 }
 
@@ -66,8 +54,6 @@ export function useGridOffSwitch({ config, raise }: { config: Accessor<Config>; 
 export type GridOffEnvironment = {
   config: Accessor<Config>;
   queueSetter: (item: SetterQueueItem) => void;
-  /** The session's early settings readback: the restore asks for the HECS it judges */
-  requestSettingsReadback: (query: SettingsQueryCommandName) => void;
   /** DM rounds give the readback; GPMP/HECS/BATS rounds are kept whole for the before/after log */
   lastDecodedRound: Accessor<DecodedRound | undefined>;
   /** Only GS's battery_voltage and PS's ac_output_total_active_power are read, for freshness */
@@ -77,10 +63,6 @@ export type GridOffEnvironment = {
   raise: AlertManager["raise"];
   /** Date.now() in production */
   wallClockNowMs: () => number;
-  /** backend/grid_off_settings_snapshot.json in production */
-  energyDistributionSnapshotStore: EnergyDistributionSnapshotStore;
-  /** Harnesses only — production passes undefined */
-  restoreTimingOverrides: Partial<RestoreTiming> | undefined;
 };
 
 export function createGridOffSwitch(environment: GridOffEnvironment) {
@@ -93,27 +75,6 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     equals: (previous, next) => previous.conditionSinceMs === next.conditionSinceMs && previous.stuck === next.stuck,
   });
   const settings = createMemo(() => correctedGridOffSettings(config().grid_off));
-  // The shutdown switch-back needs the raw state: a stuck 151 is still a 151 worth one more DM050
-  const inverterMayBeOffGrid = createMemo(
-    () => requested().model === OFF_GRID_III_MODEL || readback()?.model === OFF_GRID_III_MODEL
-  );
-  // What everything else holds for: not once stuck, when buying and the held alerts must come back
-  const gridOffInForce = createMemo(
-    () =>
-      requested().model === OFF_GRID_III_MODEL || (readback()?.model === OFF_GRID_III_MODEL && !stuckTracking().stuck)
-  );
-  const energyDistributionRestore = createEnergyDistributionRestore({
-    settings,
-    queueSetter,
-    requestSettingsReadback: environment.requestSettingsReadback,
-    lastDecodedRound,
-    machineModelReadback: readback,
-    gridOffInForce,
-    raise,
-    wallClockNowMs,
-    snapshotStore: environment.energyDistributionSnapshotStore,
-    timingOverrides: environment.restoreTimingOverrides,
-  });
   const context: GridOffContext = {
     config,
     settings,
@@ -133,7 +94,6 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     latestSettingsFields: {},
     switchBackSends: NO_SWITCH_BACK_SENDS,
     lastSwitchAtMs: undefined,
-    energyDistributionRestore,
   };
 
   createEffect(() => {
@@ -143,6 +103,15 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     if (round.command === "DM") recordMachineModelReadback(context, round, setReadback);
   });
 
+  // The shutdown switch-back needs the raw state: a stuck 151 is still a 151 worth one more DM050
+  const inverterMayBeOffGrid = createMemo(
+    () => requested().model === OFF_GRID_III_MODEL || readback()?.model === OFF_GRID_III_MODEL
+  );
+  // What everything else holds for: not once stuck, when buying and the held alerts must come back
+  const gridOffInForce = createMemo(
+    () =>
+      requested().model === OFF_GRID_III_MODEL || (readback()?.model === OFF_GRID_III_MODEL && !stuckTracking().stuck)
+  );
   createEffect(() =>
     logLog(
       gridOffInForce()
@@ -169,11 +138,6 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     } catch (error) {
       errorLog("Grid off: evaluating the guards failed, retrying next tick", error);
     }
-    try {
-      energyDistributionRestore.evaluate();
-    } catch (error) {
-      errorLog("Grid off: evaluating the energy-distribution restore failed, retrying next tick", error);
-    }
   }, GUARD_TICK_INTERVAL_MS);
   onCleanup(() => clearInterval(guardTimer));
 
@@ -183,6 +147,8 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     sendNormalHybrid: onResult => queueMachineModel(context, NORMAL_HYBRID_MODEL, onResult),
   });
 
+  const requestedMachineModel = createMemo(() => requested().model);
+
   const status = createMemo<GridOffStatus>(() => ({
     requested_model: requested().model,
     requested_at: requested().atMs,
@@ -191,22 +157,17 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     grid_off_in_force: gridOffInForce(),
     stuck_off_grid: stuckTracking().stuck,
     last_event: lastEvent(),
-    energy_distribution: energyDistributionRestore.status(),
   }));
 
   return {
     /** 151 requested, or read back and not stuck: feeding/buying writes hold, the grid alerts stand down */
     gridOffInForce,
+    /** The model asked for: until the DM readback shows it, the energy-distribution enforcement holds its writes */
+    requestedMachineModel,
     status,
     /** The page's "open the grid relay" (DM151): refused, with the reason thrown, unless every precondition holds */
     requestOffGrid: async () => requestOffGrid(context),
     /** The page's "back to normal" (DM050): always allowed */
     requestNormal: async () => requestNormal(context),
-    /**
-     * The page's "Restore normal settings" (the HECS fields a DM change resets): refused, with the reason
-     * thrown, while a window runs, grid-off is in force or the readings are stale
-     */
-    requestSettingsRestore: async () =>
-      energyDistributionRestore.requestRestore(manualRestoreSituation(context, untrack(gridOffInForce))),
   };
 }

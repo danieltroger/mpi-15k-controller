@@ -3,6 +3,7 @@ import { LiveReadings } from "~/components/system/LiveReadings";
 import { DiagnosticsCards } from "~/components/system/DiagnosticsCards";
 import { AlertsCard } from "~/components/system/AlertsCard";
 import { GridOffCard } from "~/components/system/GridOffCard";
+import { EnergyDistributionCard } from "~/components/system/EnergyDistributionCard";
 import "./system.scss";
 
 /** Live data + diagnostics merged: raw sensor truth on top, controller internals below. */
@@ -15,6 +16,8 @@ export default function System() {
       <AlertsCard />
       <h2 class="system__heading">Grid relay</h2>
       <GridOffCard />
+      <h2 class="system__heading">Energy settings</h2>
+      <EnergyDistributionCard />
       <h2 class="system__heading">Live readings</h2>
       <LiveReadings />
       <h2 class="system__heading">Controller internals</h2>

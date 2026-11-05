@@ -5,6 +5,7 @@ import type { FetchedPrices } from "./autoTrading/priceService.types.ts";
 import type { AlertRecord } from "./alerting/alerting.types.ts";
 import type { InverterOperatingStatus } from "./inverterComms/inverterStatus.types.ts";
 import type { GridOffStatus } from "./gridOff/gridOff.types.ts";
+import type { EnergyDistributionStatus } from "./energyDistribution/energyDistribution.types.ts";
 import type {
   CurrentBatteryPowerBroadcast,
   ElpatronDisplayState,
@@ -32,6 +33,8 @@ export type WsExposedSignals = {
   inverterStatus: InverterOperatingStatus;
   /** The grid-off switch: requested vs read-back machine model (050 normal / 151 Off-Grid III) */
   gridOff: GridOffStatus;
+  /** The HECS energy-distribution settings against their config profile, and the enforcement's state */
+  energyDistribution: EnergyDistributionStatus;
   elpatronState: ElpatronDisplayState;
   currentBatteryPower: CurrentBatteryPowerBroadcast;
   /** THE SOC everything runs on: the Ah ledger clamped to [0,100] */
@@ -92,12 +95,7 @@ export type WsAction =
   /** Off-Grid III (DM151, grid relay open); refused with the reason unless every precondition holds */
   | "grid_off_open_relay"
   /** Back to normal hybrid (DM050) */
-  | "grid_off_normal"
-  /**
-   * Put back the energy-distribution settings (HECS) a DM change resets; refused with the reason while a
-   * window runs, grid-off is in force or the readings are stale
-   */
-  | "grid_off_restore_settings";
+  | "grid_off_normal";
 
 /**
  * What index.ts must hand wsMessaging: an accessor per contract key, except `config` and

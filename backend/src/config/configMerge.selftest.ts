@@ -404,30 +404,5 @@ check(
   "error" in meterCalibrationPatch ? meterCalibrationPatch.error : ""
 );
 
-// ---------- grid_off: the restore knobs and profile came after the switch ----------
-const gridOffBeforeRestore = mergeWithDefaults({
-  grid_off: { min_soc_percent: 20 },
-} as unknown as Partial<Config>);
-check(
-  "merge: a grid_off from before the restore gets its knobs and the live profile",
-  gridOffBeforeRestore.grid_off.min_soc_percent === 20 &&
-    gridOffBeforeRestore.grid_off.settings_restore_delay_seconds === 90 &&
-    gridOffBeforeRestore.grid_off.settings_restore_p2_after_minutes === 10 &&
-    gridOffBeforeRestore.grid_off.normal_energy_distribution.solar_energy_distribution_priority ===
-      "Load-Battery-Grid" &&
-    gridOffBeforeRestore.grid_off.normal_energy_distribution.battery_discharge_to_loads_when_solar_input_loss ===
-      "enabled"
-);
-const partialProfile = mergeWithDefaults({
-  grid_off: { normal_energy_distribution: { solar_energy_distribution_priority: "Battery-Load-Grid" } },
-} as unknown as Partial<Config>);
-check(
-  "merge: a partial normal_energy_distribution keeps its other defaults, key by key",
-  partialProfile.grid_off.normal_energy_distribution.solar_energy_distribution_priority === "Battery-Load-Grid" &&
-    partialProfile.grid_off.normal_energy_distribution.battery_discharge_to_loads_when_solar_input_normal ===
-      "enabled" &&
-    partialProfile.grid_off.min_soc_percent === 10
-);
-
 console.log(fails.length ? `\n${fails.length} FAILURES: ${fails.join(", ")}` : "\nAll config merge checks passed");
 process.exit(fails.length ? 1 : 0);
