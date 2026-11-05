@@ -4,10 +4,11 @@
  * one in force, and every managed field the HECS readback shows differently is written at once (SEP, then
  * EDD/EDE, then EDA/EDC). A DM change resets HECS to the factory defaults (2026-11-05), a value changed on the
  * inverter's display, a config edit: all are just a difference. A write that doesn't land is retried when
- * something changes (the DM readback, the working mode, any HECS field, the profile) and otherwise every
- * ENFORCEMENT_FALLBACK_RETRY_MS, with one P2 per divergence episode after p2_after_minutes. Nothing is
- * written while the DM readback is unknown or stale. AC charge (EDB) and battery feed to the grid
- * (EDF/EDG) stay with buying and feeding. Decisions: energyDistributionEnforcementDecisions.ts.
+ * something changes (the DM readback, the working mode, an enforced HECS field, the profile; a few times per
+ * episode) and otherwise every ENFORCEMENT_FALLBACK_RETRY_MS, with one P2 per divergence episode after
+ * p2_after_minutes. Nothing is written while the DM readback is unknown or stale, while a DM switch is in
+ * flight, nor queued where the session's identical-setter gate would hold it. AC charge (EDB) and battery
+ * feed to the grid (EDF/EDG) stay with buying and feeding. Decisions: energyDistributionEnforcementDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import type { Config, InverterEnergyDistributionConfig } from "../config/config.types.ts";
@@ -33,6 +34,7 @@ import {
 import { effectiveEnergyDistributionSettings } from "./energyDistributionSettings.ts";
 import {
   type DivergenceEpisode,
+  CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   ENFORCEMENT_FALLBACK_RETRY_MS,
   type EnforcementSituation,
   type EnforcementStep,
@@ -94,8 +96,10 @@ export type EnergyDistributionEnvironment = {
 };
 
 export function createEnergyDistributionEnforcement(environment: EnergyDistributionEnvironment) {
+  // Per instance: a main() crash-restart (or the next harness) must warn about a still-invalid config again
+  const correctionWarnings: CorrectionWarnings = { lastSummary: "" };
   const settings = createMemo(() =>
-    correctedEnergyDistributionSettings(environment.config().inverter_energy_distribution)
+    correctedEnergyDistributionSettings(environment.config().inverter_energy_distribution, correctionWarnings)
   );
   const workingModeCode = createMemo(() => environment.workingModeCode());
   const [machineModel, setMachineModel] = createSignal<MachineModelReading | undefined>(undefined);
@@ -117,6 +121,7 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
     setJudgedProfileName,
     setLastEvent,
     lastReadbackRequestAtMs: undefined,
+    lastQueuedAtByCommand: {},
   };
 
   createEffect(() => {
@@ -182,6 +187,7 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
         since: runningEpisode.onsetMs,
         send_rounds: runningEpisode.sendRounds,
         p2_raised: runningEpisode.p2Raised,
+        fallback_only: runningEpisode.changeTriggeredRetries >= CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
       },
       waiting_reason: waitingReason(),
       last_event: lastEvent(),
@@ -203,6 +209,8 @@ type EnforcementContext = EnergyDistributionEnvironment & {
   setLastEvent: Setter<EnergyDistributionStatus["last_event"]>;
   /** Wall-clock ms; the readbacks asked for on a DM or working mode change are at most one a minute */
   lastReadbackRequestAtMs: number | undefined;
+  /** Wall-clock ms each setter was last queued, across episodes: what the session's identical-setter gate holds */
+  lastQueuedAtByCommand: Record<string, number>;
 };
 
 /** Runs on every DM/HECS readback, working mode or config change and every tick; every read is untracked */
@@ -222,6 +230,7 @@ function evaluateEnforcement(context: EnforcementContext): void {
       untrack(context.config).usb_parameter_setting.poll_values_interval_seconds
     ),
     profiles: settings,
+    lastQueuedAtByCommand: context.lastQueuedAtByCommand,
   };
   const timing: EnforcementTiming = {
     p2AfterMs: settings.p2_after_minutes * 60_000,
@@ -254,6 +263,7 @@ function queueSetters(
   for (const divergence of divergences) {
     const { command, replacesPrefix } = setterForDivergence(divergence);
     commands.push(command);
+    context.lastQueuedAtByCommand[command] = context.wallClockNowMs();
     context.queueSetter({
       command,
       replacesPrefix,
@@ -271,7 +281,7 @@ function afterSetterResult(context: EnforcementContext, command: string, result:
   if (result.acknowledged) return;
   // The session errorLogs a NAK once per streak of them; this says what the enforcement does about it
   warnLog(
-    `Energy distribution: the inverter NAKed ${command} — retried once the DM, the working mode, HECS or the profile changes, else in ${ENFORCEMENT_FALLBACK_RETRY_MS / 60_000} min`
+    `Energy distribution: the inverter NAKed ${command} — retried once the DM, the working mode, an enforced HECS field or the profile changes (up to ${CHANGE_TRIGGERED_RETRIES_PER_EPISODE} times), else in ${ENFORCEMENT_FALLBACK_RETRY_MS / 60_000} min`
   );
   recordEvent(context, `${command} rejected by the inverter (NAK)`);
 }
@@ -340,17 +350,18 @@ function recordEvent(context: EnforcementContext, what: string): void {
   context.setLastEvent({ what, when: context.wallClockNowMs() });
 }
 
-let lastWarnedCorrections = "";
+type CorrectionWarnings = { lastSummary: string };
 
 /** The config section corrected to its bounds, warning once per distinct set of corrections */
 function correctedEnergyDistributionSettings(
-  configured: Config["inverter_energy_distribution"] | undefined
+  configured: Config["inverter_energy_distribution"] | undefined,
+  correctionWarnings: CorrectionWarnings
 ): InverterEnergyDistributionConfig {
   const { settings, corrections } = effectiveEnergyDistributionSettings(configured);
   const summary = corrections.join("; ");
-  if (summary !== lastWarnedCorrections) {
+  if (summary !== correctionWarnings.lastSummary) {
     if (summary) warnLog(`${summary} (the energy-distribution enforcement uses that until it's fixed)`);
-    lastWarnedCorrections = summary;
+    correctionWarnings.lastSummary = summary;
   }
   return settings;
 }

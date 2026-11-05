@@ -15,8 +15,8 @@ export type EnergyDistributionProfileName = keyof Pick<
 
 export type EnergyDistributionFieldDivergence = {
   field: EnergyDistributionField;
-  /** What the inverter reads ("Battery-Load-Grid", "disabled", …), verbatim; undefined = missing from the readback */
-  inverter: string | undefined;
+  /** What the inverter reads ("Battery-Load-Grid", "disabled", "Unknown key: 03", …), verbatim */
+  inverter: string;
   /** What the profile wants */
   desired: string;
 };
@@ -33,8 +33,13 @@ export type EnergyDistributionFieldState = {
 export type EnergyDistributionDivergenceProgress = {
   /** Wall-clock ms the divergence was first seen */
   since: number;
-  /** Rounds of setters queued so far (resent with back-off while the readback still differs) */
+  /**
+   * Rounds of setters queued so far: the first, one per change of the DM, the working mode, an enforced HECS
+   * field or the profile (up to a cap), and the 10-min fallback
+   */
   send_rounds: number;
+  /** The change-triggered retries are used up: only the 10-min fallback retries for the rest of the episode */
+  fallback_only: boolean;
   /** The P2 for a divergence older than inverter_energy_distribution.p2_after_minutes went out */
   p2_raised: boolean;
 };
@@ -50,7 +55,10 @@ export type EnergyDistributionStatus = {
   hecs_read_at: number | undefined;
   /** A managed field differs; undefined = all managed fields read as the profile */
   divergence: EnergyDistributionDivergenceProgress | undefined;
-  /** Why nothing goes out right now although a field differs (settling, a stale readback, the back-off) */
+  /**
+   * Why nothing goes out right now although a field differs (a pending DM switch, a stale or incomplete
+   * readback, the session's identical-setter gate, waiting for a change or the fallback)
+   */
   waiting_reason: string | undefined;
   /** The latest thing the enforcement did, and why */
   last_event: { what: string; when: number } | undefined;

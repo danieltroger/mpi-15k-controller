@@ -21,6 +21,7 @@ import {
 } from "./energyDistributionProfile.ts";
 import { effectiveEnergyDistributionSettings } from "./energyDistributionSettings.ts";
 import {
+  CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   type DivergenceEpisode,
   ENFORCEMENT_FALLBACK_RETRY_MS,
   type EnforcementSituation,
@@ -147,6 +148,21 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
 }
 
 // ---------- the pure decisions ----------
+/** Steps the decisions as the wiring does: what a step sends is recorded as queued, for the session's gate */
+type PureRun = { episode: DivergenceEpisode | undefined; lastQueuedAtByCommand: Record<string, number> };
+
+function pureStep(run: PureRun, situation: EnforcementSituation, timing: EnforcementTiming) {
+  const step = nextEnforcementStep(
+    run.episode,
+    { ...situation, lastQueuedAtByCommand: run.lastQueuedAtByCommand },
+    timing
+  );
+  run.episode = step.episode;
+  const commands = (step.send ?? []).map(divergence => setterForDivergence(divergence).command);
+  for (const command of commands) run.lastQueuedAtByCommand[command] = situation.nowMs;
+  return { step, commands };
+}
+
 {
   const START_MS = 1_000_000_000;
   const timing: EnforcementTiming = { p2AfterMs: 600_000, fallbackRetryMs: ENFORCEMENT_FALLBACK_RETRY_MS };
@@ -159,8 +175,10 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
     hecs: { fields: RESET_HECS, decodedAtMs: nowMs - 500 },
     settingsReadbackMaxAgeMs: 660_000,
     profiles,
+    lastQueuedAtByCommand: {},
     ...overrides,
   });
+  const hecsAt = (nowMs: number, fields: DecodedFields) => ({ hecs: { fields, decodedAtMs: nowMs } });
   check(
     "no DM readback: no profile",
     "noProfileReason" in profileInForce(situationAt(START_MS, { machineModel: undefined }))
@@ -177,11 +195,7 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
   const offGrid = profileInForce(situationAt(START_MS, { machineModel: { model: "151", atMs: START_MS } }));
   check("151 puts off_grid_iii in force", "profileName" in offGrid && offGrid.profileName === "off_grid_iii");
 
-  const matching = nextEnforcementStep(
-    undefined,
-    situationAt(START_MS, { hecs: { fields: LIVE_HECS, decodedAtMs: START_MS } }),
-    timing
-  );
+  const matching = nextEnforcementStep(undefined, situationAt(START_MS, hecsAt(START_MS, LIVE_HECS)), timing);
   check(
     "a matching readback writes nothing and opens nothing",
     !matching.send && !matching.episode && !matching.started
@@ -196,11 +210,32 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
   );
   check(
     "a stale HECS readback: nothing written",
-    !nextEnforcementStep(
+    !nextEnforcementStep(undefined, situationAt(START_MS, hecsAt(START_MS - 700_000, RESET_HECS)), timing).send
+  );
+  const { solar_energy_distribution_priority: _missingPriority, ...withoutPriority } = RESET_HECS;
+  const unread = nextEnforcementStep(undefined, situationAt(START_MS, hecsAt(START_MS, withoutPriority)), timing);
+  check(
+    "a readback lacking a managed field can't be judged: nothing written (no SEP on a guess)",
+    !unread.send && !unread.judged
+  );
+  const openEpisode = nextEnforcementStep(undefined, situationAt(START_MS), timing).episode;
+  const unreadWhileOpen = nextEnforcementStep(
+    openEpisode,
+    situationAt(START_MS + 60_000, hecsAt(START_MS + 60_000, withoutPriority)),
+    timing
+  );
+  check(
+    "…an open episode stays open, saying why",
+    unreadWhileOpen.episode !== undefined && unreadWhileOpen.waitingReason?.includes("lacks Solar priority") === true,
+    unreadWhileOpen.waitingReason
+  );
+  check(
+    "an out-of-domain value is a real difference and is written back",
+    nextEnforcementStep(
       undefined,
-      situationAt(START_MS, { hecs: { fields: RESET_HECS, decodedAtMs: START_MS - 700_000 } }),
+      situationAt(START_MS, hecsAt(START_MS, { ...LIVE_HECS, solar_energy_distribution_priority: "Unknown key: 03" })),
       timing
-    ).send
+    ).send?.[0]?.field === "solar_energy_distribution_priority"
   );
   const first = nextEnforcementStep(undefined, situationAt(START_MS), timing);
   check(
@@ -210,24 +245,27 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
   );
 
   // A firmware that refuses everything, the readback never changing: the fallback alone retries
-  let episode: DivergenceEpisode | undefined = first.episode;
-  const sendTimesMs: number[] = [0];
-  let p2Count = 0;
-  for (let nowMs = START_MS + 10_000; nowMs <= START_MS + 3_600_000; nowMs += 10_000) {
-    const step = nextEnforcementStep(episode, situationAt(nowMs), timing);
-    if (step.send) sendTimesMs.push(nowMs - START_MS);
-    if (step.raiseP2) p2Count++;
-    episode = step.episode;
+  {
+    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const sendTimesMs: number[] = [];
+    let p2Count = 0;
+    for (let nowMs = START_MS; nowMs <= START_MS + 3_600_000; nowMs += 10_000) {
+      const { step } = pureStep(run, situationAt(nowMs), timing);
+      if (step.send) sendTimesMs.push(nowMs - START_MS);
+      if (step.raiseP2) p2Count++;
+    }
+    check(
+      "a steady persistent NAK writes at most once per fallback interval (10 min)",
+      sendTimesMs.length === 7 &&
+        sendTimesMs.every((sentAt, index) => sentAt === index * ENFORCEMENT_FALLBACK_RETRY_MS),
+      sendTimesMs.join(",")
+    );
+    check("…and pages exactly once (P2 after p2_after_minutes)", p2Count === 1);
   }
-  check(
-    "a steady persistent NAK writes at most once per fallback interval (10 min)",
-    sendTimesMs.length === 7 && sendTimesMs.every((sentAt, index) => sentAt === index * ENFORCEMENT_FALLBACK_RETRY_MS),
-    sendTimesMs.join(",")
-  );
-  check("…and pages exactly once (P2 after p2_after_minutes)", p2Count === 1);
 
+  // What re-arms an attempt (past the session's gate, so only the trigger is judged)
   const afterNak = nextEnforcementStep(undefined, situationAt(START_MS), timing).episode;
-  const later = START_MS + 30_000;
+  const later = START_MS + 90_000;
   check(
     "after a NAK, the same readback doesn't retry",
     !nextEnforcementStep(afterNak, situationAt(later), timing).send
@@ -237,15 +275,30 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
     nextEnforcementStep(afterNak, situationAt(later, { workingModeCode: "03" }), timing).send !== undefined
   );
   check(
-    "…so does any HECS field changing (AC charge, not even ours)",
+    "…so does an enforced HECS field changing (EDA, even though it's right)",
     nextEnforcementStep(
       afterNak,
-      situationAt(later, { hecs: { fields: { ...RESET_HECS, ac_charge_battery: "disabled" }, decodedAtMs: later } }),
+      situationAt(later, hecsAt(later, { ...RESET_HECS, solar_charge_battery: "disabled" })),
       timing
     ).send !== undefined
   );
   check(
-    "…and a profile change (config)",
+    "…but not buying's or feeding's fields moving (EDB, EDG): SEP's own side effects can't re-arm SEP",
+    !nextEnforcementStep(
+      afterNak,
+      situationAt(
+        later,
+        hecsAt(later, {
+          ...RESET_HECS,
+          ac_charge_battery: "disabled",
+          battery_discharge_to_feed_grid_when_solar_input_loss: "enabled",
+        })
+      ),
+      timing
+    ).send
+  );
+  check(
+    "…and a profile change (config) does",
     nextEnforcementStep(
       afterNak,
       situationAt(later, {
@@ -257,11 +310,7 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
       timing
     ).send?.[0]?.desired === "Load-Grid-Battery"
   );
-  const landed = nextEnforcementStep(
-    afterNak,
-    situationAt(later, { hecs: { fields: LIVE_HECS, decodedAtMs: later } }),
-    timing
-  );
+  const landed = nextEnforcementStep(afterNak, situationAt(later, hecsAt(later, LIVE_HECS)), timing);
   check("a matching readback ends the episode", landed.landed !== undefined && landed.episode === undefined);
   const blind = nextEnforcementStep(
     { ...afterNak!, onsetMs: START_MS - 700_000 },
@@ -272,6 +321,123 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
     "an episode that can't be judged any more still pages once overdue, and writes nothing",
     blind.raiseP2 && !blind.send && blind.waitingReason?.includes("DM") === true
   );
+
+  // Review #1: a re-arm inside the session's gate, then a hold. Nothing may sit gated in the queue and reach
+  // the wire after the enforcement decided to hold (SEP01 into a 151 transition resets EDB/EDC/EDG)
+  {
+    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const t0 = pureStep(run, situationAt(START_MS), timing);
+    check("t=0: SEP01, EDD1, EDE1 (SEP01 NAKed)", t0.commands.join(",") === RESTORED_COMMANDS);
+    const eddLanded = { ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" };
+    const t10 = pureStep(run, situationAt(START_MS + 10_000, hecsAt(START_MS + 10_000, eddLanded)), timing);
+    check(
+      "t=10 s: EDD1 landed re-arms, but SEP01/EDE1 went out 10 s ago: nothing queued for the gate to hold",
+      t10.commands.length === 0 && run.episode?.deferredCommands.join(",") === "SEP01,EDE1",
+      t10.step.waitingReason
+    );
+    const queuedAfterHold: string[] = [];
+    for (let nowMs = START_MS + 30_000; nowMs <= START_MS + 300_000; nowMs += 10_000) {
+      const held = pureStep(
+        run,
+        situationAt(nowMs, { ...hecsAt(nowMs, eddLanded), machineModelSwitchPending: true }),
+        timing
+      );
+      queuedAfterHold.push(...held.commands);
+    }
+    check("t=30 s on, DM151 pending: nothing reaches the queue, gate open or not", queuedAfterHold.length === 0);
+    const in151 = pureStep(
+      run,
+      situationAt(START_MS + 310_000, {
+        ...hecsAt(START_MS + 310_000, RESET_HECS),
+        machineModel: { model: "151", atMs: START_MS + 310_000 },
+      }),
+      timing
+    );
+    check(
+      "…and in 151 (all unmanaged) the episode ends without a write",
+      in151.commands.length === 0 && run.episode === undefined
+    );
+  }
+
+  // …and a field made unmanaged inside the gate's window is never written
+  {
+    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    pureStep(run, situationAt(START_MS), timing);
+    const eddLanded = { ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" };
+    pureStep(run, situationAt(START_MS + 10_000, hecsAt(START_MS + 10_000, eddLanded)), timing);
+    const priorityUnmanaged = {
+      ...profiles,
+      normal_hybrid: { ...profiles.normal_hybrid, solar_energy_distribution_priority: "unmanaged" as const },
+    };
+    const queued: string[] = [];
+    for (let nowMs = START_MS + 20_000; nowMs <= START_MS + 200_000; nowMs += 10_000) {
+      queued.push(
+        ...pureStep(run, situationAt(nowMs, { ...hecsAt(nowMs, eddLanded), profiles: priorityUnmanaged }), timing)
+          .commands
+      );
+    }
+    check(
+      "SEP made unmanaged within the window: never written again; the still-differing EDE1 goes out once the gate is open",
+      !queued.includes("SEP01") && queued.join(",") === "EDE1",
+      queued.join(",")
+    );
+  }
+
+  // Review #2: the firmware ACKs SEP01 and applies its side effects (EDB on, EDC/EDG off) but not the
+  // priority; EDC1 lands, buying and feeding put EDB/EDG back. The change-triggered rounds stay bounded.
+  {
+    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    let hecsFields: DecodedFields = { ...LIVE_HECS, solar_energy_distribution_priority: "Battery-Load-Grid" };
+    const sepSendTimesMs: number[] = [];
+    const pendingEffects: { atMs: number; apply: (fields: DecodedFields) => DecodedFields }[] = [];
+    for (let nowMs = START_MS; nowMs <= START_MS + 3_600_000; nowMs += 5_000) {
+      for (const effect of pendingEffects.filter(candidate => candidate.atMs <= nowMs))
+        hecsFields = effect.apply(hecsFields);
+      pendingEffects.splice(0, pendingEffects.length, ...pendingEffects.filter(candidate => candidate.atMs > nowMs));
+      const { commands } = pureStep(run, situationAt(nowMs, hecsAt(nowMs, hecsFields)), timing);
+      for (const command of commands) {
+        if (command === "SEP01") {
+          sepSendTimesMs.push(nowMs - START_MS);
+          pendingEffects.push({
+            atMs: nowMs + 10_000,
+            apply: fields => ({
+              ...fields,
+              ac_charge_battery: "enabled",
+              feed_power_to_utility: "disabled",
+              battery_discharge_to_feed_grid_when_solar_input_loss: "disabled",
+            }),
+          });
+          // Buying's EDB0 and feeding's EDG1, a little later
+          pendingEffects.push({
+            atMs: nowMs + 25_000,
+            apply: fields => ({
+              ...fields,
+              ac_charge_battery: "disabled",
+              battery_discharge_to_feed_grid_when_solar_input_loss: "enabled",
+            }),
+          });
+        }
+        if (command === "EDC1")
+          pendingEffects.push({
+            atMs: nowMs + 10_000,
+            apply: fields => ({ ...fields, feed_power_to_utility: "enabled" }),
+          });
+      }
+    }
+    const lateGapsMs = sepSendTimesMs
+      .slice(1)
+      .map((sentAt, index) => sentAt - sepSendTimesMs[index]!)
+      .slice(3);
+    check(
+      `SEP's side effects re-arm at most ${CHANGE_TRIGGERED_RETRIES_PER_EPISODE} times: then SEP01 only every fallback (10 min)`,
+      sepSendTimesMs.length <= 3 + 6 && lateGapsMs.every(gapMs => gapMs >= ENFORCEMENT_FALLBACK_RETRY_MS),
+      `SEP01 at ${sepSendTimesMs.map(sentAt => `${sentAt / 1000}s`).join(", ")}`
+    );
+    check(
+      "…and the episode says the fallback is all that's left",
+      run.episode?.changeTriggeredRetries === CHANGE_TRIGGERED_RETRIES_PER_EPISODE
+    );
+  }
 }
 
 // ---------- the live wiring ----------
@@ -450,8 +616,12 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
   sent = harness.queued.length;
   advance(harness, 10_000);
   harness.readHecs({ ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" });
-  check("a HECS field changing retries what still differs (EDD landed)", commands(harness, sent) === "SEP01,EDE1");
-  sent = harness.queued.length;
+  check(
+    "a HECS field changing (EDD landed) re-arms, but SEP01/EDE1 went out 10 s ago: deferred, not queued for the gate",
+    commands(harness, sent) === "" &&
+      harness.enforcement.status().waiting_reason?.includes("identical-setter gate") === true,
+    harness.enforcement.status().waiting_reason
+  );
   for (let step = 0; step < 60; step++) {
     advance(harness, 10_000);
     // Settings rounds every 10 s here: the DM readback must stay fresh, or nothing is judged at all
@@ -462,7 +632,11 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
     "10 min of it: exactly one P2, on its own key",
     p2s.length === 1 && p2s[0]?.key.startsWith("energy-distribution-divergence:") === true
   );
-  check("…and the 10 min fallback resent it once", commands(harness, sent) === "SEP01,EDE1", commands(harness, sent));
+  check(
+    "…they go out once the gate is open, and not again before the 10 min fallback",
+    commands(harness, sent) === "SEP01,EDE1",
+    commands(harness, sent)
+  );
   harness.settingsRound(LIVE_HECS, "050");
   check("landing sends one P3", harness.raised.filter(alert => alert.severity === "P3").length === 1);
   harness.dispose();

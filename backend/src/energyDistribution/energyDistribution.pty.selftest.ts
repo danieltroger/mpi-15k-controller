@@ -14,7 +14,8 @@
  * written once, not on every readback; exactly one P2; the unmanaged EDC is never written.
  *
  * Run from backend/ with:  yarn node src/energyDistribution/energyDistribution.pty.selftest.ts
- * Needs python3 and Linux ptys. Takes ~2 min (retries of an identical setter wait out the session's 60 s gate).
+ * Needs python3 and Linux ptys. Takes ~2.5 min: a retry of an identical setter waits until the session's 60 s
+ * gate is surely open (IDENTICAL_SETTER_REQUEUE_AFTER_MS) and the next tick.
  */
 import process from "process";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
@@ -119,7 +120,7 @@ async function runConvergenceChecks(): Promise<void> {
     "after DM050 the reset is written at once; the first SEP01 is NAKed",
     fake.events.some(event => event.event === "setter_refused" && event.setter === "SEP01")
   );
-  await waitFor(() => fake.events.some(event => event.event === "hecs_reset" && event.cause === "SEP01"), 80_000);
+  await waitFor(() => fake.events.some(event => event.event === "hecs_reset" && event.cause === "SEP01"), 120_000);
   check(
     "the next HECS change (EDD/EDE landed) re-armed SEP01, and it applied (resetting EDB/EDC/EDG)",
     fake.events.some(event => event.event === "committed" && event.setter === "SEP01")

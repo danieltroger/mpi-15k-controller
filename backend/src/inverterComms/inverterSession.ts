@@ -389,6 +389,7 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
       parameter: item?.replacesPrefix ?? command,
       command,
       answeredAfterWriteMs: result.answeredAfterWriteMs,
+      nowMs: sentAt,
     });
   } else {
     // The setter expectation rejects data frames as late query responses — an attribution bug

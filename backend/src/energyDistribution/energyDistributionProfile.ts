@@ -127,18 +127,29 @@ export function effectiveEnergyDistributionProfile(
   return { profile, corrections };
 }
 
-/** The managed fields of a HECS readback that differ from the profile, in write order */
+/**
+ * The managed fields of a HECS readback that differ from the profile, in write order. A field missing from
+ * the readback is not a difference (unreadManagedFields): nothing is known about it. A value outside the
+ * domain ("Unknown key: 03") is one, and is written back.
+ */
 export function energyDistributionDivergences(
   profile: EnergyDistributionProfile,
   hecsFields: DecodedFields
 ): EnergyDistributionFieldDivergence[] {
   return ENERGY_DISTRIBUTION_FIELDS.flatMap(field => {
     const desired = profile[field];
-    if (desired === UNMANAGED) return [];
     const inverter = hecsFields[field];
-    if (inverter === desired) return [];
-    return [{ field, inverter: inverter === undefined ? undefined : String(inverter), desired }];
+    if (desired === UNMANAGED || inverter === undefined || inverter === desired) return [];
+    return [{ field, inverter: String(inverter), desired }];
   });
+}
+
+/** The managed fields a HECS readback lacks (an empty token): such a readback can't be judged */
+export function unreadManagedFields(
+  profile: EnergyDistributionProfile,
+  hecsFields: DecodedFields
+): EnergyDistributionField[] {
+  return ENERGY_DISTRIBUTION_FIELDS.filter(field => profile[field] !== UNMANAGED && hecsFields[field] === undefined);
 }
 
 /** The setter that puts one field at its desired value (SEPnn or EDxn), with its queue prefix */
@@ -158,7 +169,7 @@ export function describeDivergences(divergences: readonly EnergyDistributionFiel
   return divergences
     .map(
       divergence =>
-        `${ENERGY_DISTRIBUTION_FIELD_LABELS[divergence.field]} ${divergence.inverter ?? "unread"} → ${divergence.desired}`
+        `${ENERGY_DISTRIBUTION_FIELD_LABELS[divergence.field]} ${divergence.inverter} → ${divergence.desired}`
     )
     .join(", ");
 }

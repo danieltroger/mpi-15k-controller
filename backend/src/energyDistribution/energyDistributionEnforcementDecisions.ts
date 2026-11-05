@@ -3,26 +3,63 @@
  * the profile the DM readback puts in force, whether a managed HECS field differs from it, and whether the
  * setters go out now. Event-driven, no settle delay: a readback that differs is written at once, and after
  * a write that didn't land the next attempt waits for something to change (the DM readback, the working
- * mode, any HECS field, the profile), or for a slow fallback when nothing does. The readback that comes with
- * a DM confirm can predate the reset: the next one showing it is just a new difference. The wiring is
- * useEnergyDistributionEnforcement.ts; the selftests drive these directly.
+ * mode, one of the enforced HECS fields, the profile), at most CHANGE_TRIGGERED_RETRIES_PER_EPISODE times,
+ * or for the slow fallback when nothing does. The readback that comes with a DM confirm can predate the
+ * reset: the next one showing it is just a new difference. A setter is only ever queued when the session's
+ * identical-setter gate won't hold it: one held there would still go out after the enforcement had decided
+ * to hold (a DM switch pending, the field made unmanaged). The wiring is useEnergyDistributionEnforcement.ts;
+ * the selftests drive these directly.
  */
 import type { InverterEnergyDistributionConfig } from "../config/config.types.ts";
 import type { DecodedFields } from "../inverterComms/pi17Protocol.types.ts";
 import { describeMachineModel, isWhitelistedMachineModel } from "../inverterComms/machineModel.ts";
-import type { EnergyDistributionFieldDivergence, EnergyDistributionProfileName } from "./energyDistribution.types.ts";
+import { IDENTICAL_SETTER_MIN_INTERVAL_MS } from "../inverterComms/schedulerTiming.ts";
+import type {
+  EnergyDistributionField,
+  EnergyDistributionFieldDivergence,
+  EnergyDistributionProfileName,
+} from "./energyDistribution.types.ts";
 import {
+  ENERGY_DISTRIBUTION_FIELD_LABELS,
   energyDistributionDivergences,
   PROFILE_BY_MACHINE_MODEL,
   setterForDivergence,
+  unreadManagedFields,
 } from "./energyDistributionProfile.ts";
 
 /**
  * With nothing changed since the last attempt (a firmware that keeps refusing a write, a commit that never
- * comes) the same setters go out again only this often: each is a settings write (EEPROM), and retrying on
- * every readback is what made feeding's EDF1 a NAK a minute. A guard constant, as for the DM050 resends.
+ * comes), or once the change-triggered retries are used up, the setters go out again only this often: each
+ * is a settings write (EEPROM), and retrying on every readback is what made feeding's EDF1 a NAK a minute.
+ * A guard constant, as for the DM050 resends.
  */
 export const ENFORCEMENT_FALLBACK_RETRY_MS = 10 * 60_000;
+
+/**
+ * How many times per episode a change (DM, working mode, an enforced HECS field, the profile) re-arms a
+ * write. The convergences seen on 2026-11-05 need two: the DM reset's round, then EDC1 after SEP's own
+ * reset; a partial landing or a working mode change mid-way takes one more. A firmware that applies SEP's
+ * side effects but not the priority would otherwise re-arm on every one of them (about a minute each). A
+ * guard constant (EEPROM wear); past it only the fallback retries.
+ */
+export const CHANGE_TRIGGERED_RETRIES_PER_EPISODE = 3;
+
+/**
+ * A setter is queued only this long after the last time it was queued: the session holds an identical one
+ * for IDENTICAL_SETTER_MIN_INTERVAL_MS from its send, and the send follows the queueing by the queue's own
+ * wait (a confirm run or a poll round, seconds). The margin keeps the gate open by the time it's queued.
+ */
+export const IDENTICAL_SETTER_REQUEUE_AFTER_MS = IDENTICAL_SETTER_MIN_INTERVAL_MS + 15_000;
+
+/**
+ * Buying (EDB) and feeding (EDF/EDG) move these themselves, SEP's reset moves them too: none of that can make
+ * a refused write of ours land, so none of it re-arms one
+ */
+const FIELDS_OTHERS_OWN: ReadonlySet<string> = new Set([
+  "ac_charge_battery",
+  "battery_discharge_to_feed_grid_when_solar_input_normal",
+  "battery_discharge_to_feed_grid_when_solar_input_loss",
+]);
 
 export type EnforcementTiming = {
   /** From inverter_energy_distribution.p2_after_minutes */
@@ -46,6 +83,8 @@ export type EnforcementSituation = {
   /** The oldest DM or HECS readback the enforcement acts on (gridOffDecisions.ts machineModelReadbackMaxAgeMs) */
   settingsReadbackMaxAgeMs: number;
   profiles: Pick<InverterEnergyDistributionConfig, "normal_hybrid" | "off_grid_iii">;
+  /** When each setter was last queued (wall-clock ms), across episodes: what the session's gate still holds */
+  lastQueuedAtByCommand: Readonly<Record<string, number>>;
 };
 
 /** A managed field differing from the profile, from the first readback that showed it until one shows none */
@@ -53,8 +92,12 @@ export type DivergenceEpisode = {
   onsetMs: number;
   sendRounds: number;
   lastSendAtMs: number | undefined;
-  /** What the latest round was sent on (attemptKey): the next one goes out once that changes */
+  /** What the latest attempt was armed on (attemptKey): a change of it re-arms one */
   lastAttemptKey: string | undefined;
+  /** Re-arms by a change so far (CHANGE_TRIGGERED_RETRIES_PER_EPISODE) */
+  changeTriggeredRetries: number;
+  /** Setters an attempt wanted that the session's gate would still have held: re-judged on every step */
+  deferredCommands: readonly string[];
   p2Raised: boolean;
   /** What differed when it was first seen, for the one-line log once it lands */
   firstDivergences: readonly EnergyDistributionFieldDivergence[];
@@ -101,15 +144,7 @@ export function nextEnforcementStep(
 ): EnforcementStep {
   const { nowMs, hecs } = situation;
   const inForce = profileInForce(situation);
-  const unusable = situation.machineModelSwitchPending
-    ? "a machine model switch is pending (the DM readback doesn't show it yet)"
-    : "noProfileReason" in inForce
-      ? inForce.noProfileReason
-      : !hecs
-        ? "HECS hasn't been read"
-        : nowMs - hecs.decodedAtMs > situation.settingsReadbackMaxAgeMs
-          ? `the HECS readback is ${Math.round((nowMs - hecs.decodedAtMs) / 60_000)} min old`
-          : undefined;
+  const unusable = unusableReason(situation, inForce);
   if (unusable !== undefined || "noProfileReason" in inForce || !hecs) {
     // Not judged: an open episode stays open (and still pages once it's overdue), nothing is written
     const raiseP2 = p2Due(episode, nowMs, timing);
@@ -142,39 +177,102 @@ export function nextEnforcementStep(
     sendRounds: 0,
     lastSendAtMs: undefined,
     lastAttemptKey: undefined,
+    changeTriggeredRetries: 0,
+    deferredCommands: [],
     p2Raised: false,
     firstDivergences: divergences,
   };
   const raiseP2 = p2Due(openEpisode, nowMs, timing);
   const current = raiseP2 ? { ...openEpisode, p2Raised: true } : openEpisode;
+  const outcome = { raiseP2, started, judged };
+
   const key = attemptKey(situation, divergences);
-  const fallbackDue = current.lastSendAtMs !== undefined && nowMs - current.lastSendAtMs >= timing.fallbackRetryMs;
-  if (current.sendRounds > 0 && key === current.lastAttemptKey && !fallbackDue) {
-    const retryInMinutes = Math.ceil((timing.fallbackRetryMs - (nowMs - (current.lastSendAtMs ?? nowMs))) / 60_000);
-    return {
-      episode: current,
-      send: undefined,
-      waitingReason: `sent, not read back yet: retried once the DM, the working mode, HECS or the profile changes, or in ${retryInMinutes} min`,
-      raiseP2,
-      landed: undefined,
-      started,
-      judged,
-    };
-  }
-  return {
-    episode: { ...current, sendRounds: current.sendRounds + 1, lastSendAtMs: nowMs, lastAttemptKey: key },
-    send: divergences,
-    waitingReason: undefined,
-    raiseP2,
-    landed: undefined,
-    started,
-    judged,
+  const attempt = attemptKind(current, key, nowMs, timing);
+  if (attempt === undefined) return judgedStep(outcome, current, undefined, waitingFor(current, nowMs, timing));
+  // A re-arm or the fallback wants every current difference; a deferred continuation only what it deferred
+  // and still differs (a field made unmanaged, or matching, has dropped out)
+  const wanted = divergences.filter(
+    divergence => attempt !== "deferred" || current.deferredCommands.includes(setterForDivergence(divergence).command)
+  );
+  const sendable = wanted.filter(divergence => !gatedBySession(divergence, situation));
+  const armed: DivergenceEpisode = {
+    ...current,
+    lastAttemptKey: attempt === "deferred" ? current.lastAttemptKey : key,
+    changeTriggeredRetries: current.changeTriggeredRetries + (attempt === "change" ? 1 : 0),
+    deferredCommands: wanted
+      .filter(divergence => gatedBySession(divergence, situation))
+      .map(divergence => setterForDivergence(divergence).command),
   };
+  if (!sendable.length) return judgedStep(outcome, armed, undefined, waitingFor(armed, nowMs, timing));
+  return judgedStep(outcome, { ...armed, sendRounds: armed.sendRounds + 1, lastSendAtMs: nowMs }, sendable, undefined);
+}
+
+function judgedStep(
+  outcome: Pick<EnforcementStep, "raiseP2" | "started" | "judged">,
+  episode: DivergenceEpisode,
+  send: EnforcementStep["send"],
+  waitingReason: string | undefined
+): EnforcementStep {
+  return { ...outcome, episode, send, waitingReason, landed: undefined };
+}
+
+/** Would the session's identical-setter gate still hold this setter if it were queued now? */
+function gatedBySession(divergence: EnergyDistributionFieldDivergence, situation: EnforcementSituation): boolean {
+  const lastQueuedAtMs = situation.lastQueuedAtByCommand[setterForDivergence(divergence).command];
+  return lastQueuedAtMs !== undefined && situation.nowMs - lastQueuedAtMs < IDENTICAL_SETTER_REQUEUE_AFTER_MS;
+}
+
+/** Why this snapshot can't be judged, or undefined when it can */
+function unusableReason(
+  situation: EnforcementSituation,
+  inForce: ReturnType<typeof profileInForce>
+): string | undefined {
+  const { nowMs, hecs } = situation;
+  if (situation.machineModelSwitchPending) {
+    return "a machine model switch is pending (the DM readback doesn't show it yet)";
+  }
+  if ("noProfileReason" in inForce) return inForce.noProfileReason;
+  if (!hecs) return "HECS hasn't been read";
+  if (nowMs - hecs.decodedAtMs > situation.settingsReadbackMaxAgeMs) {
+    return `the HECS readback is ${Math.round((nowMs - hecs.decodedAtMs) / 60_000)} min old`;
+  }
+  // A token missing from the answer says nothing about the field, and a SEP write on a guess resets EDB/EDC/EDG
+  const unread = unreadManagedFields(situation.profiles[inForce.profileName], hecs.fields);
+  if (unread.length) return `the HECS readback lacks ${unread.map(describeField).join(", ")}`;
+  return undefined;
+}
+
+/** What makes this step an attempt, or undefined when none is due */
+function attemptKind(
+  episode: DivergenceEpisode,
+  key: string,
+  nowMs: number,
+  timing: EnforcementTiming
+): "first" | "change" | "deferred" | "fallback" | undefined {
+  if (episode.lastAttemptKey === undefined) return "first";
+  if (key !== episode.lastAttemptKey && episode.changeTriggeredRetries < CHANGE_TRIGGERED_RETRIES_PER_EPISODE) {
+    return "change";
+  }
+  if (episode.deferredCommands.length) return "deferred";
+  if (episode.lastSendAtMs !== undefined && nowMs - episode.lastSendAtMs >= timing.fallbackRetryMs) return "fallback";
+  return undefined;
+}
+
+function waitingFor(episode: DivergenceEpisode, nowMs: number, timing: EnforcementTiming): string {
+  if (episode.deferredCommands.length) {
+    return `${episode.deferredCommands.join(", ")} went out less than ${IDENTICAL_SETTER_REQUEUE_AFTER_MS / 1000} s ago: re-judged once the session's identical-setter gate is open`;
+  }
+  const sinceSendMs = nowMs - (episode.lastSendAtMs ?? nowMs);
+  const fallbackInMinutes = Math.max(1, Math.ceil((timing.fallbackRetryMs - sinceSendMs) / 60_000));
+  if (episode.changeTriggeredRetries >= CHANGE_TRIGGERED_RETRIES_PER_EPISODE) {
+    return `not read back after ${CHANGE_TRIGGERED_RETRIES_PER_EPISODE} change-triggered retries: only the ${timing.fallbackRetryMs / 60_000}-min fallback retries now, next in ${fallbackInMinutes} min`;
+  }
+  return `sent, not read back yet: retried once the DM, the working mode, an enforced HECS field or the profile changes, or in ${fallbackInMinutes} min`;
 }
 
 /**
- * Everything an attempt was made on: the DM readback, the working mode, every HECS field and the setters
- * the profile asks for. Anything else changing can't make a refused write land.
+ * Everything an attempt is armed on: the DM readback, the working mode, the HECS fields nobody else moves,
+ * and the setters the profile asks for. Anything else changing can't make a refused write land.
  */
 function attemptKey(
   situation: EnforcementSituation,
@@ -185,10 +283,15 @@ function attemptKey(
     machine_model: situation.machineModel?.model,
     working_mode: situation.workingModeCode,
     hecs: Object.keys(hecsFields)
+      .filter(field => !FIELDS_OTHERS_OWN.has(field))
       .sort()
       .map(field => [field, hecsFields[field]]),
     setters: divergences.map(divergence => setterForDivergence(divergence).command),
   });
+}
+
+function describeField(field: EnergyDistributionField): string {
+  return ENERGY_DISTRIBUTION_FIELD_LABELS[field];
 }
 
 function p2Due(episode: DivergenceEpisode | undefined, nowMs: number, timing: EnforcementTiming): boolean {
