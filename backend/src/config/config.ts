@@ -10,6 +10,7 @@ import { PLANNER_KNOB_BOUNDS } from "../autoTrading/plannerKnobBounds.ts";
 import { DEFAULT_TERMINAL_VALUE_MONTHS, DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS } from "../autoTrading/terminalValue.ts";
 import { DEFAULT_APPLY_TO_PLANNER, DEFAULT_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
 import { DEFAULT_GRID_OFF_SETTINGS } from "../gridOff/gridOffSettings.ts";
+import { DEFAULT_INVERTER_ENERGY_DISTRIBUTION } from "../energyDistribution/energyDistributionSettings.ts";
 
 // The MPI 15K produces at most 15 kW of AC (house + grid export share it, house first) — the
 // sell setpoint, buy charging power and the planner's AC envelope all default to this nameplate.
@@ -154,6 +155,8 @@ export const default_config: Config = {
   // All zero = the meter is assumed to see exactly the reading, as before.
   meter_calibration: { ...DEFAULT_METER_CALIBRATION, apply_to_planner: DEFAULT_APPLY_TO_PLANNER },
   grid_off: DEFAULT_GRID_OFF_SETTINGS,
+  // Ships on: today's live profile in 050 (a DM change resets it), nothing managed in 151
+  inverter_energy_distribution: DEFAULT_INVERTER_ENERGY_DISTRIBUTION,
   usb_parameter_setting: {
     ...DEFAULT_SETTER_CHANGE_THROTTLE_SETTINGS,
     poll_values_interval_seconds: 60 * 5,
@@ -245,8 +248,9 @@ export const default_config: Config = {
 
 /**
  * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model),
- * elpatron_switching, meter_calibration, grid_off, scheduled_power_selling, usb_parameter_setting,
- * temperature_saving and soc_calculations merge one level deeper: knobs get added over time, and a config.json written
+ * elpatron_switching, meter_calibration, grid_off, inverter_energy_distribution (and its two profiles),
+ * scheduled_power_selling, usb_parameter_setting, temperature_saving and soc_calculations merge one level
+ * deeper: knobs get added over time, and a config.json written
  * before a knob existed must still pick up its default (the planner, the elpatron load model and the
  * SOC ledger do raw arithmetic on these — a missing knob would silently NaN every projection; a
  * missing alerting threshold would silently never alert; a missing inverter-temperature limit would
@@ -278,6 +282,18 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
     meter_calibration: { ...default_config.meter_calibration, ...partial.meter_calibration },
     grid_off: { ...default_config.grid_off, ...partial.grid_off },
+    inverter_energy_distribution: {
+      ...default_config.inverter_energy_distribution,
+      ...partial.inverter_energy_distribution,
+      normal_hybrid: {
+        ...default_config.inverter_energy_distribution.normal_hybrid,
+        ...partial.inverter_energy_distribution?.normal_hybrid,
+      },
+      off_grid_iii: {
+        ...default_config.inverter_energy_distribution.off_grid_iii,
+        ...partial.inverter_energy_distribution?.off_grid_iii,
+      },
+    },
     // A stored schedule (even an empty one) replaces the default's sample entry wholesale, as before
     scheduled_power_selling: {
       ...default_config.scheduled_power_selling,

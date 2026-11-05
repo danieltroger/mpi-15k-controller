@@ -83,6 +83,7 @@ const TOP_LEVEL_CONFIG_KEYS = {
   alerting: true,
   meter_calibration: true,
   grid_off: true,
+  inverter_energy_distribution: true,
   usb_parameter_setting: true,
   current_measuring: true,
   scheduled_power_selling: true,

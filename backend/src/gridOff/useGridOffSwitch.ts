@@ -147,6 +147,8 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     sendNormalHybrid: onResult => queueMachineModel(context, NORMAL_HYBRID_MODEL, onResult),
   });
 
+  const requestedMachineModel = createMemo(() => requested().model);
+
   const status = createMemo<GridOffStatus>(() => ({
     requested_model: requested().model,
     requested_at: requested().atMs,
@@ -160,6 +162,8 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
   return {
     /** 151 requested, or read back and not stuck: feeding/buying writes hold, the grid alerts stand down */
     gridOffInForce,
+    /** The model asked for: until the DM readback shows it, the energy-distribution enforcement holds its writes */
+    requestedMachineModel,
     status,
     /** The page's "open the grid relay" (DM151): refused, with the reason thrown, unless every precondition holds */
     requestOffGrid: async () => requestOffGrid(context),

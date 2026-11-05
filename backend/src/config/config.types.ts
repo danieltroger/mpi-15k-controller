@@ -401,11 +401,54 @@ export type GridOffConfig = {
   poll_machine_model: boolean;
 };
 
+/** HECS's flags as the readback decodes them */
+export type EnabledOrDisabled = "enabled" | "disabled";
+
+/** HECS's first field as the readback decodes it (SEP00, SEP01, SEP02) */
+export type SolarEnergyDistributionPriority = "Battery-Load-Grid" | "Load-Battery-Grid" | "Load-Grid-Battery";
+
+/** A field the controller leaves to the inverter (its display, its own defaults) */
+export type Unmanaged = "unmanaged";
+
+/**
+ * What the HECS energy-distribution settings must read in one machine model, under their readback names;
+ * "unmanaged" leaves a field alone. AC charge (EDB) and battery feed to the grid (EDF/EDG) aren't here:
+ * buying and feeding own them and enforce their own targets.
+ */
+export type EnergyDistributionProfile = {
+  /** SEPnn */
+  solar_energy_distribution_priority: SolarEnergyDistributionPriority | Unmanaged;
+  /** EDA */
+  solar_charge_battery: EnabledOrDisabled | Unmanaged;
+  /** EDC */
+  feed_power_to_utility: EnabledOrDisabled | Unmanaged;
+  /** EDD */
+  battery_discharge_to_loads_when_solar_input_normal: EnabledOrDisabled | Unmanaged;
+  /** EDE */
+  battery_discharge_to_loads_when_solar_input_loss: EnabledOrDisabled | Unmanaged;
+};
+
+/**
+ * The inverter's HECS energy-distribution settings, config as their source of truth
+ * (energyDistribution/): the profile of the machine model the DM readback shows is enforced, a readback
+ * that differs written at once. Bounds in energyDistribution/energyDistributionSettings.ts, clamped with a
+ * warning.
+ */
+export type InverterEnergyDistributionConfig = {
+  /** Enforced while the DM readback shows 050 (normal hybrid) */
+  normal_hybrid: EnergyDistributionProfile;
+  /** Enforced while the DM readback shows 151 (Off-Grid III) */
+  off_grid_iii: EnergyDistributionProfile;
+  /** One P2 per divergence episode when a managed field still differs this long after it was first seen */
+  p2_after_minutes: number;
+};
+
 export type Config = {
   automatic_trading: AutomaticTradingConfig;
   alerting: AlertingConfig;
   meter_calibration: MeterCalibrationConfig;
   grid_off: GridOffConfig;
+  inverter_energy_distribution: InverterEnergyDistributionConfig;
   usb_parameter_setting: {
     /**
      * Minimum time between two changes of the same analog setter target: the AC charging current

@@ -61,6 +61,7 @@ import {
 } from "./setterCommitTiming.ts";
 import { INVERTER_SERIAL_DEVICE } from "./serialConnection.ts";
 import { machineModelSetterRefusal } from "./machineModel.ts";
+import { endSetterNakStreak, reportSetterNak, type SetterNakStreaks } from "./setterNakStreaks.ts";
 import {
   afterMachineModelQuery,
   INITIAL_MACHINE_MODEL_POLL_STATE,
@@ -129,6 +130,7 @@ export function createInverterSession({
     scheduler: initialSchedulerState(schedulerTimingOverrides),
     statusPollPlan: initialStatusPollPlan(),
     queuedSetterItems: new Map(),
+    nakStreaks: new Map(),
     commitTracker: new Map(),
     writesConfirmed: 0,
     writesNeverApplied: 0,
@@ -209,6 +211,8 @@ type SessionState = {
   statusPollPlan: StatusPollPlan;
   /** The consumer items behind the scheduler's queued commands — always updated together */
   queuedSetterItems: Map<string, SetterQueueItem>;
+  /** One errorLog per streak of NAKs of a setter parameter (setterNakStreaks.ts) */
+  nakStreaks: SetterNakStreaks;
   commitTracker: SetterCommitTracker;
   writesConfirmed: number;
   writesNeverApplied: number;
@@ -364,6 +368,7 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
   }
   reportTransactSuccess(state);
   if (result.frame.kind === "ack") {
+    endSetterNakStreak(state.nakStreaks, { parameter: item?.replacesPrefix ?? command, command });
     state.scheduler = afterSetterSent(state.scheduler, command, refreshQueries, sentAt, true);
     reportAckedSetter(
       state.commitTracker,
@@ -380,12 +385,12 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
     return;
   }
   if (result.frame.kind === "nak") {
-    errorLog(
-      "Inverter REJECTED (NAK)",
+    reportSetterNak(state.nakStreaks, {
+      parameter: item?.replacesPrefix ?? command,
       command,
-      "— settings unchanged",
-      `(answered in ${Math.round(result.answeredAfterWriteMs)} ms)`
-    );
+      answeredAfterWriteMs: result.answeredAfterWriteMs,
+      nowMs: sentAt,
+    });
   } else {
     // The setter expectation rejects data frames as late query responses — an attribution bug
     errorLog("Inverter answered setter", command, "with a data frame — treating as not applied");

@@ -1,0 +1,36 @@
+.energy-distribution-card__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 4px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
+.energy-distribution-card__heading {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.energy-distribution-card__label {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.energy-distribution-card__value {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.energy-distribution-card__value--unmanaged {
+  color: var(--ink-3);
+}
+
+.energy-distribution-card__value--differs {
+  color: var(--warn-text);
+  font-weight: 650;
+}
