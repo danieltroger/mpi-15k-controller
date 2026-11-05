@@ -7,11 +7,11 @@
  */
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { errorLog } from "../utilities/logging.ts";
-import type { EnergyDistributionFieldDivergence } from "./energyDistribution.types.ts";
-import { describeDivergences } from "./energyDistributionProfile.ts";
+import { describeDivergences, ENERGY_DISTRIBUTION_FIELD_LABELS } from "./energyDistributionProfile.ts";
 import {
   CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   ENFORCEMENT_FALLBACK_RETRY_MS,
+  type EnforcementJudgement,
 } from "./energyDistributionEnforcementDecisions.ts";
 
 /** The fields that, off, leave the house on the grid */
@@ -26,21 +26,19 @@ export function raiseDivergenceNotLanded(
     episodeOnsetMs,
     nowMs,
     sendRounds,
-    divergences,
+    judged,
     waitingReason,
   }: {
     episodeOnsetMs: number;
     nowMs: number;
     sendRounds: number;
     /** undefined: no usable readback to say (see waitingReason) */
-    divergences: readonly EnergyDistributionFieldDivergence[] | undefined;
+    judged: EnforcementJudgement | undefined;
     waitingReason: string | undefined;
   }
 ): void {
-  const state = divergences
-    ? `the inverter still reads ${describeDivergences(divergences)}`
-    : `it can't be checked (${waitingReason ?? "no usable readback"})`;
-  const houseOnGridNote = divergences?.some(
+  const state = judged ? describeJudgedState(judged) : `it can't be checked (${waitingReason ?? "no usable readback"})`;
+  const houseOnGridNote = judged?.divergences.some(
     divergence => DISCHARGE_TO_LOADS_FIELDS.has(divergence.field) && divergence.desired === "enabled"
   )
     ? " With battery discharge to the loads off, the house runs from the grid."
@@ -69,6 +67,16 @@ export function raiseDivergenceLandedAfterP2(
     title: "Resolved: Inverter energy settings differ from the config",
     message: `Every managed energy-distribution setting reads as the config again, ${Math.round((nowMs - episodeOnsetMs) / 60_000)} min after the difference was first seen.`,
   }).catch(error => errorLog("Energy distribution: raising the divergence resolve notice failed", error));
+}
+
+function describeJudgedState(judged: EnforcementJudgement): string {
+  const parts: string[] = [];
+  if (judged.divergences.length) parts.push(`the inverter still reads ${describeDivergences(judged.divergences)}`);
+  if (judged.unreadFields.length) {
+    const unread = judged.unreadFields.map(field => ENERGY_DISTRIBUTION_FIELD_LABELS[field]).join(", ");
+    parts.push(`its HECS answer lacks ${unread} (not checked, and never written on a guess)`);
+  }
+  return parts.join(", and ");
 }
 
 /**

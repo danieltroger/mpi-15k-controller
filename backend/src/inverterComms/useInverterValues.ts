@@ -68,6 +68,7 @@ export function useInverterValues(config: Accessor<Config>) {
     unprovenWrites: session.unprovenWrites,
     requestSettingsReadback: session.requestSettingsReadback,
     settingsReadbackAtMs: session.settingsReadbackAtMs,
+    identicalSetterGateOpensAtMs: session.identicalSetterGateOpensAtMs,
     serialIsOpen: session.serialIsOpen,
   };
 }

@@ -29,16 +29,19 @@ export type EnergyDistributionFieldState = {
   inverter: string | undefined;
 };
 
-/** A managed field differing from the profile, from the first readback that showed it until one shows none */
+/**
+ * A managed field differing from the profile (or missing from the readback), from the first readback that
+ * showed it until one has every managed field, as the profile
+ */
 export type EnergyDistributionDivergenceProgress = {
   /** Wall-clock ms the divergence was first seen */
   since: number;
   /**
    * Rounds of setters queued so far: the first, one per change of the DM, the working mode, an enforced HECS
-   * field or the profile (up to a cap), and the 10-min fallback
+   * field or the profile that sent something (up to a cap), and the fallback (ENFORCEMENT_FALLBACK_RETRY_MS)
    */
   send_rounds: number;
-  /** The change-triggered retries are used up: only the 10-min fallback retries for the rest of the episode */
+  /** The change-triggered retries are used up: only the fallback retries for the rest of the episode */
   fallback_only: boolean;
   /** The P2 for a divergence older than inverter_energy_distribution.p2_after_minutes went out */
   p2_raised: boolean;
@@ -53,11 +56,12 @@ export type EnergyDistributionStatus = {
   fields: EnergyDistributionFieldState[];
   /** Wall-clock ms of the latest HECS readback */
   hecs_read_at: number | undefined;
-  /** A managed field differs; undefined = all managed fields read as the profile */
+  /** A managed field differs or isn't read; undefined = all managed fields read as the profile */
   divergence: EnergyDistributionDivergenceProgress | undefined;
   /**
-   * Why nothing goes out right now although a field differs (a pending DM switch, a stale or incomplete
-   * readback, the session's identical-setter gate, waiting for a change or the fallback)
+   * Why nothing goes out right now although a field differs (a pending DM switch, a stale readback, the
+   * session's identical-setter gate, waiting for a change or the fallback), and which managed fields the
+   * readback lacks (also while the others are being written)
    */
   waiting_reason: string | undefined;
   /** The latest thing the enforcement did, and why */

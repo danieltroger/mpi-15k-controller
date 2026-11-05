@@ -11,6 +11,7 @@ import {
   afterPollRound,
   afterSetterSent,
   decideNextAction,
+  identicalSetterGateOpensAtMs,
   initialSchedulerState,
   withSetterDequeued,
   withSetterQueued,
@@ -145,11 +146,21 @@ const bootTime = 1_000_000;
     setterDecision.action === "send_setter" && setterDecision.command === "MCHGV0580,0580"
   );
 
+  check(
+    "a command never sent has no identical-setter gate",
+    identicalSetterGateOpensAtMs(state, "MCHGV0580,0580") === undefined
+  );
+
   // Send it: polling carries on, the confirm is scheduled
   state = withSetterDequeued(state, "MCHGV0580,0580");
   check("dequeue removes the sent setter", state.queuedSetters.length === 0);
   const sentAt = bootTime + 1_200;
   state = afterSetterSent(state, "MCHGV0580,0580", ["BATS"], sentAt, true);
+  check(
+    "its gate opens 60 s after the send; another command's isn't touched",
+    identicalSetterGateOpensAtMs(state, "MCHGV0580,0580") === sentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS &&
+      identicalSetterGateOpensAtMs(state, "MCHGV0575,0575") === undefined
+  );
   state = afterPollRound(state, {
     startedAtMs: bootTime + 100,
     endedAtMs: sentAt,
@@ -206,8 +217,9 @@ const bootTime = 1_000_000;
   const requeueTime = confirmTime + 1_000;
   state = withSetterQueued(state, "MCHGV0580,0580", "MCHGV", requeueTime);
   check(
-    "identical setter is gated to sentAt + 60 s",
-    state.queuedSetters[0]!.notBefore === sentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS
+    "identical setter is gated to sentAt + 60 s, the time the session reports to consumers",
+    state.queuedSetters[0]!.notBefore === sentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS &&
+      state.queuedSetters[0]!.notBefore === identicalSetterGateOpensAtMs(state, "MCHGV0580,0580")
   );
   const gatedDecision = decideNextAction(state, requeueTime, SETTINGS_POLL_INTERVAL_MS);
   check("gated setter does not send early (polls continue)", gatedDecision.action === "poll_round");

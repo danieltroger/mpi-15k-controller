@@ -42,6 +42,7 @@ import {
   decideNextAction,
   giveUpsAlreadyPaged,
   hasEligibleSetter,
+  identicalSetterGateOpensAtMs,
   initialSchedulerState,
   takeStarvedWriteReports,
   withSettingsReadbackRequested,
@@ -50,7 +51,7 @@ import {
   withSetterQueued,
   type SchedulerState,
 } from "./schedulerCore.ts";
-import type { SchedulerTiming } from "./schedulerTiming.ts";
+import { IDENTICAL_SETTER_MIN_INTERVAL_MS, type SchedulerTiming } from "./schedulerTiming.ts";
 import { type FieldWrite, unprovenWritesIn } from "./fieldWriteChains.ts";
 import {
   reportAckedSetter,
@@ -130,6 +131,7 @@ export function createInverterSession({
     scheduler: initialSchedulerState(schedulerTimingOverrides),
     statusPollPlan: initialStatusPollPlan(),
     queuedSetterItems: new Map(),
+    setterOnTheWire: undefined,
     nakStreaks: new Map(),
     commitTracker: new Map(),
     writesConfirmed: 0,
@@ -191,6 +193,13 @@ export function createInverterSession({
     /** Read-only, not reactive: when that settings query was last decoded (same clock), undefined if never */
     settingsReadbackAtMs: (query: SettingsQueryCommandName): number | undefined =>
       state.scheduler.latestSettingsReadbacks[query]?.decodedAtMs,
+    /**
+     * Read-only, not reactive: when the identical-setter gate lets this exact command out again (same
+     * clock), undefined when nothing holds it. A copy queued before then waits in the queue until then, so a
+     * consumer that must not leave a setter waiting there (it would still go out after the consumer
+     * decided to hold) queues only once this has passed.
+     */
+    identicalSetterGateOpensAtMs: (command: string): number | undefined => setterGateOpensAtMs(state, command),
     serialIsOpen,
     /** Cumulative wire-level counters plus gate drops and completed poll rounds — for harnesses and debugging */
     exchangeCounters: () => currentCounters(state),
@@ -211,6 +220,8 @@ type SessionState = {
   statusPollPlan: StatusPollPlan;
   /** The consumer items behind the scheduler's queued commands — always updated together */
   queuedSetterItems: Map<string, SetterQueueItem>;
+  /** Dequeued, its exchange still running: its send isn't in the scheduler's lastSentAtByCommand yet */
+  setterOnTheWire: string | undefined;
   /** One errorLog per streak of NAKs of a setter parameter (setterNakStreaks.ts) */
   nakStreaks: SetterNakStreaks;
   commitTracker: SetterCommitTracker;
@@ -354,7 +365,12 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
   state.queuedSetterItems.delete(command);
   state.scheduler = withSetterDequeued(state.scheduler, command);
   const description = `setter ${command}`;
-  const result = await state.serialExchange.exchange(buildSetterFrame(command), { kind: "setter" }, description);
+  state.setterOnTheWire = command;
+  const result = await state.serialExchange
+    .exchange(buildSetterFrame(command), { kind: "setter" }, description)
+    .finally(() => {
+      state.setterOnTheWire = undefined;
+    });
   if ("closed" in result || state.disposed) return;
   const sentAt = performance.now();
   state.setLastWriteAt(Date.now());
@@ -502,6 +518,12 @@ function lineTraffic(state: SessionState): LineTraffic {
     pollRoundsCompleted: state.pollRoundsCompleted,
     framesWritten: state.serialExchange.counters().framesWritten,
   };
+}
+
+function setterGateOpensAtMs(state: SessionState, command: string): number | undefined {
+  // Its send is finishing now, and afterSetterSent re-gates a copy queued meanwhile from that send
+  if (state.setterOnTheWire === command) return performance.now() + IDENTICAL_SETTER_MIN_INTERVAL_MS;
+  return identicalSetterGateOpensAtMs(state.scheduler, command);
 }
 
 function onSerialOpened(state: SessionState): void {

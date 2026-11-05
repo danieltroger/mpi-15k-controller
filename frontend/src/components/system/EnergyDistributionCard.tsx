@@ -6,6 +6,7 @@ import type {
   EnergyDistributionStatus,
 } from "../../../../backend/src/energyDistribution/energyDistribution.types";
 import { ENERGY_DISTRIBUTION_FIELD_LABELS } from "../../../../backend/src/energyDistribution/energyDistributionProfile";
+import { ENFORCEMENT_FALLBACK_RETRY_MS } from "../../../../backend/src/energyDistribution/energyDistributionEnforcementDecisions";
 import { describeMachineModel } from "../../../../backend/src/inverterComms/machineModel";
 import { DiagRow } from "./DiagRow";
 import "./EnergyDistributionCard.scss";
@@ -57,8 +58,10 @@ function EnergyDistributionRows(props: { status: EnergyDistributionStatus; nowMs
           <p class="diag__reason">
             <b>{divergence().p2_raised ? "Still differs, a P2 went out" : "Enforcing"}</b> (since{" "}
             {formatRelativeTime(props.nowMs, divergence().since)}, {divergence().send_rounds} round(s) written
-            {divergence().fallback_only ? "; change-triggered retries used up, only the 10-min fallback now" : ""})
-            {props.status.waiting_reason ? `: ${props.status.waiting_reason}` : ""}.
+            {divergence().fallback_only
+              ? `; change-triggered retries used up, only the ${ENFORCEMENT_FALLBACK_RETRY_MS / 60_000}-min fallback now`
+              : ""}
+            ){props.status.waiting_reason ? `: ${props.status.waiting_reason}` : ""}.
           </p>
         )}
       </Show>

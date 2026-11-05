@@ -7,8 +7,10 @@
  * something changes (the DM readback, the working mode, an enforced HECS field, the profile; a few times per
  * episode) and otherwise every ENFORCEMENT_FALLBACK_RETRY_MS, with one P2 per divergence episode after
  * p2_after_minutes. Nothing is written while the DM readback is unknown or stale, while a DM switch is in
- * flight, nor queued where the session's identical-setter gate would hold it. AC charge (EDB) and battery
- * feed to the grid (EDF/EDG) stay with buying and feeding. Decisions: energyDistributionEnforcementDecisions.ts.
+ * flight, nor queued where the session's identical-setter gate would hold it (the session's own gate time,
+ * on its monotonic clock); a managed field the HECS answer lacks is never written, and keeps the episode
+ * open. AC charge (EDB) and battery feed to the grid (EDF/EDG) stay with buying and feeding. Decisions, and
+ * the one corner the gate check leaves open: energyDistributionEnforcementDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import type { Config, InverterEnergyDistributionConfig } from "../config/config.types.ts";
@@ -27,6 +29,7 @@ import type {
 } from "./energyDistribution.types.ts";
 import {
   describeDivergences,
+  ENERGY_DISTRIBUTION_FIELD_LABELS,
   ENERGY_DISTRIBUTION_FIELDS,
   PROFILE_BY_MACHINE_MODEL,
   setterForDivergence,
@@ -36,6 +39,7 @@ import {
   type DivergenceEpisode,
   CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   ENFORCEMENT_FALLBACK_RETRY_MS,
+  type EnforcementJudgement,
   type EnforcementSituation,
   type EnforcementStep,
   type EnforcementTiming,
@@ -58,16 +62,19 @@ export function useEnergyDistributionEnforcement({
   /** The grid-off switch's request: while the DM readback doesn't show it, a DM write is in flight */
   requestedMachineModel: Accessor<MachineModelCode>;
 }) {
-  const { queueSetter, requestSettingsReadback, lastDecodedRound, inverterStatus } = useInverterComms();
+  const { queueSetter, identicalSetterGateOpensAtMs, requestSettingsReadback, lastDecodedRound, inverterStatus } =
+    useInverterComms();
   return createEnergyDistributionEnforcement({
     config,
     queueSetter,
+    identicalSetterGateOpensAtMs,
     requestSettingsReadback,
     lastDecodedRound,
     workingModeCode: () => inverterStatus().working_mode?.code,
     requestedMachineModel,
     raise,
     wallClockNowMs: () => Date.now(),
+    monotonicNowMs: () => performance.now(),
     timingOverrides: undefined,
   });
 }
@@ -76,6 +83,8 @@ export function useEnergyDistributionEnforcement({
 export type EnergyDistributionEnvironment = {
   config: Accessor<Config>;
   queueSetter: (item: SetterQueueItem) => void;
+  /** The session's: when its identical-setter gate lets a command out again (monotonicNowMs's clock) */
+  identicalSetterGateOpensAtMs: (command: string) => number | undefined;
   /** The session's early settings readback: asked for (at most once a minute) when the DM or the working mode changes */
   requestSettingsReadback: (query: SettingsQueryCommandName) => void;
   /** DM and HECS rounds give the readbacks the enforcement judges */
@@ -91,6 +100,8 @@ export type EnergyDistributionEnvironment = {
   raise: AlertManager["raise"];
   /** Date.now() in production */
   wallClockNowMs: () => number;
+  /** performance.now() in production: the clock the session's identical-setter gate runs on */
+  monotonicNowMs: () => number;
   /** Harnesses only (they scale the fallback retry and the P2 down) — production passes undefined */
   timingOverrides: Partial<EnforcementTiming> | undefined;
 };
@@ -121,7 +132,6 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
     setJudgedProfileName,
     setLastEvent,
     lastReadbackRequestAtMs: undefined,
-    lastQueuedAtByCommand: {},
   };
 
   createEffect(() => {
@@ -209,8 +219,6 @@ type EnforcementContext = EnergyDistributionEnvironment & {
   setLastEvent: Setter<EnergyDistributionStatus["last_event"]>;
   /** Wall-clock ms; the readbacks asked for on a DM or working mode change are at most one a minute */
   lastReadbackRequestAtMs: number | undefined;
-  /** Wall-clock ms each setter was last queued, across episodes: what the session's identical-setter gate holds */
-  lastQueuedAtByCommand: Record<string, number>;
 };
 
 /** Runs on every DM/HECS readback, working mode or config change and every tick; every read is untracked */
@@ -219,6 +227,7 @@ function evaluateEnforcement(context: EnforcementContext): void {
   const settings = untrack(context.settings);
   const situation: EnforcementSituation = {
     nowMs,
+    monotonicNowMs: context.monotonicNowMs(),
     machineModel: untrack(context.machineModel),
     workingModeCode: untrack(context.workingModeCode),
     machineModelSwitchPending: machineModelSwitchPending(
@@ -230,7 +239,7 @@ function evaluateEnforcement(context: EnforcementContext): void {
       untrack(context.config).usb_parameter_setting.poll_values_interval_seconds
     ),
     profiles: settings,
-    lastQueuedAtByCommand: context.lastQueuedAtByCommand,
+    identicalSetterGateOpensAtMs: context.identicalSetterGateOpensAtMs,
   };
   const timing: EnforcementTiming = {
     p2AfterMs: settings.p2_after_minutes * 60_000,
@@ -244,8 +253,11 @@ function evaluateEnforcement(context: EnforcementContext): void {
   context.setJudgedProfileName(step.judged?.profileName);
   const profileName = step.judged?.profileName;
   if (step.started && step.judged) {
+    const profile = describeProfile(step.judged.profileName);
     warnLog(
-      `Energy distribution: the inverter differs from the ${describeProfile(step.judged.profileName)} profile: ${describeDivergences(step.judged.divergences)} — writing it`
+      step.judged.divergences.length
+        ? `Energy distribution: the inverter differs from the ${profile} profile: ${describeJudgement(step.judged)} — writing it`
+        : `Energy distribution: the HECS readback lacks fields the ${profile} profile manages (${describeJudgement(step.judged)}) — not judged until they're read, a P2 if that takes p2_after_minutes`
     );
   }
   if (step.raiseP2 && step.episode) pageDivergence(context, step, step.episode, nowMs);
@@ -263,7 +275,6 @@ function queueSetters(
   for (const divergence of divergences) {
     const { command, replacesPrefix } = setterForDivergence(divergence);
     commands.push(command);
-    context.lastQueuedAtByCommand[command] = context.wallClockNowMs();
     context.queueSetter({
       command,
       replacesPrefix,
@@ -293,14 +304,14 @@ function pageDivergence(
   nowMs: number
 ): void {
   warnLog(
-    `Energy distribution: still differing ${Math.round((nowMs - episode.onsetMs) / 1000)} s after it was first seen (${step.judged ? describeDivergences(step.judged.divergences) : step.waitingReason}); paging P2`
+    `Energy distribution: still differing ${Math.round((nowMs - episode.onsetMs) / 1000)} s after it was first seen (${step.judged ? describeJudgement(step.judged) : step.waitingReason}); paging P2`
   );
   recordEvent(context, "Still differing: P2 sent");
   raiseDivergenceNotLanded(context.raise, {
     episodeOnsetMs: episode.onsetMs,
     nowMs,
     sendRounds: episode.sendRounds,
-    divergences: step.judged?.divergences,
+    judged: step.judged,
     waitingReason: step.waitingReason,
   });
 }
@@ -340,6 +351,15 @@ function requestHecsReadback(context: EnforcementContext, why: string): void {
   context.lastReadbackRequestAtMs = nowMs;
   logLog(`Energy distribution: ${why} — reading HECS again`);
   context.requestSettingsReadback("HECS");
+}
+
+/** "Solar priority (SEP) Battery-Load-Grid → Load-Battery-Grid; not read: Feed to the utility (EDC)" */
+function describeJudgement(judged: EnforcementJudgement): string {
+  const unread = judged.unreadFields.length
+    ? `not read: ${judged.unreadFields.map(field => ENERGY_DISTRIBUTION_FIELD_LABELS[field]).join(", ")}`
+    : undefined;
+  if (!judged.divergences.length) return unread ?? "none";
+  return [describeDivergences(judged.divergences), unread].filter(part => part !== undefined).join("; ");
 }
 
 function describeProfile(profileName: EnergyDistributionProfileName): string {
