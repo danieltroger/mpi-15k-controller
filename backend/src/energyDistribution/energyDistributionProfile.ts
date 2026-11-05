@@ -144,7 +144,10 @@ export function energyDistributionDivergences(
   });
 }
 
-/** The managed fields a HECS readback lacks (an empty token): such a readback can't be judged */
+/**
+ * The managed fields a HECS readback lacks (an empty token): they're skipped, never written on a guess, while
+ * the fields that were read are judged (energyDistributionUnreadFields.ts pages them)
+ */
 export function unreadManagedFields(
   profile: EnergyDistributionProfile,
   hecsFields: DecodedFields
@@ -172,6 +175,11 @@ export function describeDivergences(divergences: readonly EnergyDistributionFiel
         `${ENERGY_DISTRIBUTION_FIELD_LABELS[divergence.field]} ${divergence.inverter} → ${divergence.desired}`
     )
     .join(", ");
+}
+
+/** "Feed to the utility (EDC)", or "Solar priority (SEP), Feed to the utility (EDC)": for the logs, alerts and the card */
+export function describeUnreadFields(unreadFields: readonly EnergyDistributionField[]): string {
+  return unreadFields.map(field => ENERGY_DISTRIBUTION_FIELD_LABELS[field]).join(", ");
 }
 
 /** Only ever called with a managed field's desired value, which the config correction validated */

@@ -203,8 +203,8 @@ export function withSetterQueued(
   replacesPrefix: string,
   nowMs: number
 ): SchedulerState {
-  const lastSentAt = state.lastSentAtByCommand[command];
-  const notBefore = lastSentAt === undefined ? nowMs : Math.max(nowMs, lastSentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS);
+  const gateOpensAtMs = identicalSetterGateOpensAtMs(state, command);
+  const notBefore = gateOpensAtMs === undefined ? nowMs : Math.max(nowMs, gateOpensAtMs);
   return {
     ...state,
     queuedSetters: [
@@ -212,6 +212,15 @@ export function withSetterQueued(
       { command, notBefore },
     ],
   };
+}
+
+/**
+ * When the identical-setter gate lets `command` out again: IDENTICAL_SETTER_MIN_INTERVAL_MS after its last
+ * send, undefined if it was never sent. The notBefore withSetterQueued gives an identical copy queued now.
+ */
+export function identicalSetterGateOpensAtMs(state: SchedulerState, command: string): number | undefined {
+  const lastSentAt = state.lastSentAtByCommand[command];
+  return lastSentAt === undefined ? undefined : lastSentAt + IDENTICAL_SETTER_MIN_INTERVAL_MS;
 }
 
 /** Remove the setter that is about to go on the wire (before the send, so a mid-flight replacement just re-queues). */

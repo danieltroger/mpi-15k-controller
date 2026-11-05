@@ -12,6 +12,7 @@ import type { DecodedFields, DecodedRound, MachineModelCode } from "../inverterC
 import type { SetterQueueItem } from "../inverterComms/inverterComms.types.ts";
 import type { AlertManager } from "../alerting/alertManager.ts";
 import { expectedReadbackChecksForSetter } from "../inverterComms/setterConfirmation.ts";
+import { IDENTICAL_SETTER_MIN_INTERVAL_MS } from "../inverterComms/schedulerTiming.ts";
 import {
   DEFAULT_NORMAL_HYBRID_PROFILE,
   DEFAULT_OFF_GRID_III_PROFILE,
@@ -22,43 +23,28 @@ import {
 import { effectiveEnergyDistributionSettings } from "./energyDistributionSettings.ts";
 import {
   CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
-  type DivergenceEpisode,
   ENFORCEMENT_FALLBACK_RETRY_MS,
-  type EnforcementSituation,
-  type EnforcementTiming,
   nextEnforcementStep,
   profileInForce,
 } from "./energyDistributionEnforcementDecisions.ts";
 import { createEnergyDistributionEnforcement } from "./useEnergyDistributionEnforcement.ts";
+import {
+  hecsAt,
+  LIVE_HECS,
+  newPureRun,
+  PURE_START_MS as START_MS,
+  PURE_TIMING as timing,
+  pureStep,
+  RESET_HECS,
+  RESTORED_COMMANDS,
+  situationAt,
+} from "./energyDistributionSelftestFixtures.ts";
 
 const fails: string[] = [];
 function check(name: string, condition: boolean, detail = "") {
   console.log(`${condition ? "PASS" : "FAIL"}: ${name} ${detail}`);
   if (!condition) fails.push(name);
 }
-
-/** HECS as the live inverter read it before the DM050 of 2026-11-05 */
-const LIVE_HECS: DecodedFields = {
-  solar_energy_distribution_priority: "Load-Battery-Grid",
-  solar_charge_battery: "enabled",
-  ac_charge_battery: "disabled",
-  feed_power_to_utility: "enabled",
-  battery_discharge_to_loads_when_solar_input_normal: "enabled",
-  battery_discharge_to_loads_when_solar_input_loss: "enabled",
-  battery_discharge_to_feed_grid_when_solar_input_normal: "enabled",
-  battery_discharge_to_feed_grid_when_solar_input_loss: "enabled",
-};
-/** …and once DM050 had applied: the factory defaults */
-const RESET_HECS: DecodedFields = {
-  ...LIVE_HECS,
-  solar_energy_distribution_priority: "Battery-Load-Grid",
-  ac_charge_battery: "enabled",
-  battery_discharge_to_loads_when_solar_input_normal: "disabled",
-  battery_discharge_to_loads_when_solar_input_loss: "disabled",
-  battery_discharge_to_feed_grid_when_solar_input_normal: "disabled",
-  battery_discharge_to_feed_grid_when_solar_input_loss: "disabled",
-};
-const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
 
 // ---------- the profiles and their setters ----------
 {
@@ -147,38 +133,9 @@ const RESTORED_COMMANDS = "SEP01,EDD1,EDE1";
   );
 }
 
-// ---------- the pure decisions ----------
-/** Steps the decisions as the wiring does: what a step sends is recorded as queued, for the session's gate */
-type PureRun = { episode: DivergenceEpisode | undefined; lastQueuedAtByCommand: Record<string, number> };
-
-function pureStep(run: PureRun, situation: EnforcementSituation, timing: EnforcementTiming) {
-  const step = nextEnforcementStep(
-    run.episode,
-    { ...situation, lastQueuedAtByCommand: run.lastQueuedAtByCommand },
-    timing
-  );
-  run.episode = step.episode;
-  const commands = (step.send ?? []).map(divergence => setterForDivergence(divergence).command);
-  for (const command of commands) run.lastQueuedAtByCommand[command] = situation.nowMs;
-  return { step, commands };
-}
-
+// ---------- the pure decisions (the follow-ups to #91's review: energyDistributionDecisions.selftest.ts) ----------
 {
-  const START_MS = 1_000_000_000;
-  const timing: EnforcementTiming = { p2AfterMs: 600_000, fallbackRetryMs: ENFORCEMENT_FALLBACK_RETRY_MS };
   const profiles = default_config.inverter_energy_distribution;
-  const situationAt = (nowMs: number, overrides: Partial<EnforcementSituation> = {}): EnforcementSituation => ({
-    nowMs,
-    machineModel: { model: "050", atMs: nowMs - 1_000 },
-    workingModeCode: "05",
-    machineModelSwitchPending: false,
-    hecs: { fields: RESET_HECS, decodedAtMs: nowMs - 500 },
-    settingsReadbackMaxAgeMs: 660_000,
-    profiles,
-    lastQueuedAtByCommand: {},
-    ...overrides,
-  });
-  const hecsAt = (nowMs: number, fields: DecodedFields) => ({ hecs: { fields, decodedAtMs: nowMs } });
   check(
     "no DM readback: no profile",
     "noProfileReason" in profileInForce(situationAt(START_MS, { machineModel: undefined }))
@@ -215,8 +172,11 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
   const { solar_energy_distribution_priority: _missingPriority, ...withoutPriority } = RESET_HECS;
   const unread = nextEnforcementStep(undefined, situationAt(START_MS, hecsAt(START_MS, withoutPriority)), timing);
   check(
-    "a readback lacking a managed field can't be judged: nothing written (no SEP on a guess)",
-    !unread.send && !unread.judged
+    "a readback lacking a managed field: the fields read are written, the unread one never (no SEP on a guess)",
+    unread.send?.map(divergence => setterForDivergence(divergence).command).join(",") === "EDD1,EDE1" &&
+      unread.judged?.unreadFields.join(",") === "solar_energy_distribution_priority" &&
+      unread.started,
+    unread.waitingReason
   );
   const openEpisode = nextEnforcementStep(undefined, situationAt(START_MS), timing).episode;
   const unreadWhileOpen = nextEnforcementStep(
@@ -225,9 +185,10 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
     timing
   );
   check(
-    "…an open episode stays open, saying why",
-    unreadWhileOpen.episode !== undefined && unreadWhileOpen.waitingReason?.includes("lacks Solar priority") === true,
-    unreadWhileOpen.waitingReason
+    "…an open episode stays open on the fields still read differently, the unread one named in the judgement",
+    unreadWhileOpen.episode !== undefined &&
+      unreadWhileOpen.judged?.unreadFields.join(",") === "solar_energy_distribution_priority" &&
+      unreadWhileOpen.judged.divergences.length === 2
   );
   check(
     "an out-of-domain value is a real difference and is written back",
@@ -246,7 +207,7 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
 
   // A firmware that refuses everything, the readback never changing: the fallback alone retries
   {
-    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const run = newPureRun();
     const sendTimesMs: number[] = [];
     let p2Count = 0;
     for (let nowMs = START_MS; nowMs <= START_MS + 3_600_000; nowMs += 10_000) {
@@ -325,7 +286,7 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
   // Review #1: a re-arm inside the session's gate, then a hold. Nothing may sit gated in the queue and reach
   // the wire after the enforcement decided to hold (SEP01 into a 151 transition resets EDB/EDC/EDG)
   {
-    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const run = newPureRun();
     const t0 = pureStep(run, situationAt(START_MS), timing);
     check("t=0: SEP01, EDD1, EDE1 (SEP01 NAKed)", t0.commands.join(",") === RESTORED_COMMANDS);
     const eddLanded = { ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" };
@@ -361,7 +322,7 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
 
   // …and a field made unmanaged inside the gate's window is never written
   {
-    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const run = newPureRun();
     pureStep(run, situationAt(START_MS), timing);
     const eddLanded = { ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" };
     pureStep(run, situationAt(START_MS + 10_000, hecsAt(START_MS + 10_000, eddLanded)), timing);
@@ -386,7 +347,7 @@ function pureStep(run: PureRun, situation: EnforcementSituation, timing: Enforce
   // Review #2: the firmware ACKs SEP01 and applies its side effects (EDB on, EDC/EDG off) but not the
   // priority; EDC1 lands, buying and feeding put EDB/EDG back. The change-triggered rounds stay bounded.
   {
-    const run: PureRun = { episode: undefined, lastQueuedAtByCommand: {} };
+    const run = newPureRun();
     let hecsFields: DecodedFields = { ...LIVE_HECS, solar_energy_distribution_priority: "Battery-Load-Grid" };
     const sepSendTimesMs: number[] = [];
     const pendingEffects: { atMs: number; apply: (fields: DecodedFields) => DecodedFields }[] = [];
@@ -446,12 +407,17 @@ const WIRING_START_MS = Date.parse("2026-11-05T12:00:00Z");
 type Harness = ReturnType<typeof startHarness>;
 
 function startHarness() {
-  const clock = { nowMs: WIRING_START_MS };
+  /** The wall clock and the session's monotonic one, advanced together unless a test steps the wall clock */
+  const clock = { nowMs: WIRING_START_MS, monotonicMs: 5_000 };
+  /** The session's identical-setter gate, emulated: a queued setter goes out at once */
+  const gateOpensAtByCommand: Record<string, number> = {};
   const [config, setConfig] = createSignal<Config>(default_config);
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
   const [workingModeCode, setWorkingModeCode] = createSignal<string | undefined>("05");
   const [requestedMachineModel, setRequestedMachineModel] = createSignal<MachineModelCode>("050");
   const queued: SetterQueueItem[] = [];
+  /** Setters queued while the emulated gate still held them: must stay empty */
+  const queuedWhileGated: string[] = [];
   const readbackRequests: string[] = [];
   const raised: Parameters<AlertManager["raise"]>[0][] = [];
   const raise: AlertManager["raise"] = async alert => {
@@ -462,13 +428,20 @@ function startHarness() {
   const dispose = createRoot(disposeRoot => {
     enforcement = createEnergyDistributionEnforcement({
       config,
-      queueSetter: item => queued.push(item),
+      queueSetter: item => {
+        const gateOpensAtMs = gateOpensAtByCommand[item.command];
+        if (gateOpensAtMs !== undefined && clock.monotonicMs < gateOpensAtMs) queuedWhileGated.push(item.command);
+        gateOpensAtByCommand[item.command] = clock.monotonicMs + IDENTICAL_SETTER_MIN_INTERVAL_MS;
+        queued.push(item);
+      },
+      identicalSetterGateOpensAtMs: command => gateOpensAtByCommand[command],
       requestSettingsReadback: query => readbackRequests.push(query),
       lastDecodedRound,
       workingModeCode,
       requestedMachineModel,
       raise,
       wallClockNowMs: () => clock.nowMs,
+      monotonicNowMs: () => clock.monotonicMs,
       timingOverrides: undefined,
     });
     return disposeRoot;
@@ -490,6 +463,7 @@ function startHarness() {
     setWorkingModeCode,
     setRequestedMachineModel,
     queued,
+    queuedWhileGated,
     readbackRequests,
     raised,
     settingsRound,
@@ -502,6 +476,7 @@ function startHarness() {
 
 function advance(harness: Harness, milliseconds: number): void {
   harness.clock.nowMs += milliseconds;
+  harness.clock.monotonicMs += milliseconds;
 }
 
 function commands(harness: Harness, fromIndex = 0): string {
@@ -639,6 +614,7 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
   );
   harness.settingsRound(LIVE_HECS, "050");
   check("landing sends one P3", harness.raised.filter(alert => alert.severity === "P3").length === 1);
+  check("nothing was ever queued for the gate to hold", harness.queuedWhileGated.length === 0);
   harness.dispose();
 }
 
@@ -698,6 +674,73 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
     battery_discharge_to_loads_when_solar_input_loss: "disabled",
   });
   check("a managed field changed on the display is reverted (EDE1)", commands(harness, sent) === "EDE1");
+  harness.dispose();
+}
+
+// A managed field missing from the HECS answer: never written, tracked on its own, pages, and resolves
+{
+  const harness = startHarness();
+  const { feed_power_to_utility: _unreadFeed, ...withoutFeed } = LIVE_HECS;
+  harness.settingsRound(withoutFeed, "050");
+  const opened = harness.enforcement.status();
+  check(
+    "EDC missing, the rest matching: nothing written, no divergence, the card shows the missing field",
+    harness.queued.length === 0 &&
+      opened.divergence === undefined &&
+      opened.unread_fields?.fields.join(",") === "feed_power_to_utility" &&
+      opened.fields.find(field => field.field === "feed_power_to_utility")?.inverter === undefined,
+    JSON.stringify(opened.unread_fields)
+  );
+  for (let step = 0; step < 60; step++) {
+    advance(harness, 10_000);
+    harness.settingsRound(withoutFeed, "050");
+  }
+  const p2s = harness.raised.filter(alert => alert.severity === "P2");
+  check(
+    "…10 min of it: one P2 on the missing-field key, naming the field, and still nothing written",
+    p2s.length === 1 &&
+      p2s[0]?.key.startsWith("energy-distribution-unread:") === true &&
+      p2s[0].message.includes("lacked Feed to the utility (EDC)") &&
+      harness.enforcement.status().unread_fields?.p2_raised === true &&
+      !harness.queued.length,
+    p2s[0]?.message
+  );
+  harness.settingsRound(LIVE_HECS, "050");
+  const p3s = harness.raised.filter(alert => alert.severity === "P3");
+  check(
+    "…read again as the profile: it resolves with its P3",
+    !harness.enforcement.status().unread_fields &&
+      p3s.length === 1 &&
+      p3s[0]?.key.startsWith("energy-distribution-unread:") === true
+  );
+  harness.dispose();
+}
+
+// The session's gate runs on the monotonic clock: a wall-clock step forward doesn't open it
+{
+  const harness = startHarness();
+  harness.settingsRound(RESET_HECS, "050");
+  for (const item of harness.queued) item.onResult?.({ acknowledged: false });
+  const sent = harness.queued.length;
+  advance(harness, 10_000);
+  harness.readHecs({ ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" });
+  // NTP steps the wall clock an hour forward: the readbacks and the fallback move with it, the gate doesn't
+  harness.clock.nowMs += 3_600_000;
+  harness.settingsRound({ ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" }, "050");
+  check(
+    "an NTP step forward (an hour on the wall clock, 10 s into the gate): nothing is queued into it",
+    commands(harness, sent) === "" && harness.queuedWhileGated.length === 0,
+    commands(harness, sent)
+  );
+  for (let step = 0; step < 5; step++) {
+    advance(harness, 10_000);
+    harness.settingsRound({ ...RESET_HECS, battery_discharge_to_loads_when_solar_input_normal: "enabled" }, "050");
+  }
+  check(
+    "…SEP01/EDE1 go out once the session's 60 s have passed",
+    commands(harness, sent) === "SEP01,EDE1" && harness.queuedWhileGated.length === 0,
+    commands(harness, sent)
+  );
   harness.dispose();
 }
 

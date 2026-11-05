@@ -7,8 +7,11 @@
  * something changes (the DM readback, the working mode, an enforced HECS field, the profile; a few times per
  * episode) and otherwise every ENFORCEMENT_FALLBACK_RETRY_MS, with one P2 per divergence episode after
  * p2_after_minutes. Nothing is written while the DM readback is unknown or stale, while a DM switch is in
- * flight, nor queued where the session's identical-setter gate would hold it. AC charge (EDB) and battery
- * feed to the grid (EDF/EDG) stay with buying and feeding. Decisions: energyDistributionEnforcementDecisions.ts.
+ * flight, nor queued where the session's identical-setter gate would hold it (the session's own gate time,
+ * on its monotonic clock); a managed field the HECS answer lacks is never written, and pages on its own
+ * (energyDistributionUnreadFields.ts). AC charge (EDB) and battery feed to the grid (EDF/EDG) stay with
+ * buying and feeding. Decisions, and the corners the gate check leaves open:
+ * energyDistributionEnforcementDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import type { Config, InverterEnergyDistributionConfig } from "../config/config.types.ts";
@@ -18,19 +21,13 @@ import type { AlertManager } from "../alerting/alertManager.ts";
 import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
 import { SETTINGS_READBACK_REQUEST_LIFETIME_MS } from "../inverterComms/schedulerTiming.ts";
 import { machineModelReadbackMaxAgeMs } from "../gridOff/gridOffDecisions.ts";
-import { isWhitelistedMachineModel } from "../inverterComms/machineModel.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type {
   EnergyDistributionFieldDivergence,
   EnergyDistributionProfileName,
   EnergyDistributionStatus,
 } from "./energyDistribution.types.ts";
-import {
-  describeDivergences,
-  ENERGY_DISTRIBUTION_FIELDS,
-  PROFILE_BY_MACHINE_MODEL,
-  setterForDivergence,
-} from "./energyDistributionProfile.ts";
+import { describeDivergences, setterForDivergence } from "./energyDistributionProfile.ts";
 import { effectiveEnergyDistributionSettings } from "./energyDistributionSettings.ts";
 import {
   type DivergenceEpisode,
@@ -43,7 +40,13 @@ import {
   type MachineModelReading,
   nextEnforcementStep,
 } from "./energyDistributionEnforcementDecisions.ts";
-import { raiseDivergenceLandedAfterP2, raiseDivergenceNotLanded } from "./energyDistributionAlert.ts";
+import {
+  raiseDivergenceLandedAfterP2,
+  raiseDivergenceNotLanded,
+  reportUnreadFieldsStep,
+} from "./energyDistributionAlert.ts";
+import { nextUnreadFieldsStep, type UnreadFieldsEpisode } from "./energyDistributionUnreadFields.ts";
+import { energyDistributionStatus } from "./energyDistributionStatus.ts";
 
 /** How often the time-based parts (the fallback retry, the P2, readback staleness) are re-judged */
 const ENFORCEMENT_TICK_INTERVAL_MS = 10_000;
@@ -58,16 +61,19 @@ export function useEnergyDistributionEnforcement({
   /** The grid-off switch's request: while the DM readback doesn't show it, a DM write is in flight */
   requestedMachineModel: Accessor<MachineModelCode>;
 }) {
-  const { queueSetter, requestSettingsReadback, lastDecodedRound, inverterStatus } = useInverterComms();
+  const { queueSetter, identicalSetterGateOpensAtMs, requestSettingsReadback, lastDecodedRound, inverterStatus } =
+    useInverterComms();
   return createEnergyDistributionEnforcement({
     config,
     queueSetter,
+    identicalSetterGateOpensAtMs,
     requestSettingsReadback,
     lastDecodedRound,
     workingModeCode: () => inverterStatus().working_mode?.code,
     requestedMachineModel,
     raise,
     wallClockNowMs: () => Date.now(),
+    monotonicNowMs: () => performance.now(),
     timingOverrides: undefined,
   });
 }
@@ -76,6 +82,8 @@ export function useEnergyDistributionEnforcement({
 export type EnergyDistributionEnvironment = {
   config: Accessor<Config>;
   queueSetter: (item: SetterQueueItem) => void;
+  /** The session's: when its identical-setter gate lets a command out again (monotonicNowMs's clock) */
+  identicalSetterGateOpensAtMs: (command: string) => number | undefined;
   /** The session's early settings readback: asked for (at most once a minute) when the DM or the working mode changes */
   requestSettingsReadback: (query: SettingsQueryCommandName) => void;
   /** DM and HECS rounds give the readbacks the enforcement judges */
@@ -91,6 +99,8 @@ export type EnergyDistributionEnvironment = {
   raise: AlertManager["raise"];
   /** Date.now() in production */
   wallClockNowMs: () => number;
+  /** performance.now() in production: the clock the session's identical-setter gate runs on */
+  monotonicNowMs: () => number;
   /** Harnesses only (they scale the fallback retry and the P2 down) — production passes undefined */
   timingOverrides: Partial<EnforcementTiming> | undefined;
 };
@@ -105,6 +115,7 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
   const [machineModel, setMachineModel] = createSignal<MachineModelReading | undefined>(undefined);
   const [hecs, setHecs] = createSignal<HecsReading | undefined>(undefined);
   const [episode, setEpisode] = createSignal<DivergenceEpisode | undefined>(undefined);
+  const [unreadFieldsEpisode, setUnreadFieldsEpisode] = createSignal<UnreadFieldsEpisode | undefined>(undefined);
   // Primitives, so the status (and the ws) only moves when they do
   const [waitingReason, setWaitingReason] = createSignal<string | undefined>(undefined);
   const [judgedProfileName, setJudgedProfileName] = createSignal<EnergyDistributionProfileName | undefined>(undefined);
@@ -117,11 +128,12 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
     hecs,
     episode,
     setEpisode,
+    unreadFieldsEpisode,
+    setUnreadFieldsEpisode,
     setWaitingReason,
     setJudgedProfileName,
     setLastEvent,
     lastReadbackRequestAtMs: undefined,
-    lastQueuedAtByCommand: {},
   };
 
   createEffect(() => {
@@ -163,36 +175,18 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
   }, ENFORCEMENT_TICK_INTERVAL_MS);
   onCleanup(() => clearInterval(tickTimer));
 
-  const status = createMemo<EnergyDistributionStatus>(() => {
-    const model = machineModel();
-    const latestHecs = hecs();
-    const runningEpisode = episode();
-    const profileName: EnergyDistributionProfileName | undefined =
-      judgedProfileName() ??
-      (model && isWhitelistedMachineModel(model.model) ? PROFILE_BY_MACHINE_MODEL[model.model] : undefined);
-    const shownProfile = settings()[profileName ?? "normal_hybrid"];
-    return {
-      profile_name: profileName,
-      machine_model: model?.model,
-      fields: ENERGY_DISTRIBUTION_FIELDS.map(field => {
-        const inverterValue = latestHecs?.fields[field];
-        return {
-          field,
-          desired: shownProfile[field],
-          inverter: inverterValue === undefined ? undefined : String(inverterValue),
-        };
-      }),
-      hecs_read_at: latestHecs?.decodedAtMs,
-      divergence: runningEpisode && {
-        since: runningEpisode.onsetMs,
-        send_rounds: runningEpisode.sendRounds,
-        p2_raised: runningEpisode.p2Raised,
-        fallback_only: runningEpisode.changeTriggeredRetries >= CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
-      },
-      waiting_reason: waitingReason(),
-      last_event: lastEvent(),
-    };
-  });
+  const status = createMemo<EnergyDistributionStatus>(() =>
+    energyDistributionStatus({
+      machineModel: machineModel(),
+      hecs: hecs(),
+      episode: episode(),
+      unreadFieldsEpisode: unreadFieldsEpisode(),
+      judgedProfileName: judgedProfileName(),
+      settings: settings(),
+      waitingReason: waitingReason(),
+      lastEvent: lastEvent(),
+    })
+  );
 
   return { status };
 }
@@ -204,13 +198,13 @@ type EnforcementContext = EnergyDistributionEnvironment & {
   hecs: Accessor<HecsReading | undefined>;
   episode: Accessor<DivergenceEpisode | undefined>;
   setEpisode: Setter<DivergenceEpisode | undefined>;
+  unreadFieldsEpisode: Accessor<UnreadFieldsEpisode | undefined>;
+  setUnreadFieldsEpisode: Setter<UnreadFieldsEpisode | undefined>;
   setWaitingReason: Setter<string | undefined>;
   setJudgedProfileName: Setter<EnergyDistributionProfileName | undefined>;
   setLastEvent: Setter<EnergyDistributionStatus["last_event"]>;
   /** Wall-clock ms; the readbacks asked for on a DM or working mode change are at most one a minute */
   lastReadbackRequestAtMs: number | undefined;
-  /** Wall-clock ms each setter was last queued, across episodes: what the session's identical-setter gate holds */
-  lastQueuedAtByCommand: Record<string, number>;
 };
 
 /** Runs on every DM/HECS readback, working mode or config change and every tick; every read is untracked */
@@ -219,6 +213,7 @@ function evaluateEnforcement(context: EnforcementContext): void {
   const settings = untrack(context.settings);
   const situation: EnforcementSituation = {
     nowMs,
+    monotonicNowMs: context.monotonicNowMs(),
     machineModel: untrack(context.machineModel),
     workingModeCode: untrack(context.workingModeCode),
     machineModelSwitchPending: machineModelSwitchPending(
@@ -230,7 +225,7 @@ function evaluateEnforcement(context: EnforcementContext): void {
       untrack(context.config).usb_parameter_setting.poll_values_interval_seconds
     ),
     profiles: settings,
-    lastQueuedAtByCommand: context.lastQueuedAtByCommand,
+    identicalSetterGateOpensAtMs: context.identicalSetterGateOpensAtMs,
   };
   const timing: EnforcementTiming = {
     p2AfterMs: settings.p2_after_minutes * 60_000,
@@ -250,7 +245,15 @@ function evaluateEnforcement(context: EnforcementContext): void {
   }
   if (step.raiseP2 && step.episode) pageDivergence(context, step, step.episode, nowMs);
   if (step.send && step.episode) queueSetters(context, step.send, step.episode.sendRounds, profileName);
-  if (step.landed) finishEpisode(context, step.landed, profileName, nowMs);
+  if (step.landed) finishEpisode(context, step, step.landed, nowMs);
+  const unreadStep = nextUnreadFieldsStep(
+    untrack(context.unreadFieldsEpisode),
+    step.judged?.unreadFields,
+    nowMs,
+    timing.p2AfterMs
+  );
+  context.setUnreadFieldsEpisode(unreadStep.episode);
+  reportUnreadFieldsStep(context.raise, unreadStep, nowMs);
 }
 
 function queueSetters(
@@ -263,7 +266,6 @@ function queueSetters(
   for (const divergence of divergences) {
     const { command, replacesPrefix } = setterForDivergence(divergence);
     commands.push(command);
-    context.lastQueuedAtByCommand[command] = context.wallClockNowMs();
     context.queueSetter({
       command,
       replacesPrefix,
@@ -307,10 +309,11 @@ function pageDivergence(
 
 function finishEpisode(
   context: EnforcementContext,
+  step: EnforcementStep,
   episode: DivergenceEpisode,
-  profileName: EnergyDistributionProfileName | undefined,
   nowMs: number
 ): void {
+  const profileName = step.judged?.profileName;
   const profile = profileName ? describeProfile(profileName) : "current";
   const elapsedSeconds = Math.round((nowMs - episode.onsetMs) / 1000);
   logLog(
@@ -322,7 +325,13 @@ function finishEpisode(
     context,
     episode.sendRounds ? "Settings enforced: the readback matches the config" : "Matches the config"
   );
-  if (episode.p2Raised) raiseDivergenceLandedAfterP2(context.raise, { episodeOnsetMs: episode.onsetMs, nowMs });
+  if (episode.p2Raised) {
+    raiseDivergenceLandedAfterP2(context.raise, {
+      episodeOnsetMs: episode.onsetMs,
+      nowMs,
+      unreadFields: step.judged?.unreadFields ?? [],
+    });
+  }
 }
 
 /** Judged on the enforcement's own DM reading, so the two can't disagree within one update */

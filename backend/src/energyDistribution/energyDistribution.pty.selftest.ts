@@ -15,7 +15,8 @@
  *
  * Run from backend/ with:  yarn node src/energyDistribution/energyDistribution.pty.selftest.ts
  * Needs python3 and Linux ptys. Takes ~2.5 min: a retry of an identical setter waits until the session's 60 s
- * gate is surely open (IDENTICAL_SETTER_REQUEUE_AFTER_MS) and the next tick.
+ * gate is open (its identicalSetterGateOpensAtMs) and the next tick. No enforcement setter may be queued
+ * while that gate would still hold it.
  */
 import process from "process";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
@@ -152,6 +153,11 @@ async function runConvergenceChecks(): Promise<void> {
   await sleep(6_000);
   check("no oscillation: nothing more written once converged", receivedSetters(fake.events).length === settled);
   check("no alert raised", harness.raised.length === 0, harness.raised.map(alert => alert.title).join(","));
+  check(
+    "no enforcement setter was queued while the session's identical-setter gate held it",
+    harness.queuedWhileGated.length === 0,
+    harness.queuedWhileGated.join(",")
+  );
   const nakErrorLogs = errorLogsCaptured.filter(line => line.includes("REJECTED (NAK)"));
   check("each NAK streak is one errorLog (SEP01, EDF1)", nakErrorLogs.length <= 2, nakErrorLogs.join(" | "));
   harness.dispose();
@@ -175,6 +181,7 @@ async function runSteadyNakChecks(): Promise<void> {
   );
   check("exactly one P2", harness.raised.filter(alert => alert.severity === "P2").length === 1);
   check("the unmanaged EDC is never written", !sends.some(command => command.includes("EDC")));
+  check("…and nothing queued for the gate to hold", harness.queuedWhileGated.length === 0);
   check(
     "the steady NAK is one errorLog",
     errorLogsCaptured.slice(errorLogsBefore).filter(line => line.includes("REJECTED (NAK) SEP01")).length === 1
@@ -201,6 +208,8 @@ function startHarness(
   { pollSeconds, timingOverrides }: { pollSeconds: number; timingOverrides: Partial<EnforcementTiming> | undefined }
 ) {
   const decodedRounds: DecodedRound[] = [];
+  /** Enforcement setters queued while the session's identical-setter gate still held them: must stay empty */
+  const queuedWhileGated: string[] = [];
   const raised: Parameters<AlertManager["raise"]>[0][] = [];
   const raise: AlertManager["raise"] = async alert => {
     raised.push(alert);
@@ -239,13 +248,19 @@ function startHarness(
     queueSetter = engine.queueSetter;
     enforcement = createEnergyDistributionEnforcement({
       config,
-      queueSetter: engine.queueSetter,
+      queueSetter: item => {
+        const gateOpensAtMs = engine.identicalSetterGateOpensAtMs(item.command);
+        if (gateOpensAtMs !== undefined && performance.now() < gateOpensAtMs) queuedWhileGated.push(item.command);
+        engine.queueSetter(item);
+      },
+      identicalSetterGateOpensAtMs: engine.identicalSetterGateOpensAtMs,
       requestSettingsReadback: engine.requestSettingsReadback,
       lastDecodedRound,
       workingModeCode: () => tracker.inverterStatus().working_mode?.code,
       requestedMachineModel: requestedModel,
       raise,
       wallClockNowMs: () => Date.now(),
+      monotonicNowMs: () => performance.now(),
       timingOverrides,
     });
     // Buying (EDB0) and feeding (EDF1, EDG1) as desired state, the way they queue it; they hold while 151 is
@@ -268,6 +283,7 @@ function startHarness(
   return {
     enforcement,
     decodedRounds,
+    queuedWhileGated,
     raised,
     /** As the grid-off switch does it: the request first, then DM queued */
     requestMachineModel: (model: MachineModelCode) => {
