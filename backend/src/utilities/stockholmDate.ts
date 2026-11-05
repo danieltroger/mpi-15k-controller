@@ -31,11 +31,20 @@ export function calendarDateParts(date: string): [number, number, number] {
 
 /** HH:MM in Europe/Stockholm, with the date when it isn't today there. */
 export function formatStockholmTime(atMs: number, nowMs: number): string {
-  const timeZone = "Europe/Stockholm";
-  const clock = new Date(atMs).toLocaleTimeString("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit" });
-  const day = new Date(atMs).toLocaleDateString("sv-SE", { timeZone });
-  return day === new Date(nowMs).toLocaleDateString("sv-SE", { timeZone }) ? clock : `${day} ${clock}`;
+  const clock = STOCKHOLM_CLOCK_FORMAT.format(atMs);
+  const day = STOCKHOLM_DATE_FORMAT.format(atMs);
+  return day === STOCKHOLM_DATE_FORMAT.format(nowMs) ? clock : `${day} ${clock}`;
 }
+
+/**
+ * The same string toLocaleTimeString("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit" }) gives; one shared
+ * formatter because building one costs ~0.4 ms (ICU), and automatic grid-off formats on every SOC sample
+ */
+const STOCKHOLM_CLOCK_FORMAT = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Europe/Stockholm",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 /**
  * sv-SE formats as YYYY-MM-DD, the same string toLocaleDateString("sv-SE", { timeZone }) gives; one shared

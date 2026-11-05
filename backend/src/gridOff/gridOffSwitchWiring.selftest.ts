@@ -26,7 +26,8 @@ const signalListenersBefore = process.listenerCount("SIGTERM");
 type Harness = ReturnType<typeof startHarness>;
 
 function startHarness() {
-  const clock = { nowMs: START_MS, readingsAtMs: START_MS };
+  // readingsAtMs: GS/PS; socSampleAtMs: hall sensor 2, the SOC's input
+  const clock = { nowMs: START_MS, readingsAtMs: START_MS, socSampleAtMs: START_MS };
   const [config, setConfig] = createSignal<Config>(default_config);
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
   const [soc, setSoc] = createSignal<number | undefined>(60);
@@ -52,6 +53,7 @@ function startHarness() {
       lastDecodedRound,
       mqttValues,
       soc,
+      socSampleAtMs: () => clock.socSampleAtMs,
       raise,
       wallClockNowMs: () => clock.nowMs,
     });
@@ -67,6 +69,7 @@ function startHarness() {
 function advance(harness: Harness, milliseconds = 61_000): void {
   harness.clock.nowMs += milliseconds;
   harness.clock.readingsAtMs = harness.clock.nowMs;
+  harness.clock.socSampleAtMs = harness.clock.nowMs;
 }
 
 /** A guard run: the 10 s tick is wall-clock, so the harness nudges a tracked input instead */
@@ -168,6 +171,13 @@ function windowStartingIn(harness: Harness, minutes: number) {
   harness.clock.readingsAtMs = harness.clock.nowMs - 90_000;
   check("refused on 90 s old readings", (await refusalOf(harness))?.includes("90 s old") === true);
   harness.clock.readingsAtMs = harness.clock.nowMs;
+  // The hall sensor stops while the inverter keeps talking: the SOC then only counts the drain down
+  harness.clock.socSampleAtMs = harness.clock.nowMs - 75_000;
+  check(
+    "refused from the page on a 75 s old hall sensor 2 sample",
+    (await refusalOf(harness))?.includes("hall sensor 2, the SOC's input) is 75 s old") === true
+  );
+  harness.clock.socSampleAtMs = harness.clock.nowMs;
   harness.setConfig({
     ...default_config,
     scheduled_power_buying: { ...default_config.scheduled_power_buying, schedule: windowStartingIn(harness, 8) },
@@ -209,6 +219,7 @@ function windowStartingIn(harness: Harness, minutes: number) {
   await harness.gridOffSwitch.requestOffGrid();
   harness.clock.nowMs += SWITCH_CONFIRM_DEADLINE_MS + 1_000;
   harness.clock.readingsAtMs = harness.clock.nowMs;
+  harness.clock.socSampleAtMs = harness.clock.nowMs;
   harness.setSoc(60.5);
   check(
     "151 never read back past the deadline: switched back",
@@ -262,6 +273,34 @@ function windowStartingIn(harness: Harness, minutes: number) {
   check("…refusing a switch-off meanwhile", (await refusalOf(harness))?.includes("already reads 151") === true);
   harness.readBack("050");
   check("…and over once it does", !harness.gridOffSwitch.gridOffInForce());
+  check(
+    "…and its DM050 counts as a switch: the next 151 waits min_seconds_between_switches",
+    (await refusalOf(harness))?.includes("min_seconds_between_switches") === true
+  );
+  advance(harness);
+  check("…a minute later it may go", (await refusalOf(harness)) === undefined);
+  harness.dispose();
+}
+
+// ---------- the hall sensor stops while off the grid ----------
+{
+  const harness = startHarness();
+  harness.readBack("050");
+  await harness.gridOffSwitch.requestOffGrid();
+  harness.readBack("151");
+  advance(harness, 30_000);
+  harness.clock.socSampleAtMs = harness.clock.nowMs - 61_000;
+  evaluateNow(harness);
+  check(
+    "a hall sensor 2 sample 61 s old while off the grid: the guard switches back",
+    lastCommand(harness) === "DM050" &&
+      harness.gridOffSwitch.status().last_event?.what.includes("hall sensor 2") === true,
+    harness.gridOffSwitch.status().last_event?.what
+  );
+  check(
+    "…and that counts as a switch-off that didn't hold (automatic grid-off backs off on it)",
+    harness.gridOffSwitch.offGridFailures().count === 1
+  );
   harness.dispose();
 }
 

@@ -262,6 +262,8 @@ function startHarness(device: string, initialConfig: Config) {
       lastDecodedRound,
       mqttValues,
       soc,
+      // The SOC is a plain signal here: its hall sensor input is always fresh
+      socSampleAtMs: harnessNowMs,
       raise,
       wallClockNowMs: harnessNowMs,
     });

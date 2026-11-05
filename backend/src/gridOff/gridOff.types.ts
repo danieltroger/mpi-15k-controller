@@ -3,6 +3,7 @@
  * imports this file directly.
  */
 import type { MachineModelCode } from "../inverterComms/pi17Protocol.types.ts";
+import type { GridOffConfig } from "../config/config.types.ts";
 
 export type GridOffEvent = { what: string; when: number };
 
@@ -62,4 +63,6 @@ export type AutoGridOffStatus = {
   reason: string | undefined;
   /** Known from the schedule; undefined = none known (it depends on the battery, or nothing is scheduled) */
   next_switch: AutoGridOffNextSwitch | undefined;
+  /** The grid_off section as the switch and automatic grid-off use it: corrected to its bounds, resume below full */
+  settings: GridOffConfig;
 };

@@ -31,7 +31,9 @@ import {
   NO_SWITCH_BACK_SENDS,
   NOT_STUCK_OFF_GRID,
   reconcileMachineModel,
+  revertCause,
   revertReason,
+  FAILED_SWITCH_REVERT_KINDS,
   SWITCH_CONFIRM_DEADLINE_MS,
   switchBackResendDue,
   switchOffGridRefusal,
@@ -154,6 +156,7 @@ const settings: GridOffConfig = DEFAULT_GRID_OFF_SETTINGS;
 const quietNight: GridOffSituation = {
   nowMs: NOW_MS,
   soc: 60,
+  socReadingAgeMs: 400,
   inverterReadingAgeMs: 1_200,
   readbackModel: "050",
   readbackAgeMs: 30_000,
@@ -209,6 +212,17 @@ check(
   switchOffGridRefusal({ ...quietNight, inverterReadingAgeMs: undefined }, settings) !== undefined
 );
 check("refused with the SOC unknown", switchOffGridRefusal({ ...quietNight, soc: undefined }, settings) !== undefined);
+check(
+  "refused on a hall sensor 2 sample over 60 s old (the SOC only counts the drain down then)",
+  switchOffGridRefusal({ ...quietNight, socReadingAgeMs: FRESH_INVERTER_READING_MAX_AGE_MS + 1 }, settings)?.includes(
+    "hall sensor 2"
+  ) === true &&
+    switchOffGridRefusal({ ...quietNight, socReadingAgeMs: FRESH_INVERTER_READING_MAX_AGE_MS }, settings) === undefined
+);
+check(
+  "refused before the first hall sensor 2 sample",
+  switchOffGridRefusal({ ...quietNight, socReadingAgeMs: undefined }, settings)?.includes("hall sensor 2") === true
+);
 check(
   "refused just below the floor plus margin (14.9 % < 10 + 5)",
   switchOffGridRefusal({ ...quietNight, soc: 14.9 }, settings)?.includes("15 %") === true
@@ -280,6 +294,41 @@ check(
   "stale readings while off the grid: switch back",
   revertReason({ ...offGridNight, inverterReadingAgeMs: 90_000 }, settings, requestedAtMs) !== undefined
 );
+check(
+  "a stale hall sensor 2 sample while off the grid: switch back",
+  revertReason({ ...offGridNight, socReadingAgeMs: 90_000 }, settings, requestedAtMs)?.includes("hall sensor 2") ===
+    true
+);
+{
+  // Which reverts mean the 151 didn't hold (automatic grid-off backs its retries off on them)
+  const kindOf = (situation: GridOffSituation, atMs = requestedAtMs) => revertCause(situation, settings, atMs)?.kind;
+  const kinds = [
+    kindOf({ ...offGridNight, soc: undefined }),
+    kindOf({ ...offGridNight, soc: 9 }),
+    kindOf({ ...offGridNight, buySchedule: windowAt(5) }),
+    kindOf({ ...offGridNight, inverterReadingAgeMs: 90_000 }),
+    kindOf({ ...offGridNight, socReadingAgeMs: 90_000 }),
+    kindOf({ ...offGridNight, readbackModel: "050" }),
+  ];
+  check(
+    "revert causes: soc_unknown, soc_low, window, stale_readings, stale_soc, not_applied",
+    kinds.join(",") === "soc_unknown,soc_low,window,stale_readings,stale_soc,not_applied",
+    kinds.join(",")
+  );
+  check(
+    "…of which the window and the floor are routine, the rest count as a switch that didn't hold",
+    kinds.filter(kind => kind && FAILED_SWITCH_REVERT_KINDS.has(kind)).join(",") ===
+      "soc_unknown,stale_readings,stale_soc,not_applied"
+  );
+  check(
+    "a window revert carries its window",
+    revertCause({ ...offGridNight, buySchedule: windowAt(5) }, settings, requestedAtMs)?.window?.kind === "buy"
+  );
+  check(
+    "a window comes before stale readings (a window is routine even with the link down)",
+    kindOf({ ...offGridNight, buySchedule: windowAt(5), inverterReadingAgeMs: 90_000 }) === "window"
+  );
+}
 check(
   "151 not read back yet 30 s after the request: keep waiting",
   revertReason({ ...offGridNight, readbackModel: "050" }, settings, NOW_MS - 30_000) === undefined

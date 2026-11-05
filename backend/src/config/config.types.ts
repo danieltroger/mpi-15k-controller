@@ -138,8 +138,9 @@ export type AutomaticTradingConfig = {
   /** …and stays out while the coldest battery probe is at or below this (never below the freezing P1 + 1 °C) */
   hold_min_battery_temp_celsius: number;
   /**
-   * With grid_off.auto_enabled, how much less the inverter draws in a quarter the plan models off the grid
-   * (simulate.ts, simulateGridOff.ts). Bounds in plannerKnobBounds.ts, clamped.
+   * With grid_off.auto_enabled, how much less the battery drains in a quarter the plan models off the grid: the
+   * whole battery-side difference, the night feed's drain kept (simulate.ts, simulateGridOff.ts). Bounds in
+   * plannerKnobBounds.ts, clamped.
    */
   grid_off_saving_watts: number;
   /**

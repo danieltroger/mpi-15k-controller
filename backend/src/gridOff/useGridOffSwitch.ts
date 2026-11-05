@@ -23,16 +23,19 @@ import type { GridOffEvent, GridOffStatus } from "./gridOff.types.ts";
 import { holdGridOffThroughShutdown } from "./gridOffShutdown.ts";
 import {
   correctedGridOffSettings,
-  currentOffGridRefusal,
-  evaluateGuards,
   type GridOffContext,
   isLoggedSettingsQuery,
   type MachineModelReadback,
-  queueMachineModel,
   recordMachineModelReadback,
+  type RequestedModel,
+} from "./gridOffContext.ts";
+import {
+  currentOffGridRefusal,
+  evaluateGuards,
+  queueMachineModel,
   requestNormal,
   requestOffGrid,
-  type RequestedModel,
+  type SwitchBackOutcome,
 } from "./gridOffActions.ts";
 
 /** How often the time-based guards (SOC, windows, staleness, the confirm deadline, stuck) are re-judged */
@@ -41,13 +44,14 @@ const GUARD_TICK_INTERVAL_MS = 10_000;
 export function useGridOffSwitch({ config, raise }: { config: Accessor<Config>; raise: AlertManager["raise"] }) {
   const { queueSetter, lastDecodedRound } = useInverterComms();
   const { mqttValues } = useFromMqttProvider();
-  const { clampedSocAh } = useBatteryValuesProvider();
+  const { clampedSocAh, batteryCurrentAmps } = useBatteryValuesProvider();
   return createGridOffSwitch({
     config,
     queueSetter,
     lastDecodedRound,
     mqttValues,
     soc: clampedSocAh,
+    socSampleAtMs: () => batteryCurrentAmps()?.time,
     raise,
     wallClockNowMs: () => Date.now(),
   });
@@ -63,13 +67,15 @@ export type GridOffEnvironment = {
   mqttValues: GridOffContext["mqttValues"];
   /** THE SOC (clampedSocAh) */
   soc: Accessor<number | undefined>;
+  /** Wall-clock ms of the latest hall sensor 2 sample (batteryCurrentAmps().time): the SOC's input is fresh */
+  socSampleAtMs: Accessor<number | undefined>;
   raise: AlertManager["raise"];
   /** Date.now() in production */
   wallClockNowMs: () => number;
 };
 
 export function createGridOffSwitch(environment: GridOffEnvironment) {
-  const { config, queueSetter, lastDecodedRound, mqttValues, soc, raise, wallClockNowMs } = environment;
+  const { config, queueSetter, lastDecodedRound, mqttValues, soc, socSampleAtMs, raise, wallClockNowMs } = environment;
   // Never persisted: every controller start wants 050, which is what makes a 151 at startup switch back
   const [requested, setRequested] = createSignal<RequestedModel>({ model: NORMAL_HYBRID_MODEL, atMs: undefined });
   const [readback, setReadback] = createSignal<MachineModelReadback | undefined>(undefined);
@@ -84,6 +90,7 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     queueSetter,
     mqttValues,
     soc,
+    socSampleAtMs,
     raise,
     wallClockNowMs,
     requested,
@@ -175,15 +182,16 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
      */
     requestOffGrid: async () => requestOffGrid(context, { by: "page" }),
     /** The page's "back to normal" (DM050): always allowed while automatic grid-off is off */
-    requestNormal: async () => requestNormal(context, { by: "page" }),
+    requestNormal: async () => requestNormal(context, { by: "page" }, "routine"),
     /** Why a request for 151 would be refused right now (switchOffGridRefusal); undefined = it would go out */
     offGridRefusal: () => currentOffGridRefusal(context),
-    /** Switches to 151 NAKed or never read back since the last one that applied */
+    /** Switches to 151 that didn't hold since the last routine switch back (automatic grid-off's back-off) */
     offGridFailures: () => context.offGridFailures,
     /** Automatic grid-off's DM151, the page's path with its preconditions (it checks offGridRefusal first) */
     switchOffGridAutomatically: (reason: string) => void requestOffGrid(context, { by: "auto", reason }),
-    /** Automatic grid-off's DM050 (also when it is turned off with the grid off) */
-    switchBackAutomatically: (reason: string) => void requestNormal(context, { by: "auto", reason }),
+    /** Automatic grid-off's DM050 (also when it is turned off with the grid off); "failed" counts towards its back-off */
+    switchBackAutomatically: (reason: string, outcome: SwitchBackOutcome) =>
+      void requestNormal(context, { by: "auto", reason }, outcome),
   };
 }
 

@@ -12,7 +12,7 @@ import type { EnergyDistributionStatus } from "../energyDistribution/energyDistr
 import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { NORMAL_HYBRID_MODEL, OFF_GRID_III_MODEL } from "../inverterComms/machineModel.ts";
 import { errorLog, logLog } from "../utilities/logging.ts";
-import { correctedGridOffSettings } from "./gridOffActions.ts";
+import { correctedGridOffSettings } from "./gridOffContext.ts";
 import { scheduledWindows } from "./gridOffDecisions.ts";
 import {
   type AutoGridOffDecision,
@@ -111,6 +111,7 @@ export function createAutoGridOff(environment: AutoGridOffEnvironment) {
     reason_kind: decision()?.kind,
     reason: decision()?.reason,
     next_switch: nextSwitch(),
+    settings: settings(),
   }));
   return { status };
 }
@@ -153,7 +154,9 @@ function evaluateAutoGridOff(context: AutoGridOffContext): void {
   if (decision.model === OFF_GRID_III_MODEL && !offGridRequested) {
     askSwitch(() => gridOffSwitch.switchOffGridAutomatically(decision.reason), "DM151");
   } else if (decision.model === NORMAL_HYBRID_MODEL && offGridRequested) {
-    askSwitch(() => gridOffSwitch.switchBackAutomatically(decision.reason), "DM050");
+    // An unknown SOC means the 151 didn't hold (the guard counts it the same when it is first); the rest are routine
+    const outcome = decision.kind === "soc_unknown" ? "failed" : "routine";
+    askSwitch(() => gridOffSwitch.switchBackAutomatically(decision.reason, outcome), "DM050");
   }
 }
 
@@ -164,7 +167,10 @@ function handBackOnDisable(context: AutoGridOffContext): void {
     return;
   }
   logLog("Auto grid-off: turned off (grid_off.auto_enabled false) with the grid off — back to normal (050)");
-  askSwitch(() => context.gridOffSwitch.switchBackAutomatically("automatic grid-off was turned off"), "DM050");
+  askSwitch(
+    () => context.gridOffSwitch.switchBackAutomatically("automatic grid-off was turned off", "routine"),
+    "DM050"
+  );
 }
 
 /**

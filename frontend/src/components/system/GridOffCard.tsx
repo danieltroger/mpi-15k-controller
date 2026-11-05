@@ -53,7 +53,8 @@ export function GridOffCard() {
         {status => <GridOffRows status={status()} nowMs={now()} />}
       </Show>
       <Show when={autoGridOff()}>{status => <AutoGridOffRows status={status()} nowMs={now()} />}</Show>
-      <Show when={config()?.grid_off}>
+      {/* As the backend uses them: corrected to their bounds (an older backend sends the raw config only) */}
+      <Show when={autoGridOff()?.settings ?? config()?.grid_off}>
         {gridOffConfig => <p class="diag__reason">{describeGuards(gridOffConfig())}</p>}
       </Show>
 
@@ -191,7 +192,7 @@ function confirmationQuestion(model: MachineModelCode): string {
 }
 
 function describeGuards(settings: GridOffConfig): string {
-  const guards = `Switches back to 050 by itself below ${settings.min_soc_percent} % SOC, ${settings.reconnect_before_window_minutes} min before a buy or sell window, on stale inverter readings and on a controller stop. Switching off needs ${settings.min_soc_percent + settings.switch_on_soc_margin_percent} % SOC, no window within ${settings.reconnect_before_window_minutes} min and ${settings.min_seconds_between_switches} s since the last switch.`;
+  const guards = `Switches back to 050 by itself below ${settings.min_soc_percent} % SOC, ${settings.reconnect_before_window_minutes} min before a buy or sell window, on stale inverter or battery-current (SOC) readings and on a controller stop. Switching off needs ${settings.min_soc_percent + settings.switch_on_soc_margin_percent} % SOC, no window within ${settings.reconnect_before_window_minutes} min and ${settings.min_seconds_between_switches} s since the last switch.`;
   if (!settings.auto_enabled) return guards;
   return `${guards} Automatically it also goes back on the grid at ${settings.auto_full_soc_percent} % so the PV can export, and off again only below ${settings.auto_resume_soc_percent} %, with at least ${settings.auto_min_off_minutes} min before the next window's reconnect, and once the inverter's energy settings match.`;
 }

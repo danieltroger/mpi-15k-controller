@@ -41,6 +41,7 @@ const AUTO_ON: Config = { ...default_config, grid_off: { ...default_config.grid_
 type Harness = ReturnType<typeof startHarness>;
 
 function startHarness(initialConfig: Config) {
+  // readingsAtMs: GS/PS and hall sensor 2 alike
   const clock = { nowMs: START_MS, readingsAtMs: START_MS };
   const [config, setConfig] = createSignal<Config>(initialConfig);
   const [lastDecodedRound, setLastDecodedRound] = createSignal<DecodedRound | undefined>(undefined);
@@ -70,6 +71,7 @@ function startHarness(initialConfig: Config) {
       lastDecodedRound,
       mqttValues,
       soc,
+      socSampleAtMs: () => clock.readingsAtMs,
       raise,
       wallClockNowMs: () => clock.nowMs,
     });
@@ -344,6 +346,93 @@ function divergingStatus(): EnergyDistributionStatus {
   for (let step = 0; step < 5; step++) advance(harness, 10 * MINUTE_MS);
   check("…and nothing after it", harness.queued.length === beforeDisable + 1, commands(harness).join(","));
   check("the page's buttons work again", (await refusalOf(harness.gridOffSwitch.requestOffGrid)) === undefined);
+  harness.dispose();
+}
+
+// ---------- a link that keeps dropping: the reverts back off 5, 15, 60 min; a routine switch back clears them ----------
+{
+  const harness = startHarness(withSchedule(AUTO_ON, {}));
+  harness.readBack("050");
+  const dropLink = () => {
+    harness.readBack("151");
+    advance(harness, MINUTE_MS);
+    harness.clock.readingsAtMs = harness.clock.nowMs - 61_000;
+    evaluateNow(harness);
+    harness.clock.readingsAtMs = harness.clock.nowMs;
+    harness.readBack("050");
+  };
+  const retriesAfterMinutes: number[] = [];
+  for (let drop = 0; drop < 4; drop++) {
+    dropLink();
+    const sentBefore = commands(harness).filter(command => command === "DM151").length;
+    let waitedMinutes = 0;
+    while (commands(harness).filter(command => command === "DM151").length === sentBefore && waitedMinutes < 90) {
+      advance(harness, MINUTE_MS);
+      waitedMinutes++;
+    }
+    retriesAfterMinutes.push(waitedMinutes);
+  }
+  check(
+    "stale readings revert each 151; the retries come 5, 15, 60, 60 min later",
+    retriesAfterMinutes.join(",") === "5,15,60,60",
+    retriesAfterMinutes.join(",")
+  );
+  check(
+    "…said as a reverted switch while waiting",
+    autoLogLines.some(line => line.includes("the last switch to 151 was reverted; the next try is at"))
+  );
+  harness.readBack("151");
+  advance(harness, MINUTE_MS);
+  harness.setConfig(withSchedule(AUTO_ON, buyWindow(harness, 5, 15)));
+  check("a window: the routine reconnect", commands(harness).at(-1) === "DM050");
+  check("…clears the count", harness.gridOffSwitch.offGridFailures().count === 0);
+  harness.readBack("050");
+  for (let step = 0; step < 21; step++) advance(harness, MINUTE_MS);
+  check("…so the 151 after the window goes at once", commands(harness).at(-1) === "DM151", commands(harness).join(","));
+  harness.dispose();
+}
+
+// ---------- the reconnect before a window reads the same whichever 10 s timer is first ----------
+{
+  const reconnectEvent = (firstTimer: "guard" | "auto") => {
+    const harness = startHarness(withSchedule(AUTO_ON, {}));
+    harness.readBack("050");
+    harness.readBack("151");
+    harness.setConfig(withSchedule(AUTO_ON, buyWindow(harness, 11, 30)));
+    harness.clock.nowMs += 2 * MINUTE_MS;
+    harness.clock.readingsAtMs = harness.clock.nowMs;
+    // A SOC sample runs the switch's guards first (created first); a status only automatic grid-off reads runs it alone
+    if (firstTimer === "guard") harness.setSoc(60.000001);
+    else harness.setEnergyStatus({ ...divergingStatus(), profile_name: "off_grid_iii", divergence: undefined });
+    const event = harness.gridOffSwitch.status().last_event?.what;
+    harness.dispose();
+    return event;
+  };
+  const byGuard = reconnectEvent("guard");
+  const byAuto = reconnectEvent("auto");
+  check(
+    "the guard first or automatic grid-off first: the same automatic request, in the same words",
+    byGuard !== undefined &&
+      byGuard === byAuto &&
+      byGuard.startsWith("050 requested automatically: a buy window at") &&
+      byGuard.includes("starts within 10 min"),
+    `${byGuard} | ${byAuto}`
+  );
+}
+
+// ---------- the status carries the corrected thresholds ----------
+{
+  const inverted = {
+    ...AUTO_ON,
+    grid_off: { ...AUTO_ON.grid_off, auto_full_soc_percent: 92, auto_resume_soc_percent: 95 },
+  };
+  const harness = startHarness(withSchedule(inverted, {}));
+  const shown = harness.auto.status().settings;
+  check(
+    "a resume at or above full is shown as the switch uses it (91 %)",
+    shown.auto_full_soc_percent === 92 && shown.auto_resume_soc_percent === 91,
+    JSON.stringify(shown)
+  );
   harness.dispose();
 }
 

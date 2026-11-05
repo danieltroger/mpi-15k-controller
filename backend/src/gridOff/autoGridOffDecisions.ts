@@ -10,7 +10,8 @@
  *   as it stands, no SOC prediction);
  * - the energy-distribution enforcement is still restoring the 050 profile (a DM change resets HECS, and
  *   switching again before it lands compounds the reset);
- * - a switch-off that failed (NAK, or never read back) holds the retries back;
+ * - a switch-off that didn't hold (NAKed, never read back, reverted for stale readings or an unknown SOC)
+ *   holds the retries back;
  * - and whatever else the switch would refuse 151 for (DM readback, stale readings, the rate limit).
  * Off the grid, only the window, full, low and unknown-SOC rules switch back; the switch's guards do the rest.
  * The wiring is useAutoGridOff.ts.
@@ -23,14 +24,15 @@ import type { AutoGridOffNextSwitch, AutoGridOffReasonKind } from "./gridOff.typ
 import type { MachineModelCode } from "../inverterComms/pi17Protocol.types.ts";
 
 /**
- * After a switch-off that failed, automatic grid-off waits this long before the next try: 5 min after the
- * first failure, 15 after the second, then hourly until one applies. Each try is a settings write, and a
- * firmware that refuses 151 would otherwise take one every min_seconds_between_switches. A guard (EEPROM
- * wear), not a knob.
+ * After a switch-off that didn't hold, automatic grid-off waits this long before the next try: 5 min after the
+ * first, 15 after the second, then hourly until a routine switch back (a window, the battery) clears the count.
+ * Each try is a settings write and, back on 050, the HECS restore's: a firmware that refuses 151, or a link that
+ * drops every few minutes, would otherwise take them every min_seconds_between_switches. A guard (EEPROM wear),
+ * not a knob.
  */
 export const AUTO_SWITCH_OFF_RETRY_INTERVALS_MS: readonly number[] = [5 * 60_000, 15 * 60_000, 60 * 60_000];
 
-/** Switches to 151 that failed since the last one that applied (the switch counts them, gridOffActions.ts) */
+/** Switches to 151 that didn't hold since the last routine switch back (the switch counts them, gridOffActions.ts) */
 export type OffGridFailures = { count: number; lastAtMs: number | undefined };
 
 export const NO_OFF_GRID_FAILURES: OffGridFailures = { count: 0, lastAtMs: undefined };
@@ -47,7 +49,7 @@ export type AutoGridOffSituation = {
   switchRefusal: string | undefined;
   /** The energy-distribution enforcement has an open divergence episode on the 050 profile */
   energySettingsRestoring: boolean;
-  /** Until when a failed switch-off holds the next try back (autoRetryBlockedUntilMs); undefined = no hold */
+  /** Until when a switch-off that didn't hold holds the next try back (autoRetryBlockedUntilMs); undefined = no hold */
   retryBlockedUntilMs: number | undefined;
 };
 
@@ -97,7 +99,7 @@ export function autoGridOffDecision(situation: AutoGridOffSituation, settings: G
   if (situation.retryBlockedUntilMs !== undefined && nowMs < situation.retryBlockedUntilMs) {
     return onGrid(
       "retry_backoff",
-      `the last switch to 151 failed; the next try is at ${formatStockholmTime(situation.retryBlockedUntilMs, nowMs)}`
+      `the last switch to 151 was reverted; the next try is at ${formatStockholmTime(situation.retryBlockedUntilMs, nowMs)}`
     );
   }
   if (situation.switchRefusal) return onGrid("switch_refused", situation.switchRefusal);
@@ -135,7 +137,11 @@ export function expectedNextSwitch(
     return { model: OFF_GRID_III_MODEL, at: opportunity.atMs, why: `${after}, if the battery allows` };
   }
   if (decision.kind === "retry_backoff" && situation.retryBlockedUntilMs !== undefined) {
-    return { model: OFF_GRID_III_MODEL, at: situation.retryBlockedUntilMs, why: "the next try after a failed switch" };
+    return {
+      model: OFF_GRID_III_MODEL,
+      at: situation.retryBlockedUntilMs,
+      why: "the next try after a reverted switch",
+    };
   }
   return undefined;
 }
@@ -166,7 +172,7 @@ export function nextOffGridOpportunity(
   });
 }
 
-/** How long before a failed switch-off may be tried again, or undefined when nothing failed */
+/** Until when the next switch-off waits after ones that didn't hold, or undefined when none since the last routine switch back */
 export function autoRetryBlockedUntilMs(failures: OffGridFailures): number | undefined {
   if (failures.count === 0 || failures.lastAtMs === undefined) return undefined;
   const intervalIndex = Math.min(failures.count - 1, AUTO_SWITCH_OFF_RETRY_INTERVALS_MS.length - 1);
@@ -184,7 +190,11 @@ function shortStretchReason(situation: AutoGridOffSituation, settings: GridOffCo
   return `only ${Math.floor(stretchMinutes)} min off the grid before the reconnect for the ${nextWindow.kind} window at ${windowAt} (auto_min_off_minutes ${settings.auto_min_off_minutes})`;
 }
 
-function describeWindowConflict(window: ScheduledWindow, nowMs: number, settings: GridOffConfig): string {
+/**
+ * A window active or within the lead, in local time: the reason automatic grid-off gives, and the guard too when
+ * it makes that routine reconnect first while automatic grid-off is on (gridOffActions.ts)
+ */
+export function describeWindowConflict(window: ScheduledWindow, nowMs: number, settings: GridOffConfig): string {
   const startAt = formatStockholmTime(window.startMs, nowMs);
   if (window.startMs <= nowMs) {
     return `a ${window.kind} window is on (${startAt} → ${formatStockholmTime(window.endMs, nowMs)})`;

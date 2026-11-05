@@ -38,6 +38,11 @@ export type GridOffSituation = {
   nowMs: number;
   /** THE SOC (the Ah ledger, clamped); undefined = unknown */
   soc: number | undefined;
+  /**
+   * Age of the latest hall sensor 2 sample, the current the SOC integrates; undefined = none yet. The SOC never
+   * goes unknown when the samples stop: it keeps moving by the drain term alone, so this is what says it's stale
+   */
+  socReadingAgeMs: number | undefined;
   /** Age of the older of the GS and PS readings the switch judges; undefined = not read yet */
   inverterReadingAgeMs: number | undefined;
   /** The DM readback, verbatim; undefined = not read yet */
@@ -46,7 +51,7 @@ export type GridOffSituation = {
   readbackAgeMs: number | undefined;
   /** The oldest DM readback a switch to 151 may rely on (machineModelReadbackMaxAgeMs) */
   readbackMaxAgeMs: number;
-  /** The latest switch either way (page or guard); undefined = none since the start */
+  /** The latest switch either way (page, automatic, guard or startup fail-safe); undefined = none since the start */
   lastSwitchAtMs: number | undefined;
   sellSchedule: ScheduleWindows;
   buySchedule: ScheduleWindows;
@@ -84,6 +89,8 @@ export function switchOffGridRefusal(situation: GridOffSituation, settings: Grid
   }
   const staleness = inverterReadingsStaleness(situation.inverterReadingAgeMs);
   if (staleness) return staleness;
+  const socStaleness = socReadingStaleness(situation.socReadingAgeMs);
+  if (socStaleness) return socStaleness;
   const minimumSoc = settings.min_soc_percent + settings.switch_on_soc_margin_percent;
   if (situation.soc === undefined) return "the SOC is unknown";
   if (situation.soc < minimumSoc) {
@@ -101,19 +108,66 @@ export function revertReason(
   settings: GridOffConfig,
   requestedAtMs: number
 ): string | undefined {
-  if (situation.soc === undefined) return "the SOC became unknown";
+  return revertCause(situation, settings, requestedAtMs)?.reason;
+}
+
+/** What made the guard switch back: a window or the floor are routine, the rest mean the 151 didn't hold */
+export type RevertCauseKind = "soc_unknown" | "soc_low" | "window" | "stale_readings" | "stale_soc" | "not_applied";
+
+export type RevertCause = {
+  kind: RevertCauseKind;
+  reason: string;
+  /** The window that is active or within the lead, for kind "window" */
+  window: ScheduledWindow | undefined;
+};
+
+/**
+ * The causes after which the 151 didn't hold: automatic grid-off backs off its next try for them
+ * (autoGridOffDecisions.ts), so a link or a sensor dropping every few minutes can't cycle the relay. A window
+ * and the SOC floor aren't: either 10 s timer may make those first, the guard's or automatic grid-off's.
+ */
+export const FAILED_SWITCH_REVERT_KINDS: ReadonlySet<RevertCauseKind> = new Set([
+  "soc_unknown",
+  "stale_readings",
+  "stale_soc",
+  "not_applied",
+]);
+
+/** revertReason, with which rule made it */
+export function revertCause(
+  situation: GridOffSituation,
+  settings: GridOffConfig,
+  requestedAtMs: number
+): RevertCause | undefined {
+  if (situation.soc === undefined) return cause("soc_unknown", "the SOC became unknown");
   if (situation.soc < settings.min_soc_percent) {
-    return `SOC ${situation.soc.toFixed(1)} % fell below grid_off.min_soc_percent ${settings.min_soc_percent} %`;
+    return cause(
+      "soc_low",
+      `SOC ${situation.soc.toFixed(1)} % fell below grid_off.min_soc_percent ${settings.min_soc_percent} %`
+    );
   }
-  const conflict = windowConflict(situation, settings);
-  if (conflict) return conflict;
+  const window = conflictingWindow(
+    scheduledWindows(situation.sellSchedule, situation.buySchedule, situation.nowMs),
+    situation.nowMs,
+    settings.reconnect_before_window_minutes * 60_000
+  );
+  if (window) return { kind: "window", reason: describeGuardWindowConflict(window, situation, settings), window };
   const staleness = inverterReadingsStaleness(situation.inverterReadingAgeMs);
-  if (staleness) return staleness;
+  if (staleness) return cause("stale_readings", staleness);
+  const socStaleness = socReadingStaleness(situation.socReadingAgeMs);
+  if (socStaleness) return cause("stale_soc", socStaleness);
   if (offGridNotApplied(situation, requestedAtMs)) {
     const sinceRequestMs = situation.nowMs - requestedAtMs;
-    return `the DM readback shows ${describeMachineModel(situation.readbackModel)} ${Math.round(sinceRequestMs / 1000)} s after 151 was requested (not applied, or changed since)`;
+    return cause(
+      "not_applied",
+      `the DM readback shows ${describeMachineModel(situation.readbackModel)} ${Math.round(sinceRequestMs / 1000)} s after 151 was requested (not applied, or changed since)`
+    );
   }
   return undefined;
+}
+
+function cause(kind: Exclude<RevertCauseKind, "window">, reason: string): RevertCause {
+  return { kind, reason, window: undefined };
 }
 
 /** While 151 is requested: the DM readback still doesn't show it past SWITCH_CONFIRM_DEADLINE_MS (or no longer does) */
@@ -211,11 +265,17 @@ export function windowConflict(situation: GridOffSituation, settings: GridOffCon
     situation.nowMs,
     settings.reconnect_before_window_minutes * 60_000
   );
-  if (!soonest) return undefined;
-  if (soonest.startMs <= situation.nowMs)
-    return `a ${soonest.kind} window is active (${soonest.start} → ${soonest.end})`;
-  const minutesAway = Math.ceil((soonest.startMs - situation.nowMs) / 60_000);
-  return `a ${soonest.kind} window starts in ${minutesAway} min (${soonest.start}), within grid_off.reconnect_before_window_minutes ${settings.reconnect_before_window_minutes}`;
+  return soonest && describeGuardWindowConflict(soonest, situation, settings);
+}
+
+function describeGuardWindowConflict(
+  window: ScheduledWindow,
+  situation: Pick<GridOffSituation, "nowMs">,
+  settings: GridOffConfig
+): string {
+  if (window.startMs <= situation.nowMs) return `a ${window.kind} window is active (${window.start} → ${window.end})`;
+  const minutesAway = Math.ceil((window.startMs - situation.nowMs) / 60_000);
+  return `a ${window.kind} window starts in ${minutesAway} min (${window.start}), within grid_off.reconnect_before_window_minutes ${settings.reconnect_before_window_minutes}`;
 }
 
 /** One buy or sell schedule entry with parseable times, under the start key it is written at */
@@ -257,6 +317,19 @@ function inverterReadingsStaleness(ageMs: number | undefined): string | undefine
   if (ageMs === undefined) return "no inverter readings (GS/PS) yet";
   if (ageMs > FRESH_INVERTER_READING_MAX_AGE_MS) {
     return `the inverter readings (GS/PS) are ${Math.round(ageMs / 1000)} s old (over ${FRESH_INVERTER_READING_MAX_AGE_MS / 1000} s)`;
+  }
+  return undefined;
+}
+
+/**
+ * Hall sensor 2 samples several times a second: a minute without one means the ADC or current measuring is
+ * down, and the SOC is then only the drain term counting down (~0.15 pp/h against ~1.2 a night off the grid
+ * really takes), so the floor would come ~10 pp late. The same guard age as GS/PS.
+ */
+function socReadingStaleness(ageMs: number | undefined): string | undefined {
+  if (ageMs === undefined) return "no battery current reading (hall sensor 2, the SOC's input) yet";
+  if (ageMs > FRESH_INVERTER_READING_MAX_AGE_MS) {
+    return `the battery current reading (hall sensor 2, the SOC's input) is ${Math.round(ageMs / 1000)} s old (over ${FRESH_INVERTER_READING_MAX_AGE_MS / 1000} s)`;
   }
   return undefined;
 }
