@@ -185,9 +185,10 @@ function check(name: string, condition: boolean, detail = "") {
     timing
   );
   check(
-    "…an open episode stays open, saying why",
-    unreadWhileOpen.episode !== undefined && unreadWhileOpen.waitingReason?.includes("lacks Solar priority") === true,
-    unreadWhileOpen.waitingReason
+    "…an open episode stays open on the fields still read differently, the unread one named in the judgement",
+    unreadWhileOpen.episode !== undefined &&
+      unreadWhileOpen.judged?.unreadFields.join(",") === "solar_energy_distribution_priority" &&
+      unreadWhileOpen.judged.divergences.length === 2
   );
   check(
     "an out-of-domain value is a real difference and is written back",
@@ -676,19 +677,19 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
   harness.dispose();
 }
 
-// A managed field missing from the HECS answer: never written, but the episode stays open, pages, and resolves
+// A managed field missing from the HECS answer: never written, tracked on its own, pages, and resolves
 {
   const harness = startHarness();
   const { feed_power_to_utility: _unreadFeed, ...withoutFeed } = LIVE_HECS;
   harness.settingsRound(withoutFeed, "050");
   const opened = harness.enforcement.status();
   check(
-    "EDC missing, the rest matching: nothing written, the card shows an open difference and why",
+    "EDC missing, the rest matching: nothing written, no divergence, the card shows the missing field",
     harness.queued.length === 0 &&
-      opened.divergence !== undefined &&
-      opened.waiting_reason?.includes("lacks Feed to the utility (EDC)") === true &&
+      opened.divergence === undefined &&
+      opened.unread_fields?.fields.join(",") === "feed_power_to_utility" &&
       opened.fields.find(field => field.field === "feed_power_to_utility")?.inverter === undefined,
-    opened.waiting_reason
+    JSON.stringify(opened.unread_fields)
   );
   for (let step = 0; step < 60; step++) {
     advance(harness, 10_000);
@@ -696,14 +697,21 @@ function withNormalHybrid(harness: Harness, changes: Partial<EnergyDistributionP
   }
   const p2s = harness.raised.filter(alert => alert.severity === "P2");
   check(
-    "…10 min of it: one P2, naming the unread field, and still nothing written",
-    p2s.length === 1 && p2s[0]?.message.includes("lacks Feed to the utility (EDC)") === true && !harness.queued.length,
+    "…10 min of it: one P2 on the missing-field key, naming the field, and still nothing written",
+    p2s.length === 1 &&
+      p2s[0]?.key.startsWith("energy-distribution-unread:") === true &&
+      p2s[0].message.includes("lacked Feed to the utility (EDC)") &&
+      harness.enforcement.status().unread_fields?.p2_raised === true &&
+      !harness.queued.length,
     p2s[0]?.message
   );
   harness.settingsRound(LIVE_HECS, "050");
+  const p3s = harness.raised.filter(alert => alert.severity === "P3");
   check(
-    "…read again as the profile: the episode ends with a P3",
-    !harness.enforcement.status().divergence && harness.raised.filter(alert => alert.severity === "P3").length === 1
+    "…read again as the profile: it resolves with its P3",
+    !harness.enforcement.status().unread_fields &&
+      p3s.length === 1 &&
+      p3s[0]?.key.startsWith("energy-distribution-unread:") === true
   );
   harness.dispose();
 }

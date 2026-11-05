@@ -29,10 +29,7 @@ export type EnergyDistributionFieldState = {
   inverter: string | undefined;
 };
 
-/**
- * A managed field differing from the profile (or missing from the readback), from the first readback that
- * showed it until one has every managed field, as the profile
- */
+/** A managed field read differently from the profile, from the first readback that showed it until one shows none */
 export type EnergyDistributionDivergenceProgress = {
   /** Wall-clock ms the divergence was first seen */
   since: number;
@@ -47,6 +44,19 @@ export type EnergyDistributionDivergenceProgress = {
   p2_raised: boolean;
 };
 
+/**
+ * Managed fields missing from the HECS answers: never written while so, the others still are. Tracked on its
+ * own, so it neither holds a divergence open nor uses up its P2
+ */
+export type EnergyDistributionUnreadProgress = {
+  /** What the latest judged readback lacked */
+  fields: EnergyDistributionField[];
+  /** Wall-clock ms a managed field was first missing */
+  since: number;
+  /** Its P2 (after inverter_energy_distribution.p2_after_minutes) went out */
+  p2_raised: boolean;
+};
+
 export type EnergyDistributionStatus = {
   /** The profile in force; undefined = no fresh DM readback of 050 or 151 (nothing is enforced then) */
   profile_name: EnergyDistributionProfileName | undefined;
@@ -56,12 +66,13 @@ export type EnergyDistributionStatus = {
   fields: EnergyDistributionFieldState[];
   /** Wall-clock ms of the latest HECS readback */
   hecs_read_at: number | undefined;
-  /** A managed field differs or isn't read; undefined = all managed fields read as the profile */
+  /** A managed field reads differently; undefined = every managed field that was read reads as the profile */
   divergence: EnergyDistributionDivergenceProgress | undefined;
+  /** A managed field is missing from the HECS answer; undefined = the latest judged readback had them all */
+  unread_fields: EnergyDistributionUnreadProgress | undefined;
   /**
    * Why nothing goes out right now although a field differs (a pending DM switch, a stale readback, the
-   * session's identical-setter gate, waiting for a change or the fallback), and which managed fields the
-   * readback lacks (also while the others are being written)
+   * session's identical-setter gate, waiting for a change or the fallback)
    */
   waiting_reason: string | undefined;
   /** The latest thing the enforcement did, and why */

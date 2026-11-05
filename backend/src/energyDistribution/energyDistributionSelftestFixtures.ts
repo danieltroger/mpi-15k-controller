@@ -1,6 +1,7 @@
 /**
  * Shared by the energy-distribution selftests: HECS as the live inverter read it on 2026-11-05, and the pure
- * decisions stepped the way the wiring steps them, against an emulated session's identical-setter gate.
+ * decisions (the divergence episode and the unread-field tracker) stepped the way the wiring steps them,
+ * against an emulated session's identical-setter gate.
  */
 import { default_config } from "../config/config.ts";
 import type { DecodedFields } from "../inverterComms/pi17Protocol.types.ts";
@@ -14,6 +15,11 @@ import {
   type EnforcementTiming,
   nextEnforcementStep,
 } from "./energyDistributionEnforcementDecisions.ts";
+import {
+  nextUnreadFieldsStep,
+  type UnreadFieldsEpisode,
+  type UnreadFieldsStep,
+} from "./energyDistributionUnreadFields.ts";
 
 /** HECS as the live inverter read it before the DM050 of 2026-11-05 */
 export const LIVE_HECS: DecodedFields = {
@@ -50,13 +56,14 @@ export const PURE_TIMING: EnforcementTiming = { p2AfterMs: 600_000, fallbackRetr
  */
 export type PureRun = {
   episode: DivergenceEpisode | undefined;
+  unreadFieldsEpisode: UnreadFieldsEpisode | undefined;
   gateOpensAtByCommand: Record<string, number>;
   /** Setters a step sent while the emulated gate still held them: must stay empty */
   queuedWhileGated: string[];
 };
 
 export function newPureRun(): PureRun {
-  return { episode: undefined, gateOpensAtByCommand: {}, queuedWhileGated: [] };
+  return { episode: undefined, unreadFieldsEpisode: undefined, gateOpensAtByCommand: {}, queuedWhileGated: [] };
 }
 
 /** One step as the wiring takes it, the session's gate answering from the run */
@@ -64,20 +71,27 @@ export function pureStep(
   run: PureRun,
   situation: EnforcementSituation,
   timing: EnforcementTiming = PURE_TIMING
-): { step: EnforcementStep; commands: string[] } {
+): { step: EnforcementStep; commands: string[]; unreadStep: UnreadFieldsStep } {
   const step = nextEnforcementStep(
     run.episode,
     { ...situation, identicalSetterGateOpensAtMs: command => run.gateOpensAtByCommand[command] },
     timing
   );
   run.episode = step.episode;
+  const unreadStep = nextUnreadFieldsStep(
+    run.unreadFieldsEpisode,
+    step.judged?.unreadFields,
+    situation.nowMs,
+    timing.p2AfterMs
+  );
+  run.unreadFieldsEpisode = unreadStep.episode;
   const commands = (step.send ?? []).map(divergence => setterForDivergence(divergence).command);
   for (const command of commands) {
     const gateOpensAtMs = run.gateOpensAtByCommand[command];
     if (gateOpensAtMs !== undefined && situation.monotonicNowMs < gateOpensAtMs) run.queuedWhileGated.push(command);
     run.gateOpensAtByCommand[command] = situation.monotonicNowMs + IDENTICAL_SETTER_MIN_INTERVAL_MS;
   }
-  return { step, commands };
+  return { step, commands, unreadStep };
 }
 
 /**

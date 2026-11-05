@@ -364,13 +364,23 @@ async function sendQueuedSetter(state: SessionState, command: string): Promise<v
   if (!item) errorLog("Inverter session: no queued item for scheduled setter", command, "— sending without callbacks");
   state.queuedSetterItems.delete(command);
   state.scheduler = withSetterDequeued(state.scheduler, command);
-  const description = `setter ${command}`;
   state.setterOnTheWire = command;
-  const result = await state.serialExchange
-    .exchange(buildSetterFrame(command), { kind: "setter" }, description)
-    .finally(() => {
-      state.setterOnTheWire = undefined;
-    });
+  try {
+    await exchangeAndRecordSetter(state, command, item);
+  } finally {
+    // Only once the scheduler has recorded the send (or there was none): until then its gate is the previous send's
+    state.setterOnTheWire = undefined;
+  }
+}
+
+/** The exchange, then the send recorded in the scheduler and the consumer told */
+async function exchangeAndRecordSetter(
+  state: SessionState,
+  command: string,
+  item: SetterQueueItem | undefined
+): Promise<void> {
+  const description = `setter ${command}`;
+  const result = await state.serialExchange.exchange(buildSetterFrame(command), { kind: "setter" }, description);
   if ("closed" in result || state.disposed) return;
   const sentAt = performance.now();
   state.setLastWriteAt(Date.now());

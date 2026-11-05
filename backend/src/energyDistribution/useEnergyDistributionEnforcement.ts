@@ -8,9 +8,10 @@
  * episode) and otherwise every ENFORCEMENT_FALLBACK_RETRY_MS, with one P2 per divergence episode after
  * p2_after_minutes. Nothing is written while the DM readback is unknown or stale, while a DM switch is in
  * flight, nor queued where the session's identical-setter gate would hold it (the session's own gate time,
- * on its monotonic clock); a managed field the HECS answer lacks is never written, and keeps the episode
- * open. AC charge (EDB) and battery feed to the grid (EDF/EDG) stay with buying and feeding. Decisions, and
- * the one corner the gate check leaves open: energyDistributionEnforcementDecisions.ts.
+ * on its monotonic clock); a managed field the HECS answer lacks is never written, and pages on its own
+ * (energyDistributionUnreadFields.ts). AC charge (EDB) and battery feed to the grid (EDF/EDG) stay with
+ * buying and feeding. Decisions, and the corners the gate check leaves open:
+ * energyDistributionEnforcementDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, type Setter, untrack } from "solid-js";
 import type { Config, InverterEnergyDistributionConfig } from "../config/config.types.ts";
@@ -20,26 +21,18 @@ import type { AlertManager } from "../alerting/alertManager.ts";
 import { useInverterComms } from "../inverterComms/InverterCommsProvider.ts";
 import { SETTINGS_READBACK_REQUEST_LIFETIME_MS } from "../inverterComms/schedulerTiming.ts";
 import { machineModelReadbackMaxAgeMs } from "../gridOff/gridOffDecisions.ts";
-import { isWhitelistedMachineModel } from "../inverterComms/machineModel.ts";
 import { errorLog, logLog, warnLog } from "../utilities/logging.ts";
 import type {
   EnergyDistributionFieldDivergence,
   EnergyDistributionProfileName,
   EnergyDistributionStatus,
 } from "./energyDistribution.types.ts";
-import {
-  describeDivergences,
-  ENERGY_DISTRIBUTION_FIELD_LABELS,
-  ENERGY_DISTRIBUTION_FIELDS,
-  PROFILE_BY_MACHINE_MODEL,
-  setterForDivergence,
-} from "./energyDistributionProfile.ts";
+import { describeDivergences, setterForDivergence } from "./energyDistributionProfile.ts";
 import { effectiveEnergyDistributionSettings } from "./energyDistributionSettings.ts";
 import {
   type DivergenceEpisode,
   CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   ENFORCEMENT_FALLBACK_RETRY_MS,
-  type EnforcementJudgement,
   type EnforcementSituation,
   type EnforcementStep,
   type EnforcementTiming,
@@ -47,7 +40,13 @@ import {
   type MachineModelReading,
   nextEnforcementStep,
 } from "./energyDistributionEnforcementDecisions.ts";
-import { raiseDivergenceLandedAfterP2, raiseDivergenceNotLanded } from "./energyDistributionAlert.ts";
+import {
+  raiseDivergenceLandedAfterP2,
+  raiseDivergenceNotLanded,
+  reportUnreadFieldsStep,
+} from "./energyDistributionAlert.ts";
+import { nextUnreadFieldsStep, type UnreadFieldsEpisode } from "./energyDistributionUnreadFields.ts";
+import { energyDistributionStatus } from "./energyDistributionStatus.ts";
 
 /** How often the time-based parts (the fallback retry, the P2, readback staleness) are re-judged */
 const ENFORCEMENT_TICK_INTERVAL_MS = 10_000;
@@ -116,6 +115,7 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
   const [machineModel, setMachineModel] = createSignal<MachineModelReading | undefined>(undefined);
   const [hecs, setHecs] = createSignal<HecsReading | undefined>(undefined);
   const [episode, setEpisode] = createSignal<DivergenceEpisode | undefined>(undefined);
+  const [unreadFieldsEpisode, setUnreadFieldsEpisode] = createSignal<UnreadFieldsEpisode | undefined>(undefined);
   // Primitives, so the status (and the ws) only moves when they do
   const [waitingReason, setWaitingReason] = createSignal<string | undefined>(undefined);
   const [judgedProfileName, setJudgedProfileName] = createSignal<EnergyDistributionProfileName | undefined>(undefined);
@@ -128,6 +128,8 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
     hecs,
     episode,
     setEpisode,
+    unreadFieldsEpisode,
+    setUnreadFieldsEpisode,
     setWaitingReason,
     setJudgedProfileName,
     setLastEvent,
@@ -173,36 +175,18 @@ export function createEnergyDistributionEnforcement(environment: EnergyDistribut
   }, ENFORCEMENT_TICK_INTERVAL_MS);
   onCleanup(() => clearInterval(tickTimer));
 
-  const status = createMemo<EnergyDistributionStatus>(() => {
-    const model = machineModel();
-    const latestHecs = hecs();
-    const runningEpisode = episode();
-    const profileName: EnergyDistributionProfileName | undefined =
-      judgedProfileName() ??
-      (model && isWhitelistedMachineModel(model.model) ? PROFILE_BY_MACHINE_MODEL[model.model] : undefined);
-    const shownProfile = settings()[profileName ?? "normal_hybrid"];
-    return {
-      profile_name: profileName,
-      machine_model: model?.model,
-      fields: ENERGY_DISTRIBUTION_FIELDS.map(field => {
-        const inverterValue = latestHecs?.fields[field];
-        return {
-          field,
-          desired: shownProfile[field],
-          inverter: inverterValue === undefined ? undefined : String(inverterValue),
-        };
-      }),
-      hecs_read_at: latestHecs?.decodedAtMs,
-      divergence: runningEpisode && {
-        since: runningEpisode.onsetMs,
-        send_rounds: runningEpisode.sendRounds,
-        p2_raised: runningEpisode.p2Raised,
-        fallback_only: runningEpisode.changeTriggeredRetries >= CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
-      },
-      waiting_reason: waitingReason(),
-      last_event: lastEvent(),
-    };
-  });
+  const status = createMemo<EnergyDistributionStatus>(() =>
+    energyDistributionStatus({
+      machineModel: machineModel(),
+      hecs: hecs(),
+      episode: episode(),
+      unreadFieldsEpisode: unreadFieldsEpisode(),
+      judgedProfileName: judgedProfileName(),
+      settings: settings(),
+      waitingReason: waitingReason(),
+      lastEvent: lastEvent(),
+    })
+  );
 
   return { status };
 }
@@ -214,6 +198,8 @@ type EnforcementContext = EnergyDistributionEnvironment & {
   hecs: Accessor<HecsReading | undefined>;
   episode: Accessor<DivergenceEpisode | undefined>;
   setEpisode: Setter<DivergenceEpisode | undefined>;
+  unreadFieldsEpisode: Accessor<UnreadFieldsEpisode | undefined>;
+  setUnreadFieldsEpisode: Setter<UnreadFieldsEpisode | undefined>;
   setWaitingReason: Setter<string | undefined>;
   setJudgedProfileName: Setter<EnergyDistributionProfileName | undefined>;
   setLastEvent: Setter<EnergyDistributionStatus["last_event"]>;
@@ -253,16 +239,21 @@ function evaluateEnforcement(context: EnforcementContext): void {
   context.setJudgedProfileName(step.judged?.profileName);
   const profileName = step.judged?.profileName;
   if (step.started && step.judged) {
-    const profile = describeProfile(step.judged.profileName);
     warnLog(
-      step.judged.divergences.length
-        ? `Energy distribution: the inverter differs from the ${profile} profile: ${describeJudgement(step.judged)} — writing it`
-        : `Energy distribution: the HECS readback lacks fields the ${profile} profile manages (${describeJudgement(step.judged)}) — not judged until they're read, a P2 if that takes p2_after_minutes`
+      `Energy distribution: the inverter differs from the ${describeProfile(step.judged.profileName)} profile: ${describeDivergences(step.judged.divergences)} — writing it`
     );
   }
   if (step.raiseP2 && step.episode) pageDivergence(context, step, step.episode, nowMs);
   if (step.send && step.episode) queueSetters(context, step.send, step.episode.sendRounds, profileName);
-  if (step.landed) finishEpisode(context, step.landed, profileName, nowMs);
+  if (step.landed) finishEpisode(context, step, step.landed, nowMs);
+  const unreadStep = nextUnreadFieldsStep(
+    untrack(context.unreadFieldsEpisode),
+    step.judged?.unreadFields,
+    nowMs,
+    timing.p2AfterMs
+  );
+  context.setUnreadFieldsEpisode(unreadStep.episode);
+  reportUnreadFieldsStep(context.raise, unreadStep, nowMs);
 }
 
 function queueSetters(
@@ -304,24 +295,25 @@ function pageDivergence(
   nowMs: number
 ): void {
   warnLog(
-    `Energy distribution: still differing ${Math.round((nowMs - episode.onsetMs) / 1000)} s after it was first seen (${step.judged ? describeJudgement(step.judged) : step.waitingReason}); paging P2`
+    `Energy distribution: still differing ${Math.round((nowMs - episode.onsetMs) / 1000)} s after it was first seen (${step.judged ? describeDivergences(step.judged.divergences) : step.waitingReason}); paging P2`
   );
   recordEvent(context, "Still differing: P2 sent");
   raiseDivergenceNotLanded(context.raise, {
     episodeOnsetMs: episode.onsetMs,
     nowMs,
     sendRounds: episode.sendRounds,
-    judged: step.judged,
+    divergences: step.judged?.divergences,
     waitingReason: step.waitingReason,
   });
 }
 
 function finishEpisode(
   context: EnforcementContext,
+  step: EnforcementStep,
   episode: DivergenceEpisode,
-  profileName: EnergyDistributionProfileName | undefined,
   nowMs: number
 ): void {
+  const profileName = step.judged?.profileName;
   const profile = profileName ? describeProfile(profileName) : "current";
   const elapsedSeconds = Math.round((nowMs - episode.onsetMs) / 1000);
   logLog(
@@ -333,7 +325,13 @@ function finishEpisode(
     context,
     episode.sendRounds ? "Settings enforced: the readback matches the config" : "Matches the config"
   );
-  if (episode.p2Raised) raiseDivergenceLandedAfterP2(context.raise, { episodeOnsetMs: episode.onsetMs, nowMs });
+  if (episode.p2Raised) {
+    raiseDivergenceLandedAfterP2(context.raise, {
+      episodeOnsetMs: episode.onsetMs,
+      nowMs,
+      unreadFields: step.judged?.unreadFields ?? [],
+    });
+  }
 }
 
 /** Judged on the enforcement's own DM reading, so the two can't disagree within one update */
@@ -351,15 +349,6 @@ function requestHecsReadback(context: EnforcementContext, why: string): void {
   context.lastReadbackRequestAtMs = nowMs;
   logLog(`Energy distribution: ${why} — reading HECS again`);
   context.requestSettingsReadback("HECS");
-}
-
-/** "Solar priority (SEP) Battery-Load-Grid → Load-Battery-Grid; not read: Feed to the utility (EDC)" */
-function describeJudgement(judged: EnforcementJudgement): string {
-  const unread = judged.unreadFields.length
-    ? `not read: ${judged.unreadFields.map(field => ENERGY_DISTRIBUTION_FIELD_LABELS[field]).join(", ")}`
-    : undefined;
-  if (!judged.divergences.length) return unread ?? "none";
-  return [describeDivergences(judged.divergences), unread].filter(part => part !== undefined).join("; ");
 }
 
 function describeProfile(profileName: EnergyDistributionProfileName): string {

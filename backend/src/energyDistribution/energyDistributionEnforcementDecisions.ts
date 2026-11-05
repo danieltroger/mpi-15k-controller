@@ -13,12 +13,15 @@
  * enforcement had decided to hold (a DM switch pending, the field made unmanaged). One corner stays open: a
  * setter queued with its gate open that still waits behind a confirm run or a dead link when a hold begins
  * does go out. The session sends in queue order, so it reaches the wire before a DM151 queued after it: it is
- * never written into 151, only seconds stale. Only a session "withdraw by prefix" would close that.
+ * never written into 151, only seconds stale. Only a session "withdraw by prefix" would close that. The same
+ * corner, the other way: a setter still in the session's queue when the attempt key changes counts as
+ * sendable, so the re-arm re-queues it (a same-command replacement, no extra write) and still spends one.
+ * That errs towards fewer writes: a few of those can leave a follow-up waiting for the fallback.
  *
  * A managed field missing from the HECS answer is skipped, never written on a guess (a SEP write resets
- * EDB/EDC/EDG); the fields that were read are still enforced, and the episode stays open (so it pages after
- * p2_after_minutes) until a readback has them all. The wiring is useEnergyDistributionEnforcement.ts; the
- * selftests drive these directly.
+ * EDB/EDC/EDG), while the fields that were read are judged and enforced. It doesn't open or hold a divergence
+ * episode: energyDistributionUnreadFields.ts tracks and pages it on its own onset. The wiring is
+ * useEnergyDistributionEnforcement.ts; the selftests drive these directly.
  */
 import type { InverterEnergyDistributionConfig } from "../config/config.types.ts";
 import type { DecodedFields } from "../inverterComms/pi17Protocol.types.ts";
@@ -30,7 +33,6 @@ import type {
   EnergyDistributionProfileName,
 } from "./energyDistribution.types.ts";
 import {
-  ENERGY_DISTRIBUTION_FIELD_LABELS,
   energyDistributionDivergences,
   PROFILE_BY_MACHINE_MODEL,
   setterForDivergence,
@@ -93,10 +95,7 @@ export type EnforcementSituation = {
   identicalSetterGateOpensAtMs: (command: string) => number | undefined;
 };
 
-/**
- * A managed field differing from the profile or missing from the readback, from the first readback that
- * showed it until one has every managed field, as the profile
- */
+/** A managed field read differently from the profile, from the first readback that showed it until one shows none */
 export type DivergenceEpisode = {
   onsetMs: number;
   sendRounds: number;
@@ -118,14 +117,11 @@ export type EnforcementStep = {
   episode: DivergenceEpisode | undefined;
   /** Queue these fields' setters, in this (write) order; undefined = nothing to send now */
   send: readonly EnergyDistributionFieldDivergence[] | undefined;
-  /**
-   * Why nothing goes out although a field differs, and which managed fields the readback lacks; undefined
-   * while nothing differs, and while sending with every managed field read
-   */
+  /** Why nothing goes out although a field differs; undefined while sending or while nothing differs */
   waitingReason: string | undefined;
   /** The episode's P2 is due (once per episode) */
   raiseP2: boolean;
-  /** The episode this step ended: every managed field is read, and reads as the profile again */
+  /** The episode this step ended: every managed field that was read reads as the profile again */
   landed: DivergenceEpisode | undefined;
   /** This step started the episode */
   started: boolean;
@@ -137,7 +133,7 @@ export type EnforcementJudgement = {
   profileName: EnergyDistributionProfileName;
   /** The managed fields read differently, in write order */
   divergences: EnergyDistributionFieldDivergence[];
-  /** The managed fields the readback lacks: not judged, not written */
+  /** The managed fields the readback lacks: not judged, not written (energyDistributionUnreadFields.ts) */
   unreadFields: EnergyDistributionField[];
 };
 
@@ -187,8 +183,8 @@ export function nextEnforcementStep(
     // A token missing from the answer says nothing about its field: the fields that were read are judged
     unreadFields: unreadManagedFields(profile, hecs.fields),
   };
-  const { divergences, unreadFields } = judged;
-  if (!divergences.length && !unreadFields.length) {
+  const { divergences } = judged;
+  if (!divergences.length) {
     return {
       episode: undefined,
       send: undefined,
@@ -200,32 +196,24 @@ export function nextEnforcementStep(
     };
   }
   const started = episode === undefined;
-  const openEpisode: DivergenceEpisode = withFirstDivergences(
-    episode ?? {
-      onsetMs: nowMs,
-      sendRounds: 0,
-      lastSendAtMs: undefined,
-      lastAttemptKey: undefined,
-      changeTriggeredRetries: 0,
-      deferredCommands: [],
-      deferredChangeRoundUncounted: false,
-      p2Raised: false,
-      firstDivergences: divergences,
-    },
-    divergences
-  );
+  const openEpisode: DivergenceEpisode = episode ?? {
+    onsetMs: nowMs,
+    sendRounds: 0,
+    lastSendAtMs: undefined,
+    lastAttemptKey: undefined,
+    changeTriggeredRetries: 0,
+    deferredCommands: [],
+    deferredChangeRoundUncounted: false,
+    p2Raised: false,
+    firstDivergences: divergences,
+  };
   const raiseP2 = p2Due(openEpisode, nowMs, timing);
   const current = raiseP2 ? { ...openEpisode, p2Raised: true } : openEpisode;
   const outcome = { raiseP2, started, judged };
-  const unreadNote = describeUnread(unreadFields);
-  // Only unread fields: nothing to write, but the episode stays open until they're read, and pages
-  if (!divergences.length) return judgedStep(outcome, current, undefined, unreadNote);
 
   const key = attemptKey(situation, divergences);
   const attempt = attemptKind(current, key, nowMs, timing);
-  if (attempt === undefined) {
-    return judgedStep(outcome, current, undefined, joinReasons(waitingFor(current, situation, timing), unreadNote));
-  }
+  if (attempt === undefined) return judgedStep(outcome, current, undefined, waitingFor(current, situation, timing));
   // A re-arm or the fallback wants every current difference; a deferred continuation only what it deferred
   // and still differs (a field made unmanaged, matching or unread has dropped out)
   const wanted = divergences.filter(
@@ -251,10 +239,8 @@ export function nextEnforcementStep(
     deferredChangeRoundUncounted:
       !sendsNow && deferredCommands.length > 0 && (opensDeferredChangeRound || current.deferredChangeRoundUncounted),
   };
-  if (!sendable.length) {
-    return judgedStep(outcome, armed, undefined, joinReasons(waitingFor(armed, situation, timing), unreadNote));
-  }
-  return judgedStep(outcome, { ...armed, sendRounds: armed.sendRounds + 1, lastSendAtMs: nowMs }, sendable, unreadNote);
+  if (!sendable.length) return judgedStep(outcome, armed, undefined, waitingFor(armed, situation, timing));
+  return judgedStep(outcome, { ...armed, sendRounds: armed.sendRounds + 1, lastSendAtMs: nowMs }, sendable, undefined);
 }
 
 function judgedStep(
@@ -264,18 +250,6 @@ function judgedStep(
   waitingReason: string | undefined
 ): EnforcementStep {
   return { ...outcome, episode, send, waitingReason, landed: undefined };
-}
-
-/**
- * An episode opened on an unread field takes the first difference it then finds, for the landing log. The
- * same object otherwise: the wiring's signal (and the ws) only moves when the episode does.
- */
-function withFirstDivergences(
-  episode: DivergenceEpisode,
-  divergences: readonly EnergyDistributionFieldDivergence[]
-): DivergenceEpisode {
-  if (episode.firstDivergences.length || !divergences.length) return episode;
-  return { ...episode, firstDivergences: divergences };
 }
 
 /** Would the session's identical-setter gate still hold this setter if it were queued now? */
@@ -338,17 +312,6 @@ function waitingFor(episode: DivergenceEpisode, situation: EnforcementSituation,
   return `sent, not read back yet: retried ${retried}`;
 }
 
-/** Undefined when every managed field was read */
-function describeUnread(unreadFields: readonly EnergyDistributionField[]): string | undefined {
-  if (!unreadFields.length) return undefined;
-  return `the HECS readback lacks ${unreadFields.map(describeField).join(", ")}: not judged until it's read, never written on a guess`;
-}
-
-function joinReasons(...reasons: readonly (string | undefined)[]): string | undefined {
-  const given = reasons.filter(reason => reason !== undefined);
-  return given.length ? given.join("; ") : undefined;
-}
-
 /**
  * Everything an attempt is armed on: the DM readback, the working mode, the HECS fields nobody else moves,
  * and the setters the profile asks for. Anything else changing can't make a refused write land.
@@ -367,10 +330,6 @@ function attemptKey(
       .map(field => [field, hecsFields[field]]),
     setters: divergences.map(divergence => setterForDivergence(divergence).command),
   });
-}
-
-function describeField(field: EnergyDistributionField): string {
-  return ENERGY_DISTRIBUTION_FIELD_LABELS[field];
 }
 
 function p2Due(episode: DivergenceEpisode | undefined, nowMs: number, timing: EnforcementTiming): boolean {

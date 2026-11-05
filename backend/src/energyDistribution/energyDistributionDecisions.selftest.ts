@@ -1,16 +1,17 @@
 /**
  * Self-test of the energy-distribution decisions on the follow-ups to #91's review: the session's own
- * identical-setter gate, on its monotonic clock, decides what may be queued; a change re-arm only counts when
- * it sends something, and an episode that never sent still gets the fallback; a managed field missing from
- * the HECS answer is skipped (never written on a guess) while the fields that were read are judged, and keeps
- * an episode open so it pages. Pure, no hardware. Run from backend/ with:
+ * identical-setter gate, on its monotonic clock, decides what may be queued; a change re-arm counts against
+ * the round that sends, at once or as the deferred continuation (a change that sends nothing more spends
+ * nothing), and an episode that never sent still gets the fallback; a managed field missing from the HECS
+ * answer is skipped (never written on a guess) while the fields that were read are judged, and pages on its
+ * own onset and key, never swallowing a later divergence's P2. Pure, no hardware. Run from backend/ with:
  *   yarn node src/energyDistribution/energyDistributionDecisions.selftest.ts
  */
 import process from "process";
 import type { AlertManager } from "../alerting/alertManager.ts";
 import type { DecodedFields } from "../inverterComms/pi17Protocol.types.ts";
 import { IDENTICAL_SETTER_MIN_INTERVAL_MS } from "../inverterComms/schedulerTiming.ts";
-import { raiseDivergenceNotLanded } from "./energyDistributionAlert.ts";
+import { reportUnreadFieldsStep } from "./energyDistributionAlert.ts";
 import {
   CHANGE_TRIGGERED_RETRIES_PER_EPISODE,
   type DivergenceEpisode,
@@ -241,51 +242,80 @@ const { solar_energy_distribution_priority: _unreadPriority, ...RESET_WITHOUT_PR
   );
 }
 
-// ---------- nit 4: a managed field missing from the readback ----------
+// ---------- nit 4: a managed field missing from the readback, tracked on its own ----------
 {
   const run = newPureRun();
   const sent: string[] = [];
-  const p2AtSeconds: number[] = [];
-  let firstStep: ReturnType<typeof pureStep>["step"] | undefined;
+  const unreadP2AtSeconds: number[] = [];
+  let stepsWithADivergence = 0;
+  let firstUnreadStep: ReturnType<typeof pureStep>["unreadStep"] | undefined;
   for (let elapsedMs = 0; elapsedMs <= 900_000; elapsedMs += 10_000) {
     const nowMs = PURE_START_MS + elapsedMs;
-    const { step, commands } = pureStep(run, situationAt(nowMs, hecsAt(nowMs, LIVE_WITHOUT_FEED)));
-    firstStep ??= step;
+    const { step, commands, unreadStep } = pureStep(run, situationAt(nowMs, hecsAt(nowMs, LIVE_WITHOUT_FEED)));
+    firstUnreadStep ??= unreadStep;
     sent.push(...commands);
-    if (step.raiseP2) p2AtSeconds.push(elapsedMs / 1000);
+    if (step.episode || step.raiseP2) stepsWithADivergence++;
+    if (unreadStep.raiseP2) unreadP2AtSeconds.push(elapsedMs / 1000);
   }
   check(
-    "EDC missing from the answer, the rest matching: nothing written, but an episode opens saying why",
+    "EDC missing from the answer, the rest matching: nothing written, no divergence, a missing-field episode instead",
     sent.length === 0 &&
-      firstStep?.started === true &&
-      firstStep.episode !== undefined &&
-      firstStep.judged?.unreadFields.join(",") === "feed_power_to_utility" &&
-      firstStep.waitingReason?.includes("lacks Feed to the utility (EDC)") === true,
-    firstStep?.waitingReason
+      stepsWithADivergence === 0 &&
+      firstUnreadStep?.started === true &&
+      firstUnreadStep.episode?.fields.join(",") === "feed_power_to_utility"
   );
   check(
-    "…and it pages once, p2_after_minutes after the onset",
-    p2AtSeconds.join(",") === String(PURE_TIMING.p2AfterMs / 1000),
-    p2AtSeconds.join(",")
+    "…which pages once, p2_after_minutes after the onset",
+    unreadP2AtSeconds.join(",") === String(PURE_TIMING.p2AfterMs / 1000),
+    unreadP2AtSeconds.join(",")
   );
-  const onsetMs = run.episode?.onsetMs;
   const readAgainMs = PURE_START_MS + 910_000;
   const readDisabled = pureStep(
     run,
     situationAt(readAgainMs, hecsAt(readAgainMs, { ...LIVE_HECS, feed_power_to_utility: "disabled" }))
   );
   check(
-    "read again and off: EDC1 is the episode's first attempt (no re-arm spent), the same episode",
-    readDisabled.commands.join(",") === "EDC1" &&
-      run.episode?.changeTriggeredRetries === 0 &&
-      run.episode.onsetMs === onsetMs &&
-      run.episode.firstDivergences.map(divergence => divergence.field).join(",") === "feed_power_to_utility"
+    "read again and off: the missing-field episode resolves (its P2 on record, for the P3), a divergence starts and EDC1 goes out",
+    readDisabled.unreadStep.resolved?.p2Raised === true &&
+      run.unreadFieldsEpisode === undefined &&
+      readDisabled.step.started &&
+      readDisabled.commands.join(",") === "EDC1" &&
+      run.episode?.onsetMs === readAgainMs &&
+      run.episode.changeTriggeredRetries === 0
   );
   const landedMs = PURE_START_MS + 920_000;
   const landed = pureStep(run, situationAt(landedMs, hecsAt(landedMs, LIVE_HECS)));
   check(
-    "a complete matching readback ends it, with its P2 on record (the wiring sends the P3)",
-    landed.step.landed?.p2Raised === true && run.episode === undefined
+    "…and a complete matching readback ends that one, unpaged",
+    landed.step.landed?.p2Raised === false && run.episode === undefined
+  );
+}
+{
+  // #92's review: EDC missing for 15 min (its P2 goes out, read as harmless), then DM050's reset with every
+  // write NAKed. The real divergence must page p2_after_minutes after its own onset, not be swallowed.
+  const { feed_power_to_utility: _alsoUnread, ...RESET_WITHOUT_FEED } = RESET_HECS;
+  const RESET_AT_MS = 900_000;
+  const run = newPureRun();
+  const divergenceP2AtSeconds: number[] = [];
+  const unreadP2AtSeconds: number[] = [];
+  for (let elapsedMs = 0; elapsedMs <= 3 * 3_600_000; elapsedMs += 10_000) {
+    const nowMs = PURE_START_MS + elapsedMs;
+    const fields = elapsedMs < RESET_AT_MS ? LIVE_WITHOUT_FEED : RESET_WITHOUT_FEED;
+    const { step, unreadStep } = pureStep(run, situationAt(nowMs, hecsAt(nowMs, fields)));
+    if (step.raiseP2) divergenceP2AtSeconds.push(elapsedMs / 1000);
+    if (unreadStep.raiseP2) unreadP2AtSeconds.push(elapsedMs / 1000);
+  }
+  check(
+    "an unread field's P2 doesn't swallow a later divergence's: that pages p2_after_minutes after its own onset",
+    unreadP2AtSeconds.join(",") === String(PURE_TIMING.p2AfterMs / 1000) &&
+      divergenceP2AtSeconds.join(",") === String((RESET_AT_MS + PURE_TIMING.p2AfterMs) / 1000) &&
+      run.episode?.onsetMs === PURE_START_MS + RESET_AT_MS,
+    `missing-field P2 at ${unreadP2AtSeconds.join(",")} s, divergence P2 at ${divergenceP2AtSeconds.join(",")} s`
+  );
+  check(
+    "…the divergence has its own re-arm cap too (the fallback runs, nothing queued into the gate)",
+    run.episode?.changeTriggeredRetries === 0 && run.episode.sendRounds > 1 && run.queuedWhileGated.length === 0,
+    JSON.stringify({ retries: run.episode?.changeTriggeredRetries, rounds: run.episode?.sendRounds })
   );
 }
 {
@@ -303,24 +333,47 @@ const { solar_energy_distribution_priority: _unreadPriority, ...RESET_WITHOUT_PR
   );
 }
 {
+  // While nothing is judged (a stale DM readback) an open missing-field episode stays open and still pages
+  const run = newPureRun();
+  pureStep(run, situationAt(PURE_START_MS, hecsAt(PURE_START_MS, LIVE_WITHOUT_FEED)));
+  const blindMs = PURE_START_MS + PURE_TIMING.p2AfterMs;
+  const blind = pureStep(run, situationAt(blindMs, { machineModel: undefined }));
+  check(
+    "a missing-field episode survives an unjudged step and pages once overdue",
+    blind.step.judged === undefined && blind.unreadStep.raiseP2 && run.unreadFieldsEpisode?.p2Raised === true
+  );
+}
+{
   const raised: Parameters<AlertManager["raise"]>[0][] = [];
-  raiseDivergenceNotLanded(
-    async alert => {
-      raised.push(alert);
-      return { ...alert, at: new Date(PURE_START_MS).toISOString(), delivery: "dry_run" };
-    },
-    {
-      episodeOnsetMs: PURE_START_MS,
-      nowMs: PURE_START_MS + 600_000,
-      sendRounds: 0,
-      judged: { profileName: "normal_hybrid", divergences: [], unreadFields: ["feed_power_to_utility"] },
-      waitingReason: undefined,
-    }
+  const raise: AlertManager["raise"] = async alert => {
+    raised.push(alert);
+    return { ...alert, at: new Date(PURE_START_MS).toISOString(), delivery: "dry_run" };
+  };
+  const episode = { sinceMs: PURE_START_MS, fields: ["feed_power_to_utility" as const], p2Raised: true };
+  reportUnreadFieldsStep(
+    raise,
+    { episode, started: false, raiseP2: true, resolved: undefined },
+    PURE_START_MS + 600_000
+  );
+  reportUnreadFieldsStep(
+    raise,
+    { episode: undefined, started: false, raiseP2: false, resolved: episode },
+    PURE_START_MS + 900_000
+  );
+  const [page, resolvedNotice] = raised;
+  check(
+    "the missing-field P2 says nothing is written there and what to check, on its own key",
+    page?.severity === "P2" &&
+      page.key === `energy-distribution-unread:${PURE_START_MS}` &&
+      page.message.includes("lacked Feed to the utility (EDC)") &&
+      page.message.includes("nothing is checked or written there") &&
+      page.message.includes("firmware or the HECS decoding") &&
+      !page.message.includes("retried"),
+    page?.message
   );
   check(
-    "the P2 names the unread field",
-    raised[0]?.severity === "P2" && raised[0].message.includes("lacks Feed to the utility (EDC)"),
-    raised[0]?.message
+    "…and its P3 is on the same episode's key",
+    resolvedNotice?.severity === "P3" && resolvedNotice.key === `energy-distribution-unread:${PURE_START_MS}:resolved`
   );
 }
 
