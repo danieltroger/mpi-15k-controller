@@ -92,7 +92,12 @@ export type WsAction =
   /** Off-Grid III (DM151, grid relay open); refused with the reason unless every precondition holds */
   | "grid_off_open_relay"
   /** Back to normal hybrid (DM050) */
-  | "grid_off_normal";
+  | "grid_off_normal"
+  /**
+   * Put back the energy-distribution settings (HECS) a DM change resets; refused with the reason while a
+   * window runs, grid-off is in force or the readings are stale
+   */
+  | "grid_off_restore_settings";
 
 /**
  * What index.ts must hand wsMessaging: an accessor per contract key, except `config` and

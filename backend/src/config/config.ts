@@ -245,7 +245,8 @@ export const default_config: Config = {
 
 /**
  * Top-level keys merge shallowly, but alerting, automatic_trading (and its solar_model),
- * elpatron_switching, meter_calibration, grid_off, scheduled_power_selling, usb_parameter_setting,
+ * elpatron_switching, meter_calibration, grid_off (and its normal_energy_distribution),
+ * scheduled_power_selling, usb_parameter_setting,
  * temperature_saving and soc_calculations merge one level deeper: knobs get added over time, and a config.json written
  * before a knob existed must still pick up its default (the planner, the elpatron load model and the
  * SOC ledger do raw arithmetic on these — a missing knob would silently NaN every projection; a
@@ -277,7 +278,14 @@ export function mergeWithDefaults(partial: Partial<Config>): Config {
     automatic_trading: mergeAutomaticTrading(partial.automatic_trading),
     elpatron_switching: { ...default_config.elpatron_switching, ...partial.elpatron_switching },
     meter_calibration: { ...default_config.meter_calibration, ...partial.meter_calibration },
-    grid_off: { ...default_config.grid_off, ...partial.grid_off },
+    grid_off: {
+      ...default_config.grid_off,
+      ...partial.grid_off,
+      normal_energy_distribution: {
+        ...default_config.grid_off.normal_energy_distribution,
+        ...partial.grid_off?.normal_energy_distribution,
+      },
+    },
     // A stored schedule (even an empty one) replaces the default's sample entry wholesale, as before
     scheduled_power_selling: {
       ...default_config.scheduled_power_selling,

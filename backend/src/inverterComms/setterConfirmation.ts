@@ -5,6 +5,7 @@
  * numbers), so "sent and ACKed" must never be confused with "in effect".
  */
 import type { DecodedFields, SettingsQueryCommandName } from "./pi17Protocol.types.ts";
+import { SOLAR_ENERGY_DISTRIBUTION_PRIORITY_BY_CODE } from "./pi17FieldTables.ts";
 
 export type SetterReadbackCheck = {
   query: SettingsQueryCommandName;
@@ -52,6 +53,20 @@ export function expectedReadbackChecksForSetter(command: string): readonly Sette
         query: "BATS",
         field: "battery_floating_charge_voltage",
         expectedValue: Number(chargeVoltages[2]) / 10,
+        forCommand: command,
+      },
+    ];
+  }
+  const priority = command.match(/^SEP(0[0-2])$/);
+  if (priority) {
+    return [
+      {
+        query: "HECS",
+        field: "solar_energy_distribution_priority",
+        expectedValue:
+          SOLAR_ENERGY_DISTRIBUTION_PRIORITY_BY_CODE[
+            priority[1] as keyof typeof SOLAR_ENERGY_DISTRIBUTION_PRIORITY_BY_CODE
+          ],
         forCommand: command,
       },
     ];

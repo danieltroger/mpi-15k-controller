@@ -39,6 +39,16 @@ export const WORKING_MODE_TEXT_BY_CODE: Readonly<Record<InverterWorkingModeCode,
   "06": "Charge mode",
 };
 
+/**
+ * HECS's first field, and SEPnn's argument (^S006SEPnn sets it): the order PV power goes to. The readback
+ * decodes to the text, the setter takes the code.
+ */
+export const SOLAR_ENERGY_DISTRIBUTION_PRIORITY_BY_CODE = {
+  "00": "Battery-Load-Grid",
+  "01": "Load-Battery-Grid",
+  "02": "Load-Grid-Battery",
+} as const satisfies Record<string, string>;
+
 function field(name: string, reading: Pi17FieldReading, unit: string): Pi17FieldSpec {
   return { name, reading, unit };
 }
@@ -132,10 +142,7 @@ export const PI17_QUERY_RESPONSE_FIELDS: Readonly<Record<Pi17QueryCommandName, r
   HECS: [
     field(
       "Solar Energy Distribution Priority",
-      {
-        kind: "str_keyed",
-        mapping: { "00": "Battery-Load-Grid", "01": "Load-Battery-Grid", "02": "Load-Grid-Battery" },
-      },
+      { kind: "str_keyed", mapping: SOLAR_ENERGY_DISTRIBUTION_PRIORITY_BY_CODE },
       ""
     ),
     field("Solar charge battery", ENABLED_DISABLED, ""),

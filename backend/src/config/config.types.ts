@@ -399,6 +399,40 @@ export type GridOffConfig = {
    * answer; switching to 151 is then refused (the confirms after a DM write still read it)
    */
   poll_machine_model: boolean;
+  /**
+   * After the DM readback confirms a switch back to 050, wait this long before judging (and restoring) the
+   * energy-distribution settings the DM change reset
+   */
+  settings_restore_delay_seconds: number;
+  /** One P2 per episode when the restored settings still differ (or HECS goes unread) this long after the delay */
+  settings_restore_p2_after_minutes: number;
+  /**
+   * What the HECS energy-distribution settings are in normal operation: a DM change resets them to the
+   * factory defaults, and the restore puts these back unless a snapshot from just before DM151 exists
+   * (gridOff/energyDistributionProfile.ts). AC charge (EDB) and battery feed to the grid (EDF/EDG) aren't
+   * here: buying and feeding own and re-assert them.
+   */
+  normal_energy_distribution: NormalEnergyDistribution;
+};
+
+/** HECS's flags as the readback decodes them */
+export type EnabledOrDisabled = "enabled" | "disabled";
+
+/** HECS's first field as the readback decodes it (SEP00, SEP01, SEP02) */
+export type SolarEnergyDistributionPriority = "Battery-Load-Grid" | "Load-Battery-Grid" | "Load-Grid-Battery";
+
+/** The restorable HECS fields, under their readback names */
+export type NormalEnergyDistribution = {
+  /** SEPnn */
+  solar_energy_distribution_priority: SolarEnergyDistributionPriority;
+  /** EDA */
+  solar_charge_battery: EnabledOrDisabled;
+  /** EDC */
+  feed_power_to_utility: EnabledOrDisabled;
+  /** EDD */
+  battery_discharge_to_loads_when_solar_input_normal: EnabledOrDisabled;
+  /** EDE */
+  battery_discharge_to_loads_when_solar_input_loss: EnabledOrDisabled;
 };
 
 export type Config = {

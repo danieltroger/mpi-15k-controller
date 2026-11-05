@@ -214,6 +214,17 @@ export function windowConflict(situation: GridOffSituation, settings: GridOffCon
   return `a ${soonest.kind} window starts in ${minutesAway} min (${soonest.start}), within grid_off.reconnect_before_window_minutes ${settings.reconnect_before_window_minutes}`;
 }
 
+/** A buy or sell window (a hold too) running right now, described, or undefined */
+export function activeWindow(
+  situation: Pick<GridOffSituation, "nowMs" | "sellSchedule" | "buySchedule">
+): string | undefined {
+  const active = [
+    ...scheduleConflicts("sell", situation.sellSchedule, situation.nowMs, 0),
+    ...scheduleConflicts("buy", situation.buySchedule, situation.nowMs, 0),
+  ].find(conflict => conflict.startMs <= situation.nowMs);
+  return active ? `a ${active.kind} window is active (${active.start} → ${active.end})` : undefined;
+}
+
 type WindowConflict = { kind: "buy" | "sell"; start: string; end: string; startMs: number };
 
 function scheduleConflicts(
@@ -231,7 +242,7 @@ function scheduleConflicts(
   });
 }
 
-function inverterReadingsStaleness(ageMs: number | undefined): string | undefined {
+export function inverterReadingsStaleness(ageMs: number | undefined): string | undefined {
   if (ageMs === undefined) return "no inverter readings (GS/PS) yet";
   if (ageMs > FRESH_INVERTER_READING_MAX_AGE_MS) {
     return `the inverter readings (GS/PS) are ${Math.round(ageMs / 1000)} s old (over ${FRESH_INVERTER_READING_MAX_AGE_MS / 1000} s)`;

@@ -23,7 +23,9 @@ import {
 } from "../inverterComms/machineModel.ts";
 import { effectiveGridOffSettings } from "./gridOffSettings.ts";
 import {
+  activeWindow,
   type GridOffSituation,
+  inverterReadingsStaleness,
   machineModelReadbackMaxAgeMs,
   NO_SWITCH_BACK_SENDS,
   reconcileMachineModel,
@@ -37,6 +39,8 @@ import {
 } from "./gridOffDecisions.ts";
 import type { GridOffEvent } from "./gridOff.types.ts";
 import { raiseStuckOffGrid, raiseStuckOffGridResolved } from "./gridOffStuckAlert.ts";
+import type { EnergyDistributionRestore } from "./energyDistributionRestore.ts";
+import type { ManualRestoreSituation } from "./energyDistributionRestoreDecisions.ts";
 
 /** The settings rounds kept whole for the before/after log (did the model change reset anything?) */
 const LOGGED_SETTINGS_QUERIES: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS", "DM"];
@@ -69,6 +73,8 @@ export type GridOffContext = {
   switchBackSends: SwitchBackSends;
   /** The latest switch either way, page or guard (the rate limit on 151) */
   lastSwitchAtMs: number | undefined;
+  /** The HECS restore after a DM change: it snapshots "normal" as DM151 goes out */
+  energyDistributionRestore: Pick<EnergyDistributionRestore, "takeSnapshotBeforeOffGrid">;
 };
 
 export function recordMachineModelReadback(
@@ -108,6 +114,7 @@ export function requestOffGrid(context: GridOffContext): string {
     describeSituation(situation),
     `settings before: ${describeSettings(context)}`
   );
+  context.energyDistributionRestore.takeSnapshotBeforeOffGrid();
   // Queued before the request flips: should the guards' run on the flip switch back at once, their DM050
   // replaces this DM151 in the queue rather than being replaced by it
   queueMachineModel(context, OFF_GRID_III_MODEL, result => afterOffGridResult(context, result));
@@ -275,6 +282,17 @@ function afterNormalResult(context: GridOffContext, result: SetterResult, why: s
     `Grid off: the inverter REJECTED DM${NORMAL_HYBRID_MODEL} (NAK) while switching back (${why}) — resent with back-off while it reads 151`
   );
   recordEvent(context, "DM050 rejected by the inverter (NAK): resent with back-off while it reads 151");
+}
+
+/** What the page's "Restore normal settings" is judged on (energyDistributionRestoreDecisions.ts) */
+export function manualRestoreSituation(context: GridOffContext, gridOffInForce: boolean): ManualRestoreSituation {
+  const situation = untrack(() => currentSituation(context));
+  return {
+    gridOffInForce,
+    readbackModel: situation.readbackModel,
+    readingsStaleness: inverterReadingsStaleness(situation.inverterReadingAgeMs),
+    activeWindow: activeWindow(situation),
+  };
 }
 
 function currentSituation(context: GridOffContext): GridOffSituation {

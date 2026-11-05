@@ -410,9 +410,12 @@ check(
       corrections.length === 0
   );
   check(
-    "a missing section takes the defaults, with a correction each",
+    "a missing section takes the defaults, with a correction each (the profile as a whole: one)",
     effectiveGridOffSettings(undefined).settings.min_soc_percent === 10 &&
-      effectiveGridOffSettings(undefined).corrections.length === 7
+      effectiveGridOffSettings(undefined).settings.normal_energy_distribution.solar_energy_distribution_priority ===
+        "Load-Battery-Grid" &&
+      effectiveGridOffSettings(undefined).corrections.length === 10,
+    effectiveGridOffSettings(undefined).corrections.join(" | ")
   );
   const clamped = effectiveGridOffSettings({
     ...DEFAULT_GRID_OFF_SETTINGS,

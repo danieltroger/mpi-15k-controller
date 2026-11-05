@@ -279,6 +279,7 @@ function main() {
                           },
                           grid_off_open_relay: gridOff.requestOffGrid,
                           grid_off_normal: gridOff.requestNormal,
+                          grid_off_restore_settings: gridOff.requestSettingsRestore,
                         },
                         exposedAccessors: {
                           autoTraderStatus: () => autoTrader()?.autoTraderStatus(),
