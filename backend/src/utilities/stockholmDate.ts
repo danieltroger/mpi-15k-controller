@@ -1,7 +1,8 @@
 /**
  * The Swedish calendar date of an instant, and plain date arithmetic on such dates: the one definition of
  * "a Stockholm day" the settlement, the price fetches, the expected spot and the price outlook share, so
- * they can't disagree about which day an instant belongs to.
+ * they can't disagree about which day an instant belongs to. Also the local clock time the alerts and the
+ * grid-off switch quote.
  *
  * Pure (no runtime imports): the frontend may import it too.
  */
@@ -27,6 +28,23 @@ export function calendarDateParts(date: string): [number, number, number] {
   if (!match) throw new Error(`Expected a YYYY-MM-DD date, got "${date}"`);
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
+
+/** HH:MM in Europe/Stockholm, with the date when it isn't today there. */
+export function formatStockholmTime(atMs: number, nowMs: number): string {
+  const clock = STOCKHOLM_CLOCK_FORMAT.format(atMs);
+  const day = STOCKHOLM_DATE_FORMAT.format(atMs);
+  return day === STOCKHOLM_DATE_FORMAT.format(nowMs) ? clock : `${day} ${clock}`;
+}
+
+/**
+ * The same string toLocaleTimeString("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit" }) gives; one shared
+ * formatter because building one costs ~0.4 ms (ICU), and automatic grid-off formats on every SOC sample
+ */
+const STOCKHOLM_CLOCK_FORMAT = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Europe/Stockholm",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 /**
  * sv-SE formats as YYYY-MM-DD, the same string toLocaleDateString("sv-SE", { timeZone }) gives; one shared

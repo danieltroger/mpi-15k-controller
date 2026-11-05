@@ -4,7 +4,8 @@
  * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts, holdAllocation.ts) and the
  * local search in sellConsolidation.ts, which is why it lives in its own module. The revenue is what the utility
  * meter will count (knobs.meter_calibration, simulatedMeterCredit.ts); the energies and the SOC stay as the
- * inverter sees them.
+ * inverter sees them. With grid_off.auto_enabled the idle quarters automatic grid-off would have off the grid
+ * feed nothing to the grid and drain the battery grid_off_saving_watts less (simulateGridOff.ts).
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
@@ -16,6 +17,13 @@ import {
   uncountedExportWatts,
 } from "./simulatedMeterCredit.ts";
 import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
+import {
+  autoGridOffModelled,
+  offGridInSlot,
+  offGridOwnDrawWatts,
+  offGridSocBands,
+  offGridWindowGaps,
+} from "./simulateGridOff.ts";
 import { endEnergyCreditSek } from "./terminalValueSolar.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
@@ -61,6 +69,13 @@ export function simulate(
   const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
   let reachedExportW = slots[0]?.feedInAtStartW ?? 0;
   const modelHolds = holdsModelled(knobs, valuation);
+  // Automatic grid-off: what the windows allow per slot, the SOC rules' thresholds, and the switch's state carried
+  // from slot to slot (the plan starts on the grid)
+  const modelGridOff = autoGridOffModelled(knobs);
+  const offGridGaps = modelGridOff ? offGridWindowGaps(input, slots, sellW, buyW, modelHolds) : undefined;
+  const offGridBands = modelGridOff ? offGridSocBands(knobs.grid_off, cap) : undefined;
+  let offGrid = false;
+  let offGridHours = 0;
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -70,6 +85,8 @@ export function simulate(
     const requestedBuyW = Math.max(buyW[i], slot.fixedBuyW);
     // Runtime never does both at once (feedWhenNoSolar errors out) — selling wins in our model
     const buySetW = sellSetW > 0 ? 0 : requestedBuyW;
+    // Judged before the hold branch, so a hold (a window) puts the switch back on the grid like any other
+    if (offGridGaps && offGridBands) offGrid = offGridInSlot(offGrid, offGridGaps, i, socWh, offGridBands);
 
     const holdPowerW = modelHolds && sellSetW === 0 ? holdPowerInSlot(slot, buyW[i], knobs.hold_enabled) : 0;
     if (holdPowerW > 0) {
@@ -110,6 +127,11 @@ export function simulate(
       continue;
     }
 
+    // Off the grid is only ever an idle quarter: any window keeps it on
+    if (offGrid) offGridHours += slot.durationH;
+    // Off the grid: the night feed's battery drain, which nothing credits (offGridOwnDrawWatts)
+    let offGridFeedDrainW = 0;
+
     let exportW = 0;
     let gridChargeW = 0;
     let slotImportWh = 0;
@@ -141,9 +163,14 @@ export function simulate(
     } else {
       if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + BASELINE_FEED_SOLAR_MARGIN_WATTS) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw. It drains the battery by
-        // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts)
-        exportW = knobs.baseline_feed_watts;
-        feedReadingShortfallW = feedReadingShortfallWatts(exportW, ratingHeadroomW, calibration);
+        // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts).
+        // Off the grid the feed holds (gridOffInForce) and the meter reads 0, but the inverter still burns most of
+        // what the feed covered: the drain stays, its credit and its meter terms don't
+        if (offGrid) offGridFeedDrainW = knobs.baseline_feed_watts;
+        else {
+          exportW = knobs.baseline_feed_watts;
+          feedReadingShortfallW = feedReadingShortfallWatts(exportW, ratingHeadroomW, calibration);
+        }
       }
       // A sell that follows climbs from whatever is being fed now (the baseline feed, or nothing)
       reachedExportW = exportW;
@@ -152,6 +179,9 @@ export function simulate(
     let netBattW: number;
     if (gridChargeW > 0) {
       netBattW = slot.pvW + gridChargeW;
+    } else if (offGrid) {
+      netBattW =
+        slot.pvW - slot.houseW - offGridOwnDrawWatts(parasiticW, offGridFeedDrainW, knobs.grid_off_saving_watts);
     } else {
       netBattW = slot.pvW - slot.houseW - parasiticW - exportW;
     }
@@ -230,6 +260,7 @@ export function simulate(
     socAfterSlot,
     autoExportWPerSlot,
     endEnergyValueSek,
+    offGridHours,
   };
 }
 

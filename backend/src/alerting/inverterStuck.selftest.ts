@@ -16,7 +16,6 @@ import {
 import {
   describeInverterStuckAlert,
   describeInverterStuckResolved,
-  formatStockholmTime,
   type InverterStuckAlertAction,
   inverterStuckAlertKey,
   type InverterStuckAlertState,
@@ -26,6 +25,7 @@ import {
   restoreEpisode,
   stepInverterStuckAlert,
 } from "./inverterStuckAlertPolicy.ts";
+import { formatStockholmTime } from "../utilities/stockholmDate.ts";
 import {
   addTrailingSample,
   advanceSustainedCondition,

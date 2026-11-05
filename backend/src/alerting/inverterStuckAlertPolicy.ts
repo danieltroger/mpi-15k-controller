@@ -2,6 +2,7 @@ import type { AlertingConfig } from "../config/config.types.ts";
 import { INVERTER_POWER_CYCLE_PROCEDURE } from "./alertingLogic.ts";
 import type { InverterStuckRuleId, RuleEvaluation } from "./inverterStuckDetection.ts";
 import { inverterStuckRuleIds } from "./inverterStuckDetection.ts";
+import { formatStockholmTime } from "../utilities/stockholmDate.ts";
 import {
   advanceSustainedCondition,
   INACTIVE_SUSTAINED_CONDITION,
@@ -198,14 +199,6 @@ export function describeInverterStuckAlert(
 export function describeInverterStuckResolved(onsetMs: number | undefined, nowMs: number): string {
   const range = onsetMs === undefined ? "" : ` (stuck since ${formatStockholmTime(onsetMs, nowMs)}, local time)`;
   return `Power is flowing through the inverter's DC side again${range}.`;
-}
-
-/** HH:MM in Europe/Stockholm, with the date when it isn't today there. */
-export function formatStockholmTime(atMs: number, nowMs: number): string {
-  const timeZone = "Europe/Stockholm";
-  const clock = new Date(atMs).toLocaleTimeString("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit" });
-  const day = new Date(atMs).toLocaleDateString("sv-SE", { timeZone });
-  return day === new Date(nowMs).toLocaleDateString("sv-SE", { timeZone }) ? clock : `${day} ${clock}`;
 }
 
 function leadSentence(ruleId: InverterStuckRuleId, since: string): string {

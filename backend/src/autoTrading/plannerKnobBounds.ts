@@ -20,6 +20,7 @@ export type BoundedPlannerKnobName = keyof Pick<
   | "terminal_value_solar_scale"
   | "terminal_value_solar_lookahead_hours"
   | "terminal_value_solar_forecast_max_age_hours"
+  | "grid_off_saving_watts"
   | HoldKnobName
 >;
 
@@ -130,6 +131,14 @@ export const PLANNER_KNOB_BOUNDS = {
   // that still prices the horizon, but a refill past it rests on a forecast that many model runs behind. Lower
   // drops the refill sooner in an outage; 48 h is a forecast whose 4 days are half gone.
   terminal_value_solar_forecast_max_age_hours: { defaultValue: 12, min: 1, max: 48, unit: "h", step: 1 },
+  // With grid_off.auto_enabled: the whole battery-side difference of a quarter the plan models off the grid
+  // (simulateGridOff.ts). The night feed's 290–300 W drain stays in it: the meter counts ~nothing of the feed, it
+  // powers the inverter's own grid-side draw, which an open relay doesn't take away. Measured over whole nights,
+  // the feed included, off the grid drains ~95–110 W less (hall-sensor energy balance 2026-10-26 ≈ 110 W, E.ON
+  // meter data 2026-11-03 ≈ 95 W); 45 W, the inverter draw the 2026-11-05 live test saw go, is the conservative
+  // default until a measurement in Off-Grid III itself (planned 2026-11-09). Above the measured ~110 W the planner
+  // counts on battery the nights don't leave.
+  grid_off_saving_watts: { defaultValue: 45, min: 0, max: 200, unit: "W", step: 5 },
   // The charge power of a hold window (holdAllocation.ts): the runtime turns it into battery amps (watts /
   // battery volts, rounded, at least 1 A), so 50 W is MUCHGC0010 and 100 W MUCHGC0020. The 2025-01, 2025-11
   // and 2026-03 low-current windows charged ~4 A (~200 W) whatever 1–4 A was commanded, so the battery may

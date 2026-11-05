@@ -2,12 +2,14 @@
  * The planner's knobs from a (merged) config, shared by the live trader and the dry-run preview: the
  * automatic_trading section verbatim, the knobs with backend-enforced bounds corrected to them
  * (plannerKnobBounds.ts, terminalValue.ts), and the values that live elsewhere in the config (the meter
- * calibration corrected to its bounds, grid/correctedMeterCalibration.ts). The
+ * calibration corrected to its bounds, grid/correctedMeterCalibration.ts, and the grid_off section, for
+ * automatic grid-off, gridOff/gridOffSettings.ts). The
  * runtime hold guard (buying/holdWindowGuard.ts) corrects its knobs through boundedTradingKnob too.
  */
 import type { Config } from "../config/config.types.ts";
 import { warnLog } from "../utilities/logging.ts";
 import { plannerMeterCalibration } from "../grid/correctedMeterCalibration.ts";
+import { effectiveGridOffSettings } from "../gridOff/gridOffSettings.ts";
 import { type BoundedPlannerKnobName, effectivePlannerKnob } from "./plannerKnobBounds.ts";
 import {
   DEFAULT_TERMINAL_VALUE_MONTHS,
@@ -88,9 +90,12 @@ export function plannerKnobsFromConfig(cfg: Config): PlannerKnobs {
     hold_margin_sek_per_kwh: boundedTradingKnob("hold_margin_sek_per_kwh", tradingConfig.hold_margin_sek_per_kwh),
     hold_min_window_minutes: boundedTradingKnob("hold_min_window_minutes", tradingConfig.hold_min_window_minutes),
     hold_bridge_minutes: boundedTradingKnob("hold_bridge_minutes", tradingConfig.hold_bridge_minutes),
+    grid_off_saving_watts: boundedTradingKnob("grid_off_saving_watts", tradingConfig.grid_off_saving_watts),
     runtime_soc_floor_percent: Number(cfg.scheduled_power_selling.only_sell_above_soc),
     baseline_feed_watts: cfg.feed_from_battery_when_no_solar.feed_amount_watts,
     meter_calibration: plannerMeterCalibration(cfg.meter_calibration),
+    // Corrected as the switch and automatic grid-off correct it, which warn about a bad value in this process
+    grid_off: effectiveGridOffSettings(cfg.grid_off).settings,
   };
 }
 
