@@ -35,6 +35,7 @@ import { startAlertRules } from "./alerting/alertRules.ts";
 import { startSolarModelRefits } from "./solar/solarRefitScheduler.ts";
 import { startSolarForecastAccuracy } from "./solar/solarForecastAccuracy.ts";
 import { useGridOffSwitch } from "./gridOff/useGridOffSwitch.ts";
+import { useAutoGridOff } from "./gridOff/useAutoGridOff.ts";
 import { useEnergyDistributionEnforcement } from "./energyDistribution/useEnergyDistributionEnforcement.ts";
 
 while (true) {
@@ -166,6 +167,12 @@ function main() {
                       raise: alertManager.raise,
                       requestedMachineModel: gridOff.requestedMachineModel,
                     });
+                    // grid_off.auto_enabled: off the grid unless a rule or a guard says otherwise; inert while off
+                    const autoGridOff = useAutoGridOff({
+                      config,
+                      gridOffSwitch: gridOff,
+                      energyDistributionStatus: energyDistribution.status,
+                    });
                     // While the grid relay may be open no buy window starts: guard (b) switches back to 050
                     // before one, and buying waits until the inverter reads 050 again (or is stuck on 151:
                     // then it tries anyway, and the buy-window alert can see it)
@@ -293,6 +300,7 @@ function main() {
                           recentAlerts: alertManager.recentAlerts,
                           inverterStatus,
                           gridOff: gridOff.status,
+                          gridOffAuto: autoGridOff.status,
                           energyDistribution: energyDistribution.status,
                           lastFeedWhenNoSolarReason,
                           lastChangingFeedWhenNoSolarReason,

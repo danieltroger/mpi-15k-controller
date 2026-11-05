@@ -43,6 +43,7 @@ import { mergeAcceptedSlots, toPlanned, type PackagingContext } from "./planWind
 import { terminalValuationFor, type TerminalValuationResult } from "./terminalValue.ts";
 import { marginalEndEnergySekPerKwh, solarRefillFor } from "./terminalValueSolar.ts";
 import { terminalValueNote } from "./terminalValueNote.ts";
+import { autoGridOffNote } from "./simulateGridOff.ts";
 import { SLOT_MS } from "./slotDuration.ts";
 import type {
   AllocationContext,
@@ -193,6 +194,8 @@ export function generatePlan(plannerInput: PlannerInput): PlanResult {
   if (knobs.extra_reserve_kwh > 0) notes.push(`User extra reserve of ${knobs.extra_reserve_kwh} kWh respected`);
   const terminalNote = terminalValueNote(input, terminal, valuation, current);
   if (terminalNote) notes.push(terminalNote);
+  const gridOffNote = autoGridOffNote(knobs, current);
+  if (gridOffNote) notes.push(gridOffNote);
 
   const projection: PlanProjection = {
     startSocPercent: input.socPercent,

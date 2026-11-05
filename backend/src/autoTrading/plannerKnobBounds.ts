@@ -20,6 +20,7 @@ export type BoundedPlannerKnobName = keyof Pick<
   | "terminal_value_solar_scale"
   | "terminal_value_solar_lookahead_hours"
   | "terminal_value_solar_forecast_max_age_hours"
+  | "grid_off_saving_watts"
   | HoldKnobName
 >;
 
@@ -130,6 +131,12 @@ export const PLANNER_KNOB_BOUNDS = {
   // that still prices the horizon, but a refill past it rests on a forecast that many model runs behind. Lower
   // drops the refill sooner in an outage; 48 h is a forecast whose 4 days are half gone.
   terminal_value_solar_forecast_max_age_hours: { defaultValue: 12, min: 1, max: 48, unit: "h", step: 1 },
+  // With grid_off.auto_enabled: how much less the inverter draws in a quarter the plan models off the grid
+  // (simulateGridOff.ts), on top of the night feed it can't feed there. With the relay open its grid stage idles:
+  // the 2026-11-05 live test saw ~45 W of its own draw gone (#87 put the night's whole difference at ~100 W of
+  // battery, the feed's share included). Taken off the idle draw the simulation charges the battery, never below
+  // 0. Above ~100 W the planner would credit more than the night's whole measured difference.
+  grid_off_saving_watts: { defaultValue: 45, min: 0, max: 200, unit: "W", step: 5 },
   // The charge power of a hold window (holdAllocation.ts): the runtime turns it into battery amps (watts /
   // battery volts, rounded, at least 1 A), so 50 W is MUCHGC0010 and 100 W MUCHGC0020. The 2025-01, 2025-11
   // and 2026-03 low-current windows charged ~4 A (~200 W) whatever 1–4 A was commanded, so the battery may

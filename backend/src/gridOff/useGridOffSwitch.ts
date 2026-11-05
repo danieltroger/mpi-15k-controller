@@ -1,10 +1,11 @@
 /**
- * The grid-off switch's live wiring: the page asks for Off-Grid III (machine model 151, the grid relay open
- * on battery) or normal hybrid (050); the guards switch back to 050 on a low SOC, an upcoming buy or sell
- * window, stale readings or a 151 that never applied; a clean stop switches back (gridOffShutdown.ts); and a
- * 151 read while 050 is wanted, at startup above all, is switched back too, with resends backing off and a
- * P1 once it stays stuck (gridOffStuckAlert.ts). Nothing here writes on its own initiative except DM050, and
- * only while the inverter reads 151. Decisions: gridOffDecisions.ts.
+ * The grid-off switch's live wiring: the page (or, with grid_off.auto_enabled, automatic grid-off:
+ * useAutoGridOff.ts) asks for Off-Grid III (machine model 151, the grid relay open on battery) or normal
+ * hybrid (050); the guards switch back to 050 on a low SOC, an upcoming buy or sell window, stale readings or
+ * a 151 that never applied; a clean stop switches back (gridOffShutdown.ts); and a 151 read while 050 is
+ * wanted, at startup above all, is switched back too, with resends backing off and a P1 once it stays stuck
+ * (gridOffStuckAlert.ts). Nothing here writes on its own initiative except DM050, and only while the
+ * inverter reads 151. Decisions: gridOffDecisions.ts.
  */
 import { type Accessor, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { Config } from "../config/config.types.ts";
@@ -17,10 +18,12 @@ import { useBatteryValuesProvider } from "../battery/BatteryValuesProvider.ts";
 import { errorLog, logLog } from "../utilities/logging.ts";
 import { NORMAL_HYBRID_MODEL, OFF_GRID_III_MODEL } from "../inverterComms/machineModel.ts";
 import { NO_SWITCH_BACK_SENDS, NOT_STUCK_OFF_GRID, type StuckOffGridTracking } from "./gridOffDecisions.ts";
+import { NO_OFF_GRID_FAILURES } from "./autoGridOffDecisions.ts";
 import type { GridOffEvent, GridOffStatus } from "./gridOff.types.ts";
 import { holdGridOffThroughShutdown } from "./gridOffShutdown.ts";
 import {
   correctedGridOffSettings,
+  currentOffGridRefusal,
   evaluateGuards,
   type GridOffContext,
   isLoggedSettingsQuery,
@@ -94,6 +97,7 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     latestSettingsFields: {},
     switchBackSends: NO_SWITCH_BACK_SENDS,
     lastSwitchAtMs: undefined,
+    offGridFailures: NO_OFF_GRID_FAILURES,
   };
 
   createEffect(() => {
@@ -165,9 +169,22 @@ export function createGridOffSwitch(environment: GridOffEnvironment) {
     /** The model asked for: until the DM readback shows it, the energy-distribution enforcement holds its writes */
     requestedMachineModel,
     status,
-    /** The page's "open the grid relay" (DM151): refused, with the reason thrown, unless every precondition holds */
-    requestOffGrid: async () => requestOffGrid(context),
-    /** The page's "back to normal" (DM050): always allowed */
-    requestNormal: async () => requestNormal(context),
+    /**
+     * The page's "open the grid relay" (DM151): refused, with the reason thrown, unless every precondition
+     * holds and automatic grid-off is off
+     */
+    requestOffGrid: async () => requestOffGrid(context, { by: "page" }),
+    /** The page's "back to normal" (DM050): always allowed while automatic grid-off is off */
+    requestNormal: async () => requestNormal(context, { by: "page" }),
+    /** Why a request for 151 would be refused right now (switchOffGridRefusal); undefined = it would go out */
+    offGridRefusal: () => currentOffGridRefusal(context),
+    /** Switches to 151 NAKed or never read back since the last one that applied */
+    offGridFailures: () => context.offGridFailures,
+    /** Automatic grid-off's DM151, the page's path with its preconditions (it checks offGridRefusal first) */
+    switchOffGridAutomatically: (reason: string) => void requestOffGrid(context, { by: "auto", reason }),
+    /** Automatic grid-off's DM050 (also when it is turned off with the grid off) */
+    switchBackAutomatically: (reason: string) => void requestNormal(context, { by: "auto", reason }),
   };
 }
+
+export type GridOffSwitch = ReturnType<typeof createGridOffSwitch>;

@@ -1,7 +1,8 @@
 /**
  * What the grid-off switch does on a request, a guard run or a setter result, on the switch's context
- * (useGridOffSwitch.ts builds it and the reactivity around it): the page's requests, the guards and the
- * startup fail-safe, the resend back-off and the stuck P1, and the log lines that say why.
+ * (useGridOffSwitch.ts builds it and the reactivity around it): the page's and automatic grid-off's
+ * requests, the guards and the startup fail-safe, the resend back-off and the stuck P1, and the log lines
+ * that say why.
  */
 import { type Accessor, type Setter, untrack } from "solid-js";
 import type { Config, GridOffConfig } from "../config/config.types.ts";
@@ -26,6 +27,7 @@ import {
   type GridOffSituation,
   machineModelReadbackMaxAgeMs,
   NO_SWITCH_BACK_SENDS,
+  offGridNotApplied,
   reconcileMachineModel,
   revertReason,
   type StuckOffGridTracking,
@@ -35,14 +37,21 @@ import {
   switchOffGridRefusal,
   trackStuckOffGrid,
 } from "./gridOffDecisions.ts";
+import { NO_OFF_GRID_FAILURES, type OffGridFailures } from "./autoGridOffDecisions.ts";
 import type { GridOffEvent } from "./gridOff.types.ts";
 import { raiseStuckOffGrid, raiseStuckOffGridResolved } from "./gridOffStuckAlert.ts";
 
 /** The settings rounds kept whole for the before/after log (did the model change reset anything?) */
 const LOGGED_SETTINGS_QUERIES: readonly SettingsQueryCommandName[] = ["GPMP", "HECS", "BATS", "DM"];
 
+/** Why the page's buttons are refused while automatic grid-off drives the switch */
+const AUTO_ENABLED_REFUSAL =
+  "automatic grid-off is on (grid_off.auto_enabled): turn it off on the config page to switch by hand";
+
 export type RequestedModel = { model: MachineModelCode; atMs: number | undefined };
 export type MachineModelReadback = { model: string; atMs: number };
+/** Who asks the switch for a model: the page's buttons, or automatic grid-off with its reason */
+export type SwitchRequester = { by: "page" } | { by: "auto"; reason: string };
 
 export type GridOffContext = {
   config: Accessor<Config>;
@@ -67,8 +76,10 @@ export type GridOffContext = {
   latestSettingsFields: Partial<Record<SettingsQueryCommandName, DecodedFields>>;
   /** DM050s queued since the inverter started reading 151 while 050 is wanted (the resend back-off) */
   switchBackSends: SwitchBackSends;
-  /** The latest switch either way, page or guard (the rate limit on 151) */
+  /** The latest switch either way, page, automatic or guard (the rate limit on 151) */
   lastSwitchAtMs: number | undefined;
+  /** Switches to 151 NAKed or never read back since the last one that applied (automatic grid-off's back-off) */
+  offGridFailures: OffGridFailures;
 };
 
 export function recordMachineModelReadback(
@@ -92,19 +103,25 @@ export function recordMachineModelReadback(
   );
 }
 
-export function requestOffGrid(context: GridOffContext): string {
+/**
+ * A request for 151, from the page or automatic grid-off: refused, with the reason thrown, unless every
+ * precondition holds (and, from the page, unless automatic grid-off is on)
+ */
+export function requestOffGrid(context: GridOffContext, requester: SwitchRequester): string {
   const situation = untrack(() => currentSituation(context));
   const refusal =
     untrack(context.requested).model === OFF_GRID_III_MODEL
       ? "151 is already requested"
-      : switchOffGridRefusal(situation, untrack(context.settings));
+      : requester.by === "page" && untrack(context.settings).auto_enabled
+        ? AUTO_ENABLED_REFUSAL
+        : switchOffGridRefusal(situation, untrack(context.settings));
   if (refusal) {
-    logLog("Grid off: switching to 151 (Off-Grid III) refused:", refusal);
+    logLog(`Grid off: switching to 151 (Off-Grid III) ${describeRequester(requester)} refused:`, refusal);
     recordEvent(context, `Switching to 151 refused: ${refusal}`);
     throw new Error(`Refused: ${refusal}`);
   }
   logLog(
-    `Grid off: requested by the page — queueing DM${OFF_GRID_III_MODEL} (Off-Grid III, grid relay open);`,
+    `Grid off: requested ${describeRequester(requester)} — queueing DM${OFF_GRID_III_MODEL} (Off-Grid III, grid relay open);`,
     describeSituation(situation),
     `settings before: ${describeSettings(context)}`
   );
@@ -113,24 +130,52 @@ export function requestOffGrid(context: GridOffContext): string {
   queueMachineModel(context, OFF_GRID_III_MODEL, result => afterOffGridResult(context, result));
   context.lastSwitchAtMs = situation.nowMs;
   context.setRequested({ model: OFF_GRID_III_MODEL, atMs: situation.nowMs });
-  recordEvent(context, "151 requested from the page: DM151 queued, waiting for the inverter's ACK and readback");
+  recordEvent(
+    context,
+    `151 requested ${describeRequester(requester)}: DM151 queued, waiting for the inverter's ACK and readback`
+  );
   return "DM151 queued: the DM readback confirms it in ~10–15 s";
 }
 
-/** Never refused or rate-limited: back to normal must always be possible */
-export function requestNormal(context: GridOffContext): string {
+/**
+ * A request for 050. Never rate-limited, and automatic grid-off's always goes out; the page's is refused only
+ * while automatic grid-off is on, which turning it off ends (and that switches back by itself)
+ */
+export function requestNormal(context: GridOffContext, requester: SwitchRequester): string {
   const situation = untrack(() => currentSituation(context));
+  if (requester.by === "page" && untrack(context.settings).auto_enabled) {
+    logLog("Grid off: back to normal from the page refused:", AUTO_ENABLED_REFUSAL);
+    recordEvent(context, `Back to 050 refused: ${AUTO_ENABLED_REFUSAL}`);
+    throw new Error(`Refused: ${AUTO_ENABLED_REFUSAL}`);
+  }
   logLog(
-    `Grid off: back to normal requested by the page — queueing DM${NORMAL_HYBRID_MODEL};`,
+    `Grid off: back to normal requested ${describeRequester(requester)} — queueing DM${NORMAL_HYBRID_MODEL};`,
     describeSituation(situation)
   );
-  queueSwitchBack(context, "the page's request", situation.nowMs);
+  queueSwitchBack(
+    context,
+    requester.by === "page" ? "the page's request" : `automatic grid-off: ${requester.reason}`,
+    situation.nowMs
+  );
   context.lastSwitchAtMs = situation.nowMs;
   context.setRequested({ model: NORMAL_HYBRID_MODEL, atMs: situation.nowMs });
-  recordEvent(context, "050 requested from the page");
+  recordEvent(
+    context,
+    requester.by === "page" ? "050 requested from the page" : `050 requested automatically: ${requester.reason}`
+  );
   return untrack(context.readback)?.model === NORMAL_HYBRID_MODEL
     ? "The inverter already reads 050: nothing to send"
     : "DM050 queued: the DM readback confirms it in ~10–15 s";
+}
+
+/** Why a request for 151 would be refused right now, untracked; undefined = it would go out */
+export function currentOffGridRefusal(context: GridOffContext): string | undefined {
+  return untrack(() => switchOffGridRefusal(currentSituation(context), context.settings()));
+}
+
+/** The reason of an automatic request is in automatic grid-off's own log line and its status */
+function describeRequester(requester: SwitchRequester): string {
+  return requester.by === "page" ? "from the page" : "automatically";
 }
 
 /** Runs on every request/readback/SOC/config change and every guard tick; every read is untracked */
@@ -139,10 +184,16 @@ export function evaluateGuards(context: GridOffContext): void {
   const situation = untrack(() => currentSituation(context));
   const settings = untrack(context.settings);
   if (requested.model === OFF_GRID_III_MODEL) {
-    const reason = revertReason(situation, settings, requested.atMs ?? situation.nowMs);
+    const requestedAtMs = requested.atMs ?? situation.nowMs;
+    const reason = revertReason(situation, settings, requestedAtMs);
     if (reason) {
+      if (offGridNotApplied(situation, requestedAtMs)) countOffGridFailure(context, situation.nowMs);
       switchBack(context, reason, situation);
       return;
+    }
+    if (situation.readbackModel === OFF_GRID_III_MODEL && context.offGridFailures.count > 0) {
+      logLog(`Grid off: 151 applied after ${context.offGridFailures.count} failed switch(es)`);
+      context.offGridFailures = NO_OFF_GRID_FAILURES;
     }
   }
   updateStuckTracking(context, requested.model, situation, settings);
@@ -258,9 +309,15 @@ function afterOffGridResult(context: GridOffContext, result: SetterResult): void
   errorLog(`Grid off: the inverter REJECTED DM${OFF_GRID_III_MODEL} (NAK) — the request goes back to 050`);
   if (!stillRequested) return;
   const nowMs = context.wallClockNowMs();
+  countOffGridFailure(context, nowMs);
   context.lastSwitchAtMs = nowMs;
   context.setRequested({ model: NORMAL_HYBRID_MODEL, atMs: nowMs });
   recordEvent(context, "DM151 rejected by the inverter (NAK): back to 050");
+}
+
+/** A switch to 151 NAKed or never read back: automatic grid-off backs off its next try (autoGridOffDecisions.ts) */
+function countOffGridFailure(context: GridOffContext, nowMs: number): void {
+  context.offGridFailures = { count: context.offGridFailures.count + 1, lastAtMs: nowMs };
 }
 
 function afterNormalResult(context: GridOffContext, result: SetterResult, why: string): void {

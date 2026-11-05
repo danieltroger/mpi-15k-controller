@@ -1,7 +1,8 @@
 /**
  * The Swedish calendar date of an instant, and plain date arithmetic on such dates: the one definition of
  * "a Stockholm day" the settlement, the price fetches, the expected spot and the price outlook share, so
- * they can't disagree about which day an instant belongs to.
+ * they can't disagree about which day an instant belongs to. Also the local clock time the alerts and the
+ * grid-off switch quote.
  *
  * Pure (no runtime imports): the frontend may import it too.
  */
@@ -26,6 +27,14 @@ export function calendarDateParts(date: string): [number, number, number] {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!match) throw new Error(`Expected a YYYY-MM-DD date, got "${date}"`);
   return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** HH:MM in Europe/Stockholm, with the date when it isn't today there. */
+export function formatStockholmTime(atMs: number, nowMs: number): string {
+  const timeZone = "Europe/Stockholm";
+  const clock = new Date(atMs).toLocaleTimeString("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit" });
+  const day = new Date(atMs).toLocaleDateString("sv-SE", { timeZone });
+  return day === new Date(nowMs).toLocaleDateString("sv-SE", { timeZone }) ? clock : `${day} ${clock}`;
 }
 
 /**

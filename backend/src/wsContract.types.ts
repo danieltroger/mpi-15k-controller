@@ -4,7 +4,7 @@ import type { AutoTraderStatus } from "./autoTrading/autoTraderState.types.ts";
 import type { FetchedPrices } from "./autoTrading/priceService.types.ts";
 import type { AlertRecord } from "./alerting/alerting.types.ts";
 import type { InverterOperatingStatus } from "./inverterComms/inverterStatus.types.ts";
-import type { GridOffStatus } from "./gridOff/gridOff.types.ts";
+import type { AutoGridOffStatus, GridOffStatus } from "./gridOff/gridOff.types.ts";
 import type { EnergyDistributionStatus } from "./energyDistribution/energyDistribution.types.ts";
 import type {
   CurrentBatteryPowerBroadcast,
@@ -33,6 +33,8 @@ export type WsExposedSignals = {
   inverterStatus: InverterOperatingStatus;
   /** The grid-off switch: requested vs read-back machine model (050 normal / 151 Off-Grid III) */
   gridOff: GridOffStatus;
+  /** Automatic grid-off (grid_off.auto_enabled): what it wants, why, and the next switch the schedule makes known */
+  gridOffAuto: AutoGridOffStatus;
   /** The HECS energy-distribution settings against their config profile, and the enforcement's state */
   energyDistribution: EnergyDistributionStatus;
   elpatronState: ElpatronDisplayState;
@@ -92,9 +94,12 @@ export type WsAction =
   | "generate_trading_plan"
   | "clear_trading_vetoes"
   | "send_test_alert"
-  /** Off-Grid III (DM151, grid relay open); refused with the reason unless every precondition holds */
+  /**
+   * Off-Grid III (DM151, grid relay open); refused with the reason unless every precondition holds and
+   * automatic grid-off is off
+   */
   | "grid_off_open_relay"
-  /** Back to normal hybrid (DM050) */
+  /** Back to normal hybrid (DM050); refused while automatic grid-off is on */
   | "grid_off_normal";
 
 /**

@@ -552,6 +552,12 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         { unit: "SEK/kWh" }
       ),
       f(
+        ["automatic_trading", "grid_off_saving_watts"],
+        "Grid-off: inverter draw saved",
+        `Only while Automatic grid-off (Grid relay off) is on. The plan then models the quarters it would have the grid off in: idle ones, no window within "Back on the grid before a window" and in stretches of at least "Automatic: shortest stretch off", starting between "Back on the grid below SOC" and "Automatic: off again below SOC". There the inverter feeds nothing (no night feed: neither its drain on the battery nor its credit) and draws this much less of its own. The 2026-11-05 test saw ~45 W of its draw gone with the relay open. More makes every quarter off the grid, and so every window's lead and short gap, count for more; above ~100 W it credits more than the whole difference measured over a night. Off, plans are exactly as without automatic grid-off. Applies from the next plan run. ${describePlannerKnobBounds("grid_off_saving_watts")}`,
+        { ...plannerKnobInput("grid_off_saving_watts"), heading: "Automatic grid-off" }
+      ),
+      f(
         ["automatic_trading", "sell_ramp_minutes"],
         "Feed-in ramp",
         "Minutes the inverter takes to ramp grid feed-in from zero to the full inverter AC ceiling (grid safety). Plans treat it as a rate: a smaller target gets there proportionally sooner (5 kW in a third of this), a step up mid-window climbs at the same rate, and a step down is immediate. Measured ~1.4 kW per minute, i.e. ~10.7 min to 15 kW. Set longer than the real ramp, plans count on less energy than each start and step-up delivers, so the battery ends lower than projected (the guard re-plans when that nears the floor); set shorter, plans count on more and a little stays unsold. Applies from the next plan run and guard check.",
@@ -1193,7 +1199,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     id: "grid-off",
     title: "Grid relay off (Off-Grid III)",
     description:
-      "The System page's grid relay switch puts the inverter into machine model 151, Off-Grid III: on battery its grid relay stays open (on-grid at night it burns ~100 W more battery), PV supplies the house first and then the battery, nothing is fed to the grid, and the grid only takes the house over by itself on an overload or a flat battery. Nothing switches it on automatically, and it never survives a controller restart. These knobs bound it; all apply live (the guards re-check every 10 s).",
+      "The System page's grid relay switch puts the inverter into machine model 151, Off-Grid III: on battery its grid relay stays open (on-grid at night it burns ~100 W more battery), PV supplies the house first and then the battery, nothing is fed to the grid, and the grid only takes the house over by itself on an overload or a flat battery. Only Automatic grid-off below switches it on by itself, and it never survives a controller restart. These knobs bound it; all apply live (the guards re-check every 10 s).",
     rootKeys: ["grid_off"],
     fields: [
       f(
@@ -1236,6 +1242,29 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         ["grid_off", "poll_machine_model"],
         "Read the machine model (DM)",
         "Reads the inverter's machine model with the other settings, every settings poll. A DM query that goes unanswered twice in a row is skipped for 30 min (an errorLog says so); turn this off to silence a firmware that doesn't answer it at all. Off, switching off the grid is refused (no readback to confirm it), while the readback after a DM write still runs. Off also disables the startup fail-safe: it needs the DM readback, so a 151 left behind by a crash or a kill isn't switched back (check the inverter's display). Applies from the next settings round."
+      ),
+      f(
+        ["grid_off", "auto_enabled"],
+        "Automatic grid-off",
+        'On, the controller keeps the grid relay open (151) whenever nothing below or above says otherwise, and the System page\'s buttons are off. Back on the grid (050) when a sell, buy or hold window starts within "Back on the grid before a window", at the full-battery SOC below (so the PV can export), below "Back on the grid below SOC", on stale readings, and on a controller stop. It switches off again once the window is over, the battery is back in the band, the stretch until the next window\'s reconnect is long enough, and the inverter\'s energy settings (which a machine model change resets) are written back. A switch to 151 that the inverter refuses or never reads back is retried 5 min later, then after 15 min, then hourly. Each change of what it wants is logged with the reason, and the System page shows it. Turning it off while the grid is off switches back to normal (050) at once; off, nothing switches by itself. The planner then also models the quarters off the grid (Trading: "Grid-off: inverter draw saved"). Applies at once.'
+      ),
+      f(
+        ["grid_off", "auto_full_soc_percent"],
+        "Automatic: back on the grid at SOC",
+        `With the grid off a full battery stops the PV, since nothing can be exported; at this SOC Automatic grid-off reconnects so the surplus sells. Lower exports sooner but gives up more of the battery's night off the grid. Applies at once. ${describeGridOffSettingBounds("auto_full_soc_percent")}`,
+        gridOffSettingInput("auto_full_soc_percent")
+      ),
+      f(
+        ["grid_off", "auto_resume_soc_percent"],
+        "Automatic: off again below SOC",
+        `After it reconnects (for the battery or a window, or after a restart) Automatic grid-off switches off again only below this, so a battery hovering at the full mark can't cycle the relay. A wider gap below the SOC above means fewer switches, a narrower one more time off the grid. Kept below the SOC above (corrected with a warning). Applies at once. ${describeGridOffSettingBounds("auto_resume_soc_percent")}`,
+        gridOffSettingInput("auto_resume_soc_percent")
+      ),
+      f(
+        ["grid_off", "auto_min_off_minutes"],
+        "Automatic: shortest stretch off",
+        `Automatic grid-off doesn't switch off when the next scheduled window's reconnect ("Back on the grid before a window" before its start) is closer than this, judged on the schedule as it stands. Each switch is a relay change and a settings write, and the machine model change resets the energy settings the controller then writes back. Shorter catches more of the gaps between windows, longer switches less. Applies at once. ${describeGridOffSettingBounds("auto_min_off_minutes")}`,
+        gridOffSettingInput("auto_min_off_minutes")
       ),
     ],
   },

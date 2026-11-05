@@ -25,3 +25,41 @@ export type GridOffStatus = {
   /** The latest thing the switch did or refused, and why */
   last_event: GridOffEvent | undefined;
 };
+
+/**
+ * Why automatic grid-off wants what it wants (autoGridOffDecisions.ts): "off_grid" is the one that wants 151,
+ * every other one keeps the inverter on the grid (050)
+ */
+export type AutoGridOffReasonKind =
+  | "off_grid"
+  | "soc_unknown"
+  | "window"
+  | "battery_full"
+  | "battery_above_resume"
+  | "battery_low"
+  | "short_stretch"
+  | "energy_settings"
+  | "retry_backoff"
+  | "switch_refused";
+
+/** The next switch the schedule says automatic grid-off will make (the SOC may still come first) */
+export type AutoGridOffNextSwitch = {
+  model: MachineModelCode;
+  /** Wall-clock ms */
+  at: number;
+  /** What it is for, in words: "the buy window at 02:30" */
+  why: string;
+};
+
+/** Automatic grid-off as the ws carries it (wsContract.types.ts key `gridOffAuto`) */
+export type AutoGridOffStatus = {
+  /** grid_off.auto_enabled, corrected */
+  enabled: boolean;
+  /** What it wants the inverter at now; undefined while it is off */
+  desired_model: MachineModelCode | undefined;
+  reason_kind: AutoGridOffReasonKind | undefined;
+  /** Why, in words: "a buy window at 02:30 starts within 10 min", "battery 96 % ≥ 95 % (…)" */
+  reason: string | undefined;
+  /** Known from the schedule; undefined = none known (it depends on the battery, or nothing is scheduled) */
+  next_switch: AutoGridOffNextSwitch | undefined;
+};

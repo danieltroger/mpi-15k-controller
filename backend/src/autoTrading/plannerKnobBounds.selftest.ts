@@ -26,6 +26,7 @@ const CASES: { knobName: BoundedPlannerKnobName; inBounds: number; tooLow: numbe
   { knobName: "terminal_value_solar_scale", inBounds: 0.75, tooLow: -0.5, tooHigh: 1.5 },
   { knobName: "terminal_value_solar_lookahead_hours", inBounds: 24, tooLow: -12, tooHigh: 240 },
   { knobName: "terminal_value_solar_forecast_max_age_hours", inBounds: 6, tooLow: 0, tooHigh: 100 },
+  { knobName: "grid_off_saving_watts", inBounds: 80, tooLow: -10, tooHigh: 500 },
   { knobName: "hold_power_watts", inBounds: 200, tooLow: 20, tooHigh: 5000 },
   { knobName: "hold_overhead_watts", inBounds: 150, tooLow: -50, tooHigh: 2000 },
   // The one knob that may be negative (the battery still giving a little during a hold): clamped, not reset
@@ -98,6 +99,24 @@ check(
   "plannerKnobsFromConfig hands the planner the clamped hold knobs",
   knobs.hold_power_watts === 300 && knobs.hold_bridge_minutes === PLANNER_KNOB_BOUNDS.hold_bridge_minutes.defaultValue,
   `(${knobs.hold_power_watts} W, ${knobs.hold_bridge_minutes} min)`
+);
+const gridOffKnobs = plannerKnobsFromConfig({
+  ...default_config,
+  automatic_trading: { ...default_config.automatic_trading, grid_off_saving_watts: 900 },
+  grid_off: { ...default_config.grid_off, auto_enabled: true, auto_min_off_minutes: 1, auto_resume_soc_percent: 99 },
+});
+check(
+  "…and the clamped saving and grid_off section (auto on, 15 min stretch, resume corrected below full)",
+  gridOffKnobs.grid_off_saving_watts === PLANNER_KNOB_BOUNDS.grid_off_saving_watts.max &&
+    gridOffKnobs.grid_off.auto_enabled &&
+    gridOffKnobs.grid_off.auto_min_off_minutes === 15 &&
+    gridOffKnobs.grid_off.auto_resume_soc_percent === 94,
+  JSON.stringify(gridOffKnobs.grid_off)
+);
+check(
+  "automatic grid-off ships off, so the plans are main's",
+  default_config.grid_off.auto_enabled === false &&
+    plannerKnobsFromConfig(default_config).grid_off.auto_enabled === false
 );
 
 finishSelftest();

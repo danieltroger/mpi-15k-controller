@@ -412,7 +412,7 @@ check(
   check(
     "a missing section takes the defaults, with a correction each",
     effectiveGridOffSettings(undefined).settings.min_soc_percent === 10 &&
-      effectiveGridOffSettings(undefined).corrections.length === 7
+      effectiveGridOffSettings(undefined).corrections.length === 11
   );
   const clamped = effectiveGridOffSettings({
     ...DEFAULT_GRID_OFF_SETTINGS,

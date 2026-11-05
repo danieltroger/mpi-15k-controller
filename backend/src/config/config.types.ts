@@ -138,6 +138,11 @@ export type AutomaticTradingConfig = {
   /** …and stays out while the coldest battery probe is at or below this (never below the freezing P1 + 1 °C) */
   hold_min_battery_temp_celsius: number;
   /**
+   * With grid_off.auto_enabled, how much less the inverter draws in a quarter the plan models off the grid
+   * (simulate.ts, simulateGridOff.ts). Bounds in plannerKnobBounds.ts, clamped.
+   */
+  grid_off_saving_watts: number;
+  /**
    * Minutes the inverter takes to ramp grid feed-in from 0 to the full inverter_max_ac_output_watts
    * (grid safety). It's a rate: a smaller target is reached proportionally sooner, and a mid-run
    * step-up ramps too. Decreases are immediate.
@@ -376,10 +381,9 @@ export type MeterCalibration = {
 };
 
 /**
- * The grid-off switch (gridOff/): on request from the page the inverter goes to machine model 151,
- * Off-Grid III (grid relay open on battery), and back to 050 by request or by these guards. Never
- * switched automatically on, never kept across a controller restart. Bounds in gridOff/gridOffSettings.ts,
- * clamped with a warning.
+ * The grid-off switch (gridOff/): on request from the page, or automatically with auto_enabled, the inverter
+ * goes to machine model 151, Off-Grid III (grid relay open on battery), and back to 050 by request or by these
+ * guards. Never kept across a controller restart. Bounds in gridOff/gridOffSettings.ts, clamped with a warning.
  */
 export type GridOffConfig = {
   /** Back to the grid (050) when the SOC falls below this */
@@ -399,6 +403,18 @@ export type GridOffConfig = {
    * answer; switching to 151 is then refused (the confirms after a DM write still read it)
    */
   poll_machine_model: boolean;
+  /**
+   * Automatic grid-off (gridOff/useAutoGridOff.ts): off the grid whenever no rule below or no guard above
+   * says otherwise; the page's buttons are refused meanwhile. Turning it off while it has the grid off
+   * switches back to 050. Off, nothing switches by itself.
+   */
+  auto_enabled: boolean;
+  /** Automatic: back on the grid at this SOC, so the PV can export instead of stopping at a full battery */
+  auto_full_soc_percent: number;
+  /** Automatic: switching off the grid needs the SOC below this (the hysteresis under auto_full_soc_percent) */
+  auto_resume_soc_percent: number;
+  /** Automatic: switching off the grid needs this long before the reconnect for the next scheduled window */
+  auto_min_off_minutes: number;
 };
 
 /** HECS's flags as the readback decodes them */

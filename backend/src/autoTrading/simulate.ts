@@ -4,7 +4,8 @@
  * of the energy left at the end, when the plan has one), floor violations and the SOC trajectory. Shared by the allocation passes (sellAllocation.ts, buyAllocation.ts, holdAllocation.ts) and the
  * local search in sellConsolidation.ts, which is why it lives in its own module. The revenue is what the utility
  * meter will count (knobs.meter_calibration, simulatedMeterCredit.ts); the energies and the SOC stay as the
- * inverter sees them.
+ * inverter sees them. With grid_off.auto_enabled the idle quarters automatic grid-off would have off the grid
+ * feed nothing and draw grid_off_saving_watts less (simulateGridOff.ts).
  */
 
 import { rampedSlotExport, sellRampWattsPerMinute } from "./feedInRamp.ts";
@@ -16,6 +17,7 @@ import {
   uncountedExportWatts,
 } from "./simulatedMeterCredit.ts";
 import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
+import { autoGridOffModelled, offGridSocBand, offGridWindowGaps } from "./simulateGridOff.ts";
 import { endEnergyCreditSek } from "./terminalValueSolar.ts";
 import type { HorizonValuation, PlannerInput, PlannerKnobs, SimResult, Slot } from "./planner.types.ts";
 
@@ -61,6 +63,11 @@ export function simulate(
   const rampWattsPerMinute = sellRampWattsPerMinute(knobs);
   let reachedExportW = slots[0]?.feedInAtStartW ?? 0;
   const modelHolds = holdsModelled(knobs, valuation);
+  // Automatic grid-off: which idle quarters the windows leave off the grid, and the SOC band they must start in
+  const modelGridOff = autoGridOffModelled(knobs);
+  const offGridGaps = modelGridOff ? offGridWindowGaps(input, slots, sellW, buyW, modelHolds) : undefined;
+  const offGridBand = modelGridOff ? offGridSocBand(knobs.grid_off, cap) : undefined;
+  let offGridHours = 0;
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
@@ -110,6 +117,15 @@ export function simulate(
       continue;
     }
 
+    // Off the grid (only ever an idle quarter: any window keeps it on): no baseline feed, a smaller own draw
+    const offGridSlot =
+      offGridGaps?.[i] === true &&
+      offGridBand !== undefined &&
+      socWh >= offGridBand.fromWh &&
+      socWh < offGridBand.belowWh;
+    const slotParasiticW = offGridSlot ? Math.max(0, parasiticW - knobs.grid_off_saving_watts) : parasiticW;
+    if (offGridSlot) offGridHours += slot.durationH;
+
     let exportW = 0;
     let gridChargeW = 0;
     let slotImportWh = 0;
@@ -139,9 +155,10 @@ export function simulate(
       reachedExportW = ramped.endW;
       feedReadingShortfallW = feedReadingShortfallWatts(sellSetW, ratingHeadroomW, calibration);
     } else {
-      if (buySetW === 0 && slot.pvW < slot.houseW + parasiticW + BASELINE_FEED_SOLAR_MARGIN_WATTS) {
+      if (buySetW === 0 && !offGridSlot && slot.pvW < slot.houseW + slotParasiticW + BASELINE_FEED_SOLAR_MARGIN_WATTS) {
         // Baseline "feed when no solar" that nets out the inverter's constant grid draw. It drains the battery by
-        // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts)
+        // the whole setpoint, but the meter counts little of it: at 300 W about nothing (simulatedMeterCredit.ts).
+        // Off the grid there is neither the draw nor a grid to feed: the feed holds (gridOffInForce)
         exportW = knobs.baseline_feed_watts;
         feedReadingShortfallW = feedReadingShortfallWatts(exportW, ratingHeadroomW, calibration);
       }
@@ -153,7 +170,7 @@ export function simulate(
     if (gridChargeW > 0) {
       netBattW = slot.pvW + gridChargeW;
     } else {
-      netBattW = slot.pvW - slot.houseW - parasiticW - exportW;
+      netBattW = slot.pvW - slot.houseW - slotParasiticW - exportW;
     }
     const deltaWh =
       netBattW >= 0
@@ -196,7 +213,7 @@ export function simulate(
     revenueSek -=
       ((meterExtraImportW * slot.durationH) / 1000) * (spot + knobs.buy_surcharges_sek_per_kwh) * knobs.vat_multiplier;
 
-    const floorWh = slot.pvW > slot.houseW + parasiticW ? floorSunnyWh : floorPlannerWh;
+    const floorWh = slot.pvW > slot.houseW + slotParasiticW ? floorSunnyWh : floorPlannerWh;
     if (socWh < floorWh) violationWh += floorWh - socWh;
     if (socWh < minSocWh) {
       minSocWh = socWh;
@@ -230,6 +247,7 @@ export function simulate(
     socAfterSlot,
     autoExportWPerSlot,
     endEnergyValueSek,
+    offGridHours,
   };
 }
 

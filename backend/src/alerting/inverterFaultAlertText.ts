@@ -8,7 +8,7 @@ import { describeInverterFaultCode } from "../inverterComms/inverterFaultCodes.t
 import { WARNING_FLAGS_SET_EVERY_NIGHT } from "../inverterComms/pi17FieldTables.ts";
 import type { AlertSeverity } from "./alerting.types.ts";
 import { INVERTER_POWER_CYCLE_PROCEDURE } from "./alertingLogic.ts";
-import { formatStockholmTime } from "./inverterStuckAlertPolicy.ts";
+import { formatStockholmTime } from "../utilities/stockholmDate.ts";
 
 export type InverterFaultAlert = { key: string; severity: AlertSeverity; title: string; message: string };
 

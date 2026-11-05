@@ -8,6 +8,7 @@ import process from "process";
 import { SLOT_MS } from "./planner.ts";
 import { stockholmMonth } from "./terminalValue.ts";
 import { IDENTITY_METER_CALIBRATION } from "../grid/meterCalibrationBounds.ts";
+import { DEFAULT_GRID_OFF_SETTINGS } from "../gridOff/gridOffSettings.ts";
 import type { PlannerInput, PlannerKnobs, PriceSlot15 } from "./planner.types.ts";
 
 export const HOUR_MS = 3600_000;
@@ -71,6 +72,9 @@ export const baseKnobs: PlannerKnobs = {
   // The scenarios predate the meter calibration and credit what the inverter reads; its own scenarios
   // (planner.selftest.ts, simulatedMeterCredit.selftest.ts) switch the calibrated defaults on
   meter_calibration: IDENTITY_METER_CALIBRATION,
+  // Automatic grid-off off, like the config default: simulateGridOff.selftest.ts switches it on
+  grid_off: DEFAULT_GRID_OFF_SETTINGS,
+  grid_off_saving_watts: 45,
 };
 
 /** The input with the terminal value on (the trailing source) at the given expected spot */

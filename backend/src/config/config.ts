@@ -95,6 +95,8 @@ export const default_config: Config = {
     terminal_value_solar_forecast_max_age_hours:
       PLANNER_KNOB_BOUNDS.terminal_value_solar_forecast_max_age_hours.defaultValue,
     terminal_value_solar_months: DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
+    // Only read while grid_off.auto_enabled is on (which ships off)
+    grid_off_saving_watts: PLANNER_KNOB_BOUNDS.grid_off_saving_watts.defaultValue,
     // Ships off: switched on by hand on the live system, with hold_overhead_watts at the measured 170 W
     hold_enabled: false,
     hold_power_watts: PLANNER_KNOB_BOUNDS.hold_power_watts.defaultValue,

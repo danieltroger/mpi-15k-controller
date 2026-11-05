@@ -18,10 +18,11 @@
  * heating coming on in October (the walk then sees a surplus that isn't there) and the falling load in March (the
  * safe side). On that forecast the refill's gains were mostly in March, and its biggest losses in Octobers.
  *
- * Pure (type-only imports, a constant and terminalValue.ts' season and month parsing): the walk reads only the planner
- * input's forecasts.
+ * Pure (type-only imports, a constant, simulateGridOff.ts' switch and terminalValue.ts' season and month parsing): the
+ * walk reads only the planner input's forecasts.
  */
 import { BASELINE_FEED_SOLAR_MARGIN_WATTS } from "./simulateConstants.ts";
+import { autoGridOffModelled } from "./simulateGridOff.ts";
 import {
   DEFAULT_TERMINAL_VALUE_SOLAR_MONTHS,
   isExpectedSpotSource,
@@ -196,15 +197,22 @@ function refillThreshold(
   return { fromWh: Math.max(threshold.fromWh, emergencyFloorWh), fullAtMs: threshold.fullAtMs };
 }
 
-/** What the idle battery gains (DC Wh, negative = drains) over a step: buildSlots' forecasts, simulate's idle slot */
+/**
+ * What the idle battery gains (DC Wh, negative = drains) over a step: buildSlots' forecasts, simulate's idle slot.
+ * With automatic grid-off nothing past the horizon is scheduled, so the idle battery is off the grid throughout
+ * (simulateGridOff.ts' quarter, its SOC band left out: the walk runs on start energies, not one SOC): no feed, and
+ * the smaller own draw.
+ */
 function idleBatteryDeltaWh(input: PlannerInput, startMs: number, endMs: number): number {
   const knobs = input.knobs;
   const durationH = (endMs - startMs) / HOUR_MS;
   const midMs = (startMs + endMs) / 2;
   const pvW = Math.max(0, input.solarAverageWattsBetween?.(startMs, endMs) ?? input.solarWattsAt(midMs));
   const houseW = Math.max(0, input.houseLoadWattsAt(midMs));
+  const offGrid = autoGridOffModelled(knobs);
+  const parasiticW = offGrid ? Math.max(0, input.parasiticWatts - knobs.grid_off_saving_watts) : input.parasiticWatts;
   const baselineFeedW =
-    pvW < houseW + input.parasiticWatts + BASELINE_FEED_SOLAR_MARGIN_WATTS ? knobs.baseline_feed_watts : 0;
-  const netW = pvW - houseW - input.parasiticWatts - baselineFeedW;
+    !offGrid && pvW < houseW + parasiticW + BASELINE_FEED_SOLAR_MARGIN_WATTS ? knobs.baseline_feed_watts : 0;
+  const netW = pvW - houseW - parasiticW - baselineFeedW;
   return netW >= 0 ? netW * knobs.charge_efficiency * durationH : (netW / knobs.discharge_efficiency) * durationH;
 }

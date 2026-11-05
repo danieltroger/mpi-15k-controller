@@ -109,11 +109,16 @@ export function revertReason(
   if (conflict) return conflict;
   const staleness = inverterReadingsStaleness(situation.inverterReadingAgeMs);
   if (staleness) return staleness;
-  const sinceRequestMs = situation.nowMs - requestedAtMs;
-  if (situation.readbackModel !== OFF_GRID_III_MODEL && sinceRequestMs > SWITCH_CONFIRM_DEADLINE_MS) {
+  if (offGridNotApplied(situation, requestedAtMs)) {
+    const sinceRequestMs = situation.nowMs - requestedAtMs;
     return `the DM readback shows ${describeMachineModel(situation.readbackModel)} ${Math.round(sinceRequestMs / 1000)} s after 151 was requested (not applied, or changed since)`;
   }
   return undefined;
+}
+
+/** While 151 is requested: the DM readback still doesn't show it past SWITCH_CONFIRM_DEADLINE_MS (or no longer does) */
+export function offGridNotApplied(situation: GridOffSituation, requestedAtMs: number): boolean {
+  return situation.readbackModel !== OFF_GRID_III_MODEL && situation.nowMs - requestedAtMs > SWITCH_CONFIRM_DEADLINE_MS;
 }
 
 /** How long the inverter has read 151 while 050 is wanted, and whether that is past stuck_p1_after_minutes */
@@ -201,12 +206,11 @@ export function reconcileMachineModel({
  * grid. An entry whose times don't parse is skipped: the buy and sell logic never run one either.
  */
 export function windowConflict(situation: GridOffSituation, settings: GridOffConfig): string | undefined {
-  const leadMs = settings.reconnect_before_window_minutes * 60_000;
-  const conflicts = [
-    ...scheduleConflicts("sell", situation.sellSchedule, situation.nowMs, leadMs),
-    ...scheduleConflicts("buy", situation.buySchedule, situation.nowMs, leadMs),
-  ].sort((first, second) => first.startMs - second.startMs);
-  const soonest = conflicts[0];
+  const soonest = conflictingWindow(
+    scheduledWindows(situation.sellSchedule, situation.buySchedule, situation.nowMs),
+    situation.nowMs,
+    settings.reconnect_before_window_minutes * 60_000
+  );
   if (!soonest) return undefined;
   if (soonest.startMs <= situation.nowMs)
     return `a ${soonest.kind} window is active (${soonest.start} → ${soonest.end})`;
@@ -214,20 +218,38 @@ export function windowConflict(situation: GridOffSituation, settings: GridOffCon
   return `a ${soonest.kind} window starts in ${minutesAway} min (${soonest.start}), within grid_off.reconnect_before_window_minutes ${settings.reconnect_before_window_minutes}`;
 }
 
-type WindowConflict = { kind: "buy" | "sell"; start: string; end: string; startMs: number };
+/** One buy or sell schedule entry with parseable times, under the start key it is written at */
+export type ScheduledWindow = { kind: "buy" | "sell"; start: string; end: string; startMs: number; endMs: number };
 
-function scheduleConflicts(
-  kind: WindowConflict["kind"],
-  schedule: ScheduleWindows,
+/**
+ * Every buy and sell window that hasn't ended at nowMs, the earliest start first (on a tie the sell one, as
+ * the guard always listed them). An entry whose times don't parse is skipped.
+ */
+export function scheduledWindows(
+  sellSchedule: ScheduleWindows,
+  buySchedule: ScheduleWindows,
+  nowMs: number
+): ScheduledWindow[] {
+  return [...windowsOf("sell", sellSchedule, nowMs), ...windowsOf("buy", buySchedule, nowMs)].sort(
+    (first, second) => first.startMs - second.startMs
+  );
+}
+
+/** The earliest of these windows that is active at nowMs or starts within leadMs of it, or undefined */
+export function conflictingWindow(
+  windows: readonly ScheduledWindow[],
   nowMs: number,
   leadMs: number
-): WindowConflict[] {
+): ScheduledWindow | undefined {
+  return windows.find(window => window.endMs > nowMs && window.startMs - nowMs <= leadMs);
+}
+
+function windowsOf(kind: ScheduledWindow["kind"], schedule: ScheduleWindows, nowMs: number): ScheduledWindow[] {
   return Object.entries(schedule).flatMap(([start, entry]) => {
     const startMs = Date.parse(start);
     const endMs = Date.parse(entry.end_time);
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
-    if (endMs <= nowMs || startMs - nowMs > leadMs) return [];
-    return [{ kind, start, end: entry.end_time, startMs }];
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= nowMs) return [];
+    return [{ kind, start, end: entry.end_time, startMs, endMs }];
   });
 }
 

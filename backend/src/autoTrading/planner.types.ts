@@ -1,12 +1,17 @@
-import type { AutomaticTradingConfig, ExpectedSpotSource, MeterCalibration } from "../config/config.types.ts";
+import type {
+  AutomaticTradingConfig,
+  ExpectedSpotSource,
+  GridOffConfig,
+  MeterCalibration,
+} from "../config/config.types.ts";
 import type { ForecastSpotSummary } from "./expectedSpotForecast.types.ts";
 
 export type PriceSlot15 = { startMs: number; spot: number };
 export type FixedWindow = { startMs: number; endMs: number; watts: number };
 /**
  * Knobs are the automatic_trading config section verbatim (spread it in), plus what lives elsewhere
- * in the config: the runtime sell cutoff, the baseline night feed and the meter calibration.
- * The callers pass the knobs of plannerKnobBounds.ts corrected to their bounds.
+ * in the config: the runtime sell cutoff, the baseline night feed, the meter calibration and the grid-off
+ * switch's settings. The callers pass the knobs of plannerKnobBounds.ts corrected to their bounds.
  */
 export type PlannerKnobs = Pick<
   AutomaticTradingConfig,
@@ -49,6 +54,7 @@ export type PlannerKnobs = Pick<
   | "hold_margin_sek_per_kwh"
   | "hold_min_window_minutes"
   | "hold_bridge_minutes"
+  | "grid_off_saving_watts"
 > & {
   /** scheduled_power_selling.only_sell_above_soc — where the runtime cuts selling off */
   runtime_soc_floor_percent: number;
@@ -56,6 +62,11 @@ export type PlannerKnobs = Pick<
   baseline_feed_watts: number;
   /** The meter_calibration section, corrected to its bounds: revenue is credited at what the meter counts (simulate.ts) */
   meter_calibration: MeterCalibration;
+  /**
+   * The grid_off section, corrected to its bounds: with auto_enabled the simulation models the quarters
+   * automatic grid-off would be off the grid in (simulateGridOff.ts); off, nothing in it is read
+   */
+  grid_off: GridOffConfig;
 };
 export type PlannerInput = {
   nowMs: number;
@@ -267,6 +278,8 @@ export type SimResult = {
   autoExportWPerSlot: number[];
   /** The terminal value credited for the energy left at the end (HorizonValuation), included in revenueSek */
   endEnergyValueSek: number;
+  /** Hours modelled off the grid by automatic grid-off (simulateGridOff.ts); 0 while it is off */
+  offGridHours: number;
 };
 
 /**
